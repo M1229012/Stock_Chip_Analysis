@@ -353,7 +353,7 @@ current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
 with st.sidebar:
     st.header("參數設定")
-    stock_input_raw = st.text_input("股票代號", value="3030")
+    stock_input_raw = st.text_input("股票代號", value="2313")
     stock_input = re.sub(r'\D', '', str(stock_input_raw)) if stock_input_raw else ""
     
     days_map = {
