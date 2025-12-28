@@ -16,7 +16,8 @@ import re
 from datetime import datetime, timedelta
 import pytz
 from urllib.parse import urlparse, parse_qs
-import shutil  # 新增這個 import 用於檢查路徑
+import shutil
+import twstock  # 確保已匯入
 
 # ================= 1. 系統設定 =================
 
@@ -55,6 +56,15 @@ COLOR_DOWN = '#26a69a'
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
 
+# 新增：獲取股票名稱函式
+def get_stock_name(stock_id):
+    try:
+        if stock_id in twstock.codes:
+            return twstock.codes[stock_id].name
+        return ""
+    except:
+        return ""
+
 # ================= 2. 爬蟲核心 (已修正雲端相容性) =================
 
 @st.cache_resource
@@ -77,8 +87,6 @@ def get_driver():
         options.binary_location = shutil.which("chromium-browser")
         
     # 決定 Driver 的 Service
-    # 如果是在雲端環境 (有預裝 chromedriver)，直接使用
-    # 如果是在本地，則使用 ChromeDriverManager 下載
     if shutil.which("chromedriver"):
         service = Service(shutil.which("chromedriver"))
     else:
@@ -368,15 +376,20 @@ with st.sidebar:
         st.rerun()
 
 if stock_input:
+    # 獲取股票名稱
+    stock_name = get_stock_name(stock_input)
+    stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
+
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
-    with st.spinner(f"正在分析 {stock_input} 近 {selected_days} 交易日 ({rank_start_date} ~ {rank_end_date})..."):
+    with st.spinner(f"正在分析 {stock_display} 近 {selected_days} 交易日 ({rank_start_date} ~ {rank_end_date})..."):
         df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date)
         
     df_price = get_stock_price(stock_input)
 
     if df_buy is not None and df_sell is not None:
-        st.subheader(f"🏆 {stock_input} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
+        # ✅ 修改：標題加入股票名稱
+        st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
         st.caption(f"排行總表網址：{target_url}")
         
         col1, col2 = st.columns(2)
@@ -587,13 +600,14 @@ if stock_input:
                 row=2, col=1
             )
 
+            # ✅ 修改：圖表標題也加入股票名稱
             fig.update_layout(
                 height=800, 
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
                 font=dict(color='white'), 
-                title=f"{stock_input} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
+                title=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
                 dragmode='pan',
                 hovermode='x unified',
                 legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center")
