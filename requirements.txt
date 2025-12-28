@@ -1,0 +1,8 @@
+streamlit
+pandas
+plotly
+yfinance
+selenium
+webdriver-manager
+lxml
+html5lib
