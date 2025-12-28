@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta
 import pytz
 from urllib.parse import urlparse, parse_qs
+import shutil  # 新增這個 import 用於檢查路徑
 
 # ================= 1. 系統設定 =================
 
@@ -54,7 +55,7 @@ COLOR_DOWN = '#26a69a'
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
 
-# ================= 2. 爬蟲核心 =================
+# ================= 2. 爬蟲核心 (已修正雲端相容性) =================
 
 @st.cache_resource
 def get_driver_path():
@@ -69,7 +70,20 @@ def get_driver():
     options.add_argument('--window-size=1920,1080')
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
-    service = Service(get_driver_path())
+    # 雲端環境路徑偵測 (Streamlit Cloud 專用)
+    if shutil.which("chromium"):
+        options.binary_location = shutil.which("chromium")
+    elif shutil.which("chromium-browser"):
+        options.binary_location = shutil.which("chromium-browser")
+        
+    # 決定 Driver 的 Service
+    # 如果是在雲端環境 (有預裝 chromedriver)，直接使用
+    # 如果是在本地，則使用 ChromeDriverManager 下載
+    if shutil.which("chromedriver"):
+        service = Service(shutil.which("chromedriver"))
+    else:
+        service = Service(get_driver_path())
+
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
@@ -102,7 +116,8 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
-@st.cache_data(persist="disk", ttl=60)
+# ✅ 修改：TTL 設定為 604800 秒 (約 7 天)
+@st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date):
     driver = get_driver()
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
@@ -194,7 +209,8 @@ def get_real_data_matrix(stock_id, start_date, end_date):
     finally:
         driver.quit()
 
-@st.cache_data(persist="disk", ttl=60)
+# ✅ 修改：TTL 設定為 604800 秒 (約 7 天)
+@st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_params, start_date, end_date):
     driver = get_driver()
     c_val = broker_params.get('C', '1')
@@ -541,7 +557,7 @@ if stock_input:
                 st.success(f"✅ 已取得 {target_broker} 完整 2 年數據")
             else:
                 if target_broker:
-                     st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
+                      st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
 
             # 設定 Y 軸 (固定範圍)
             fig.update_yaxes(
