@@ -579,17 +579,23 @@ if stock_input:
                 row=1, col=1
             )
 
-            # X 軸預設範圍
+            # ✅ 修正 X 軸：設定最大拖曳範圍 (禁止無限左右拖曳)
             total_len_with_future = len(plot_df)
             zoom_days = selected_days
             zoom_start_idx = max(0, total_len_with_future - zoom_days - 3)
             end_idx = total_len_with_future - 1
             
+            # 設定 minallowed (最左: 0) 與 maxallowed (最右: 最後一筆資料)
+            x_min_allowed = -0.5
+            x_max_allowed = total_len_with_future - 0.5
+
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
                 nticks=20, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
+                minallowed=x_min_allowed,
+                maxallowed=x_max_allowed,
                 row=1, col=1
             )
             fig.update_xaxes(
@@ -597,6 +603,8 @@ if stock_input:
                 tickmode='auto', 
                 nticks=20, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
+                minallowed=x_min_allowed,
+                maxallowed=x_max_allowed,
                 row=2, col=1
             )
 
