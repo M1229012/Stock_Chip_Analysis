@@ -289,9 +289,7 @@ def get_real_data_matrix(stock_id, start_date, end_date):
 # ✅ 使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date):
-    # broker_key is tuple: (BHID, b, C)
     BHID, b, c_val = broker_key
-    
     driver = get_driver()
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
     target_url = (f"{base_url}?A={stock_id}"
@@ -504,15 +502,12 @@ if stock_input:
                             break
 
             if broker_params:
-                # ✅ 修正 2：自動抓取預設券商邏輯（移除按鈕，改用 session_state）
                 long_start_date = df_price['DateStr'].iloc[0] 
                 long_end_date = rank_end_date 
                 
-                # 建立判斷重抓的 Key
                 broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
                 merged_key = (stock_input, broker_key)
 
-                # 只有當「股票」或「券商」改變時，才執行耗時爬蟲
                 if st.session_state.get('merged_key') != merged_key:
                     with st.spinner(f"正在爬取 {target_broker} 完整 2 年每日明細..."):
                         broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date)
@@ -526,7 +521,6 @@ if stock_input:
                             merged_df['cumulative_net'] = merged_df['買賣超_Final'].cumsum()
                             
                             st.success(f"✅ 已載入 {target_broker} 2 年籌碼明細")
-                            # 存入快取
                             st.session_state['merged_df'] = merged_df
                             st.session_state['merged_key'] = merged_key
                         else:
@@ -534,7 +528,6 @@ if stock_input:
                             st.session_state['merged_key'] = merged_key
                             st.warning("⚠️ 該券商明細抓取失敗，先顯示純股價")
                 else:
-                    # 使用快取資料
                     merged_df = st.session_state.get('merged_df')
 
             # 建立圖表基礎框架
@@ -607,7 +600,6 @@ if stock_input:
                 )
 
             # ✅ 修正 1：主圖 Y 軸改為 autorange=True 搭配 fixedrange=True
-            # 這樣切換 X 軸區間時，Y 軸會自動適配高度，且使用者無法手動縮放 Y (防止亂飛)
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -635,30 +627,35 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
-            # X 軸範圍
+            # ✅ 修正 1：改用交易日根數計算區間按鈕
             last_dt = plot_df['Date'].iloc[-1]
-            default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
             x_range_end = last_dt + timedelta(days=3)
 
-            # ✅ 修正 3：RangeSelector 位置優化 (移至右上角)
+            def dt_nbars(n: int):
+                return plot_df['Date'].iloc[max(0, len(plot_df) - n)]
+
+            R_20  = [dt_nbars(20),  last_dt]
+            R_3M  = [dt_nbars(60),  last_dt]    # 約 3 個月交易日
+            R_6M  = [dt_nbars(120), last_dt]    # 約 6 個月交易日
+            R_1Y  = [dt_nbars(240), last_dt]    # 約 1 年交易日
+            R_ALL = [plot_df['Date'].iloc[0], last_dt]
+
+            default_zoom_start = dt_nbars(30) # 預設 30 根
+
+            # ✅ 用 updatemenus 自訂按鈕（以 last_dt 為右界，不吃留白）
+            range_buttons = [
+                dict(label="20日", method="relayout", args=[{"xaxis.range": R_20, "xaxis2.range": R_20}]),
+                dict(label="3月", method="relayout", args=[{"xaxis.range": R_3M, "xaxis2.range": R_3M}]),
+                dict(label="6月", method="relayout", args=[{"xaxis.range": R_6M, "xaxis2.range": R_6M}]),
+                dict(label="1年", method="relayout", args=[{"xaxis.range": R_1Y, "xaxis2.range": R_1Y}]),
+                dict(label="全部", method="relayout", args=[{"xaxis.range": R_ALL, "xaxis2.range": R_ALL}]),
+            ]
+
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(bounds=["sat", "mon"])], 
                 range=[default_zoom_start, x_range_end],
                 fixedrange=False,
-                rangeselector=dict(
-                    buttons=list([
-                        dict(count=20, label="20日", step="day", stepmode="backward"),
-                        dict(count=60, label="3月", step="day", stepmode="backward"),
-                        dict(count=120, label="6月", step="day", stepmode="backward"),
-                        dict(count=1, label="1年", step="year", stepmode="backward"),
-                        dict(step="all", label="全部")
-                    ]),
-                    x=1.0, xanchor="right",   # 靠右
-                    y=1.12, yanchor="top",    # 往上移出圖面，避免壓到K線
-                    bgcolor="rgba(50,50,50,0.8)",
-                    font=dict(color="white")
-                ),
                 row=1, col=1
             )
             
@@ -670,11 +667,7 @@ if stock_input:
                 row=2, col=1
             )
 
-            fig_desktop = copy.deepcopy(fig)
-            fig_mobile = copy.deepcopy(fig)
-
-            # ✅ 修正：增加頂部邊距 (t=75) 容納右上角的 RangeSelector
-            common_layout = dict(
+            fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
@@ -682,25 +675,48 @@ if stock_input:
                 title=dict(
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
                     font=dict(size=16),
-                    x=0, xanchor="left" # 標題靠左
+                    x=0, xanchor="left", # 標題靠左
+                    y=1.18 # 預設標題高度
                 ), 
-                margin=dict(l=0, r=0, t=75, b=0) # 上邊距加高
+                hovermode='closest',
+                legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
+                # 預設按鈕 (桌機位置)
+                updatemenus=[
+                    dict(
+                        type="buttons",
+                        direction="right",
+                        buttons=range_buttons,
+                        showactive=True,
+                        x=1.0, xanchor="right",
+                        y=1.18, yanchor="top",   
+                        bgcolor="rgba(50,50,50,0.8)",
+                        font=dict(color="white", size=11),
+                        pad=dict(r=6, t=6)
+                    )
+                ]
             )
 
+            fig_desktop = copy.deepcopy(fig)
+            fig_mobile = copy.deepcopy(fig)
+
+            # ✅ 修正 2 & 3：手機版/桌機版按鈕位置與 dragmode 差異化
+            
+            # 桌機：按鈕在右上，pan 模式
             fig_desktop.update_layout(
                 height=800,
-                dragmode='pan', 
-                hovermode='closest',
-                legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-                **common_layout
+                dragmode='pan',
+                margin=dict(l=0, r=0, t=80, b=0)
             )
 
+            # 手機：按鈕移到下一行（更靠下），pan 模式 (雙指縮放)
             fig_mobile.update_layout(
                 height=520, 
-                dragmode='zoom', 
-                hovermode='closest',
-                legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-                **common_layout
+                dragmode='pan',  # ✅ 手機改回 pan，讓單指拖曳，雙指縮放
+                # 覆蓋按鈕位置到下一行
+                updatemenus=[dict(fig.layout.updatemenus[0], y=1.06, x=1.0, xanchor="right")],
+                # 標題往上
+                title=dict(fig.layout.title, y=1.18),
+                margin=dict(l=0, r=0, t=110, b=0) # ✅ 手機上邊距加高
             )
             
             config = {
