@@ -23,13 +23,14 @@ import twstock
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 優化：加入 RWD 顯示控制 與 手機版 Tabs 樣式
+# ✅ CSS 優化：修正可能導致黑畫面的選取器，並優化手機顯示
 st.markdown("""
     <style>
-    /* --- 通用設定 --- */
+    /* --- 通用字體設定 --- */
     html, body, [class*="css"] { font-size: 18px !important; }
     .stDataFrame { font-size: 16px !important; }
     
+    /* --- 數據卡片樣式 --- */
     .metric-container {
         display: flex;
         justify-content: space-between;
@@ -54,7 +55,7 @@ st.markdown("""
         font-weight: bold;
     }
 
-    /* --- 手機版優化 (螢幕 < 768px) --- */
+    /* --- 手機版 RWD (螢幕 < 768px) --- */
     @media (max-width: 768px) {
         html, body, [class*="css"] { font-size: 15px !important; }
         .stDataFrame { font-size: 14px !important; }
@@ -65,17 +66,18 @@ st.markdown("""
         .metric-label { font-size: 0.8rem; }
         .metric-value { font-size: 1rem; }
         
-        /* 手機時：隱藏電腦版區塊 */
-        div[data-testid="stVerticalBlock"]:has(span.desktop-view-marker) {
-            display: none !important;
+        /* 手機時：隱藏標記為 desktop-view 的區塊 */
+        /* 使用更安全的選取方式，避免舊瀏覽器崩潰 */
+        div[data-testid="stVerticalBlock"]:has(div.desktop-marker) {
+            display: none;
         }
     }
 
-    /* --- 電腦版優化 (螢幕 > 768px) --- */
+    /* --- 電腦版 RWD (螢幕 > 768px) --- */
     @media (min-width: 769px) {
-        /* 電腦時：隱藏手機版區塊 */
-        div[data-testid="stVerticalBlock"]:has(span.mobile-view-marker) {
-            display: none !important;
+        /* 電腦時：隱藏標記為 mobile-view 的區塊 */
+        div[data-testid="stVerticalBlock"]:has(div.mobile-marker) {
+            display: none;
         }
     }
     </style>
@@ -83,6 +85,8 @@ st.markdown("""
 
 COLOR_UP = '#ef5350'
 COLOR_DOWN = '#26a69a'
+
+# ================= 2. 輔助函式 =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -95,7 +99,36 @@ def get_stock_name(stock_id):
     except:
         return ""
 
-# ================= 2. 爬蟲核心 =================
+# ✅ 將渲染表格函式移至全域，防止縮排錯誤導致執行崩潰
+def render_broker_table(df, sum_data, color_hex, title):
+    st.markdown(f"#### {title}")
+    
+    full_config = {
+        "broker": "券商分點",
+        "buy": st.column_config.NumberColumn("買進", format="%d"),
+        "sell": st.column_config.NumberColumn("賣出", format="%d"),
+        "net": st.column_config.NumberColumn("買賣超", format="%d"),
+        "pct": "佔比"
+    }
+    
+    st.dataframe(
+        df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
+        use_container_width=True, height=500, hide_index=True, column_config=full_config
+    )
+    st.markdown(f"""
+    <div class="metric-container" style="border-left: 5px solid {color_hex};">
+        <div class="metric-item">
+            <div class="metric-label">合計{title[:2]}張數</div>
+            <div class="metric-value" style="color: {color_hex};">{sum_data['total']}</div>
+        </div>
+        <div class="metric-item">
+            <div class="metric-label">平均{title[:2]}成本</div>
+            <div class="metric-value">{sum_data['avg']}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ================= 3. 爬蟲核心 =================
 
 @st.cache_resource
 def get_driver_path():
@@ -368,7 +401,7 @@ def get_stock_price(stock_id):
     except Exception:
         return None
 
-# ================= 3. 介面邏輯 =================
+# ================= 4. 介面邏輯 =================
 
 st.title(f"📊 籌碼K線")
 
@@ -414,49 +447,20 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
         st.caption(f"排行總表網址：{target_url}")
         
-        # 輔助函式：渲染表格與數據 (避免程式碼重複)
-        def render_broker_table(df, sum_data, color_hex, title):
-            st.markdown(f"#### {title}")
-            
-            full_config = {
-                "broker": "券商分點",
-                "buy": st.column_config.NumberColumn("買進", format="%d"),
-                "sell": st.column_config.NumberColumn("賣出", format="%d"),
-                "net": st.column_config.NumberColumn("買賣超", format="%d"),
-                "pct": "佔比"
-            }
-            
-            st.dataframe(
-                df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
-                use_container_width=True, height=500, hide_index=True, column_config=full_config
-            )
-            st.markdown(f"""
-            <div class="metric-container" style="border-left: 5px solid {color_hex};">
-                <div class="metric-item">
-                    <div class="metric-label">合計{title[:2]}張數</div>
-                    <div class="metric-value" style="color: {color_hex};">{sum_data['total']}</div>
-                </div>
-                <div class="metric-item">
-                    <div class="metric-label">平均{title[:2]}成本</div>
-                    <div class="metric-value">{sum_data['avg']}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # ========== 1. 電腦版佈局 (Columns) - 透過 CSS 在手機上隱藏 ==========
+        # ========== 1. 電腦版佈局 (左右並排) ==========
         with st.container():
-            # 插入一個隱藏的 marker，讓 CSS 可以抓到並隱藏此區塊
-            st.markdown('<span class="desktop-view-marker"></span>', unsafe_allow_html=True)
+            # 插入 marker 供 CSS 識別 (Desktop)
+            st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
             col1, col2 = st.columns(2)
             with col1:
                 render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
             with col2:
                 render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
-        # ========== 2. 手機版佈局 (Tabs) - 透過 CSS 在電腦上隱藏 ==========
+        # ========== 2. 手機版佈局 (Tabs 分頁) ==========
         with st.container():
-            # 插入一個隱藏的 marker，讓 CSS 可以抓到並隱藏此區塊
-            st.markdown('<span class="mobile-view-marker"></span>', unsafe_allow_html=True)
+            # 插入 marker 供 CSS 識別 (Mobile)
+            st.markdown('<div class="mobile-marker"></div>', unsafe_allow_html=True)
             tab1, tab2 = st.tabs(["🔴 買超排行", "🟢 賣超排行"])
             with tab1:
                 render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
@@ -516,8 +520,7 @@ if stock_input:
             global_min = plot_df['Low'].min()
             global_max = plot_df['High'].max()
             y_range = [global_min * 0.95, global_max * 1.05]
-            # ============================================
-
+            
             # ========== 加入 T+3 空白日期 ==========
             last_date_str = plot_df['DateStr'].iloc[-1]
             last_date_dt = datetime.strptime(last_date_str, "%Y-%m-%d")
@@ -533,8 +536,7 @@ if stock_input:
                 plot_df = pd.concat([plot_df, pd.DataFrame([new_row])], ignore_index=True)
             
             x_data = plot_df['DateStr']
-            # =======================================
-
+            
             # 1. K線圖
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
@@ -601,24 +603,20 @@ if stock_input:
                 row=1, col=1
             )
 
-            # ✅ 修正 X 軸與 K線寬度優化
-            # 邏輯：為了讓 K 棒變大，預設只顯示最後 30 天 (約一個月) 的資料
-            # 使用者可以用手指滑動看到前面的資料
+            # ✅ 關鍵修改：預設只顯示最近 20 根 K 棒，讓 K 棒變大 (手機版體驗更好)
             total_len_with_future = len(plot_df)
-            
-            # 手機版優化：預設顯示範圍固定為最後 30 根 K 棒，這樣 K 棒會很大
-            default_zoom_bars = 30
+            default_zoom_bars = 20 # 預設顯示數量，數字越小K棒越大
             zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
             end_idx = total_len_with_future - 1
             
             x_min_allowed = -0.5
             x_max_allowed = total_len_with_future - 0.5
 
-            # ✅ 減少 X 軸刻度密度 (nticks=8)，避免手機日期擠在一起
+            # ✅ 關鍵修改：nticks=5 大幅減少日期標籤密度，避免手機版日期擠在一起
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
-                nticks=8, 
+                nticks=5, # 減少刻度數量
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
@@ -627,7 +625,7 @@ if stock_input:
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
-                nticks=8, 
+                nticks=5, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
