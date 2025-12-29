@@ -514,11 +514,9 @@ if stock_input:
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
-            # ========== 計算全域高低點，鎖定 Y 軸範圍 ==========
             global_min = plot_df['Low'].min()
             global_max = plot_df['High'].max()
             y_range = [global_min * 0.95, global_max * 1.05]
-            # ===============================================
             
             last_date_str = plot_df['DateStr'].iloc[-1]
             last_date_dt = datetime.strptime(last_date_str, "%Y-%m-%d")
@@ -593,22 +591,20 @@ if stock_input:
                 if target_broker:
                       st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
 
-            # ✅ 關鍵修正 1：ticklabelposition="inside" 將數字移到圖表內，實現 100% 滿版
-            # ✅ 關鍵修正 2：tickfont=dict(size=10) 縮小字體，避免手機版擁擠
             fig.update_yaxes(
                 range=y_range,
                 fixedrange=True,
                 row=1, col=1, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
-                ticklabelposition="inside", # 數字內縮，不佔邊框
-                tickfont=dict(size=10, color='rgba(255,255,255,0.7)') # 縮小字體並調整顏色
+                ticklabelposition="inside", 
+                tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=False, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
-                ticklabelposition="inside", # 數字內縮
+                ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
@@ -616,7 +612,7 @@ if stock_input:
                 row=2, col=1, 
                 secondary_y=True, 
                 showgrid=False,
-                ticklabelposition="inside", # 數字內縮
+                ticklabelposition="inside", 
                 tickfont=dict(size=10, color='yellow')
             )
 
@@ -625,10 +621,10 @@ if stock_input:
             zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
             end_idx = total_len_with_future - 1
             
-            x_min_allowed = -50
-            x_max_allowed = total_len_with_future + 50
+            # ✅ 修改：放寬 X 軸的縮放邊界 (+/- 100)，讓手指縮放更順暢
+            x_min_allowed = -100
+            x_max_allowed = total_len_with_future + 100
 
-            # ✅ 關鍵修正 3：X 軸 fixedrange=False，確保手機可以 Pinch 縮放
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
@@ -636,7 +632,7 @@ if stock_input:
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
-                fixedrange=False, # 允許 X 軸縮放
+                fixedrange=False,
                 row=1, col=1
             )
             fig.update_xaxes(
@@ -646,13 +642,13 @@ if stock_input:
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
-                fixedrange=False, # 允許 X 軸縮放
+                fixedrange=False,
                 row=2, col=1
             )
 
-            # ✅ 關鍵修正 4：高度改回 800，避免手機滑太久
+            # ✅ 修改：高度調整為 600
             fig.update_layout(
-                height=800,
+                height=600,
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
@@ -668,7 +664,7 @@ if stock_input:
                     bgcolor='rgba(0,0,0,0.5)',
                     font=dict(size=10)
                 ),
-                margin=dict(l=0, r=0, t=50, b=0) # 零邊距，配合 ticklabelposition="inside" 達成滿版
+                margin=dict(l=0, r=0, t=50, b=0)
             )
             
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
