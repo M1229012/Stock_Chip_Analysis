@@ -17,17 +17,16 @@ from datetime import datetime, timedelta
 import pytz
 from urllib.parse import urlparse, parse_qs
 import shutil
-import twstock  # 確保已匯入
+import twstock
 
 # ================= 1. 系統設定 =================
 
-# 加入 initial_sidebar_state="auto" 讓手機版預設收起側邊欄
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ 優化：加入 RWD 響應式 CSS，針對手機版調整字體與版面
+# ✅ CSS 優化：加入 RWD 顯示控制 與 手機版 Tabs 樣式
 st.markdown("""
     <style>
-    /* --- 桌機版預設樣式 --- */
+    /* --- 通用設定 --- */
     html, body, [class*="css"] { font-size: 18px !important; }
     .stDataFrame { font-size: 16px !important; }
     
@@ -38,11 +37,11 @@ st.markdown("""
         padding: 10px;
         border-radius: 5px;
         margin-top: 5px;
-        flex-wrap: wrap; /* 允許內容換行，防止破版 */
+        flex-wrap: wrap;
     }
     .metric-item {
         text-align: center;
-        width: 48%; /* 預設佔一半寬度 */
+        width: 48%;
         min-width: 100px;
     }
     .metric-label {
@@ -55,27 +54,28 @@ st.markdown("""
         font-weight: bold;
     }
 
-    /* --- 手機版優化 (螢幕寬度小於 768px) --- */
+    /* --- 手機版優化 (螢幕 < 768px) --- */
     @media (max-width: 768px) {
-        /* 全域字體縮小，增加可視內容 */
         html, body, [class*="css"] { font-size: 15px !important; }
         .stDataFrame { font-size: 14px !important; }
-        
-        /* 調整標題大小 */
         h1 { font-size: 1.8rem !important; }
         h2 { font-size: 1.5rem !important; }
         h3 { font-size: 1.3rem !important; }
+        .metric-container { padding: 8px; gap: 5px; }
+        .metric-label { font-size: 0.8rem; }
+        .metric-value { font-size: 1rem; }
+        
+        /* 手機時：隱藏電腦版區塊 */
+        div[data-testid="stVerticalBlock"]:has(span.desktop-view-marker) {
+            display: none !important;
+        }
+    }
 
-        /* 數據卡片微調 */
-        .metric-container {
-            padding: 8px;
-            gap: 5px;
-        }
-        .metric-label {
-            font-size: 0.8rem;
-        }
-        .metric-value {
-            font-size: 1rem;
+    /* --- 電腦版優化 (螢幕 > 768px) --- */
+    @media (min-width: 769px) {
+        /* 電腦時：隱藏手機版區塊 */
+        div[data-testid="stVerticalBlock"]:has(span.mobile-view-marker) {
+            display: none !important;
         }
     }
     </style>
@@ -87,7 +87,6 @@ COLOR_DOWN = '#26a69a'
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
 
-# 新增：獲取股票名稱函式
 def get_stock_name(stock_id):
     try:
         if stock_id in twstock.codes:
@@ -96,7 +95,7 @@ def get_stock_name(stock_id):
     except:
         return ""
 
-# ================= 2. 爬蟲核心 (已修正雲端相容性) =================
+# ================= 2. 爬蟲核心 =================
 
 @st.cache_resource
 def get_driver_path():
@@ -111,13 +110,11 @@ def get_driver():
     options.add_argument('--window-size=1920,1080')
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
-    # 雲端環境路徑偵測 (Streamlit Cloud 專用)
     if shutil.which("chromium"):
         options.binary_location = shutil.which("chromium")
     elif shutil.which("chromium-browser"):
         options.binary_location = shutil.which("chromium-browser")
         
-    # 決定 Driver 的 Service
     if shutil.which("chromedriver"):
         service = Service(shutil.which("chromedriver"))
     else:
@@ -128,8 +125,6 @@ def get_driver():
 
 def calculate_date_range(stock_id, days):
     try:
-        # 校正邏輯：經比對 120天與240天 yfinance 資料比券商網頁多一天 (起始日早一天)
-        # 故針對長天期減去 1 天以對齊網頁日期 (7/4 -> 7/7, 12/31 -> 1/2)
         adj_days = days
         if days >= 120:
             adj_days = days - 1
@@ -155,7 +150,6 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
-# ✅ 修改：TTL 設定為 604800 秒 (約 7 天)
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date):
     driver = get_driver()
@@ -248,7 +242,6 @@ def get_real_data_matrix(stock_id, start_date, end_date):
     finally:
         driver.quit()
 
-# ✅ 修改：TTL 設定為 604800 秒 (約 7 天)
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_params, start_date, end_date):
     driver = get_driver()
@@ -407,7 +400,6 @@ with st.sidebar:
         st.rerun()
 
 if stock_input:
-    # 獲取股票名稱
     stock_name = get_stock_name(stock_input)
     stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
 
@@ -419,57 +411,57 @@ if stock_input:
     df_price = get_stock_price(stock_input)
 
     if df_buy is not None and df_sell is not None:
-        # ✅ 修改：標題加入股票名稱
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
         st.caption(f"排行總表網址：{target_url}")
         
-        col1, col2 = st.columns(2)
-        
-        full_config = {
-            "broker": "券商分點",
-            "buy": st.column_config.NumberColumn("買進", format="%d"),
-            "sell": st.column_config.NumberColumn("賣出", format="%d"),
-            "net": st.column_config.NumberColumn("買賣超", format="%d"),
-            "pct": "佔比"
-        }
-
-        with col1:
-            st.markdown("#### 🔴 買超前 15 大")
+        # 輔助函式：渲染表格與數據 (避免程式碼重複)
+        def render_broker_table(df, sum_data, color_hex, title):
+            st.markdown(f"#### {title}")
+            
+            full_config = {
+                "broker": "券商分點",
+                "buy": st.column_config.NumberColumn("買進", format="%d"),
+                "sell": st.column_config.NumberColumn("賣出", format="%d"),
+                "net": st.column_config.NumberColumn("買賣超", format="%d"),
+                "pct": "佔比"
+            }
+            
             st.dataframe(
-                df_buy.style.map(lambda x: f'color: {COLOR_UP}; font-weight: bold', subset=['net']),
+                df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
                 use_container_width=True, height=500, hide_index=True, column_config=full_config
             )
             st.markdown(f"""
-            <div class="metric-container" style="border-left: 5px solid {COLOR_UP};">
+            <div class="metric-container" style="border-left: 5px solid {color_hex};">
                 <div class="metric-item">
-                    <div class="metric-label">合計買超張數</div>
-                    <div class="metric-value" style="color: {COLOR_UP};">{sum_buy['total']}</div>
+                    <div class="metric-label">合計{title[:2]}張數</div>
+                    <div class="metric-value" style="color: {color_hex};">{sum_data['total']}</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-label">平均買超成本</div>
-                    <div class="metric-value">{sum_buy['avg']}</div>
+                    <div class="metric-label">平均{title[:2]}成本</div>
+                    <div class="metric-value">{sum_data['avg']}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-        with col2:
-            st.markdown("#### 🟢 賣超前 15 大")
-            st.dataframe(
-                df_sell.style.map(lambda x: f'color: {COLOR_DOWN}; font-weight: bold', subset=['net']),
-                use_container_width=True, height=500, hide_index=True, column_config=full_config
-            )
-            st.markdown(f"""
-            <div class="metric-container" style="border-left: 5px solid {COLOR_DOWN};">
-                <div class="metric-item">
-                    <div class="metric-label">合計賣超張數</div>
-                    <div class="metric-value" style="color: {COLOR_DOWN};">{sum_sell['total']}</div>
-                </div>
-                <div class="metric-item">
-                    <div class="metric-label">平均賣超成本</div>
-                    <div class="metric-value">{sum_sell['avg']}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        # ========== 1. 電腦版佈局 (Columns) - 透過 CSS 在手機上隱藏 ==========
+        with st.container():
+            # 插入一個隱藏的 marker，讓 CSS 可以抓到並隱藏此區塊
+            st.markdown('<span class="desktop-view-marker"></span>', unsafe_allow_html=True)
+            col1, col2 = st.columns(2)
+            with col1:
+                render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
+            with col2:
+                render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
+
+        # ========== 2. 手機版佈局 (Tabs) - 透過 CSS 在電腦上隱藏 ==========
+        with st.container():
+            # 插入一個隱藏的 marker，讓 CSS 可以抓到並隱藏此區塊
+            st.markdown('<span class="mobile-view-marker"></span>', unsafe_allow_html=True)
+            tab1, tab2 = st.tabs(["🔴 買超排行", "🟢 賣超排行"])
+            with tab1:
+                render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
+            with tab2:
+                render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
         st.markdown("---")
 
@@ -603,27 +595,30 @@ if stock_input:
                 if target_broker:
                       st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
 
-            # 設定 Y 軸 (固定範圍)
             fig.update_yaxes(
                 range=y_range,
                 fixedrange=True,
                 row=1, col=1
             )
 
-            # ✅ 修正 X 軸：設定最大拖曳範圍 (禁止無限左右拖曳)
+            # ✅ 修正 X 軸與 K線寬度優化
+            # 邏輯：為了讓 K 棒變大，預設只顯示最後 30 天 (約一個月) 的資料
+            # 使用者可以用手指滑動看到前面的資料
             total_len_with_future = len(plot_df)
-            zoom_days = selected_days
-            zoom_start_idx = max(0, total_len_with_future - zoom_days - 3)
+            
+            # 手機版優化：預設顯示範圍固定為最後 30 根 K 棒，這樣 K 棒會很大
+            default_zoom_bars = 30
+            zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
             end_idx = total_len_with_future - 1
             
-            # 設定 minallowed (最左: 0) 與 maxallowed (最右: 最後一筆資料)
             x_min_allowed = -0.5
             x_max_allowed = total_len_with_future - 0.5
 
+            # ✅ 減少 X 軸刻度密度 (nticks=8)，避免手機日期擠在一起
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
-                nticks=20, 
+                nticks=8, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
@@ -632,14 +627,13 @@ if stock_input:
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
-                nticks=20, 
+                nticks=8, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
                 row=2, col=1
             )
 
-            # ✅ 修改：圖表標題也加入股票名稱，並調整圖例位置以適應手機
             fig.update_layout(
                 height=800, 
                 xaxis_rangeslider_visible=False, 
@@ -654,16 +648,15 @@ if stock_input:
                     y=1.02, 
                     x=0.5, 
                     xanchor="center",
-                    font=dict(size=10) # 手機版圖例縮小
+                    font=dict(size=10)
                 ),
-                margin=dict(l=10, r=10, t=80, b=10) # 減少邊界，讓手機版顯示更多內容
+                margin=dict(l=10, r=10, t=80, b=10)
             )
             
             fig.update_yaxes(title_text="股價", row=1, col=1, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
             fig.update_yaxes(title_text="每日張數", row=2, col=1, secondary_y=False, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
             fig.update_yaxes(title_text="累計張數", row=2, col=1, secondary_y=True, showgrid=False)
             
-            # ✅ 手機版優化重點：關閉 scrollZoom 避免滑動頁面時被圖表卡住
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
