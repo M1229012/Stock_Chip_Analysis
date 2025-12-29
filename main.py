@@ -114,6 +114,14 @@ def get_stock_name(stock_id):
 def render_broker_table(df, sum_data, color_hex, title):
     st.markdown(f"#### {title}")
     
+    # ✅ 修正：根據標題判斷顯示文字，符合使用者要求的格式
+    if "買超" in title:
+        label_total = "🔴 合計買超張數"
+        label_avg = "🔴 平均買超成本"
+    else:
+        label_total = "🟢 合計賣超張數"
+        label_avg = "🟢 平均賣超成本"
+
     full_config = {
         "broker": "券商分點",
         "buy": st.column_config.NumberColumn("買進", format="%d"),
@@ -126,14 +134,16 @@ def render_broker_table(df, sum_data, color_hex, title):
         df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
         use_container_width=True, height=500, hide_index=True, column_config=full_config
     )
+    
+    # ✅ 修正：使用新的 label 變數
     st.markdown(f"""
     <div class="metric-container" style="border-left: 5px solid {color_hex};">
         <div class="metric-item">
-            <div class="metric-label">合計{title[:2]}張數</div>
+            <div class="metric-label">{label_total}</div>
             <div class="metric-value" style="color: {color_hex};">{sum_data['total']}</div>
         </div>
         <div class="metric-item">
-            <div class="metric-label">平均{title[:2]}成本</div>
+            <div class="metric-label">{label_avg}</div>
             <div class="metric-value">{sum_data['avg']}</div>
         </div>
     </div>
@@ -567,7 +577,7 @@ if stock_input:
 
             missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
 
-            # ✅ 優化：新增 hovertemplate 與 customdata
+            # ✅ 優化：K 線圖 hovertemplate (顯示券商買賣超)
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -636,7 +646,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 優化：主圖 X/Y 軸新增十字線 (showspikes)
+            # ✅ 優化：主圖 X/Y 軸新增十字線 (showspikes) 與軸標籤 (showspikelabels)
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -644,8 +654,9 @@ if stock_input:
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
-                # 十字線設定
+                # 十字線與軸標籤設定
                 showspikes=True, spikemode="across", spikesnap="cursor", 
+                showspikelabels=True, # 顯示右側價格標籤
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             fig.update_yaxes(
@@ -691,15 +702,16 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
-            # ✅ 優化：主圖 X 軸新增十字線 (showspikes)
+            # ✅ 優化：主圖 X 軸新增十字線 (showspikes) 與軸標籤 (showspikelabels)
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1,
-                # 十字線設定
+                # 十字線與軸標籤設定
                 showspikes=True, spikemode="across", spikesnap="cursor", 
+                showspikelabels=True, # 顯示底部日期標籤
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
