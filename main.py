@@ -18,13 +18,13 @@ import pytz
 from urllib.parse import urlparse, parse_qs
 import shutil
 import twstock
-import copy  # ✅ 新增：用於複製圖表物件以區分手機/電腦版設定
+import copy
 
 # ================= 1. 系統設定 =================
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 優化：加入 touch-action 讓手機圖表能吃到雙指縮放
+# ✅ CSS 優化：touch-action 讓手機圖表能吃到雙指縮放
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -453,7 +453,6 @@ if stock_input:
         
         # ========== 1. 電腦版佈局 (左右並排) ==========
         with st.container():
-            # 插入 marker 供 CSS 識別 (Desktop)
             st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
             col1, col2 = st.columns(2)
             with col1:
@@ -463,7 +462,6 @@ if stock_input:
 
         # ========== 2. 手機版佈局 (Tabs 分頁) ==========
         with st.container():
-            # 插入 marker 供 CSS 識別 (Mobile)
             st.markdown('<div class="mobile-marker"></div>', unsafe_allow_html=True)
             tab1, tab2 = st.tabs(["🔴 買超排行", "🟢 賣超排行"])
             with tab1:
@@ -512,7 +510,6 @@ if stock_input:
                         merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
                         merged_df['cumulative_net'] = merged_df['買賣超_Final'].cumsum()
             
-            # 建立圖表基礎框架
             fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                 row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
@@ -528,7 +525,6 @@ if stock_input:
             global_max = plot_df['High'].max()
             y_range = [global_min * 0.95, global_max * 1.05]
             
-            # K線圖
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -590,17 +586,17 @@ if stock_input:
                 if target_broker:
                       st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
 
-            # ✅ 關鍵設定 1：全面鎖定 Y 軸 (fixedrange=True)，避免縮放時跑版
+            # 設定 Y 軸 (固定範圍，防止跑版)
             fig.update_yaxes(
                 range=y_range,
-                fixedrange=True,  # 🔒 鎖定主圖價格軸
+                fixedrange=True,  
                 row=1, col=1, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
-                fixedrange=True, # 🔒 鎖定副圖左軸
+                fixedrange=True,
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=False, 
@@ -609,7 +605,7 @@ if stock_input:
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
-                fixedrange=True, # 🔒 鎖定副圖右軸
+                fixedrange=True,
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=True, 
@@ -618,18 +614,17 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
-            # ✅ 關鍵設定 2：加入 Range Selector (區間按鈕)，防止 X 軸迷航
-            # 同時 X 軸保持 fixedrange=False 以允許縮放
+            # X 軸與縮放範圍設定
             last_dt = plot_df['Date'].iloc[-1]
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
             x_range_end = last_dt + timedelta(days=3)
 
+            # 加入 Range Selector (區間按鈕)
             common_xaxis_config = dict(
                 type='date',
                 rangebreaks=[dict(bounds=["sat", "mon"])], 
                 range=[default_zoom_start, x_range_end],
                 fixedrange=False,
-                # 加入 Range Selector 按鈕
                 rangeselector=dict(
                     buttons=list([
                         dict(count=20, label="20日", step="day", stepmode="backward"),
@@ -638,7 +633,7 @@ if stock_input:
                         dict(count=1, label="1年", step="year", stepmode="backward"),
                         dict(step="all", label="全部")
                     ]),
-                    bgcolor="rgba(50,50,50,0.8)", # 按鈕背景色
+                    bgcolor="rgba(50,50,50,0.8)",
                     font=dict(color="white")
                 )
             )
@@ -646,13 +641,11 @@ if stock_input:
             fig.update_xaxes(**common_xaxis_config, row=1, col=1)
             fig.update_xaxes(**common_xaxis_config, row=2, col=1)
 
-            # ✅ 關鍵設定 3：分離渲染 (Split Rendering)
-            # 建立兩個獨立的 Figure 物件，分別設定不同的高度與互動模式
-            
+            # 建立手機與電腦版圖表 (分離設定)
             fig_desktop = copy.deepcopy(fig)
             fig_mobile = copy.deepcopy(fig)
 
-            # 電腦版設定：高度 800，dragmode='pan' (滑鼠拖曳)
+            # 電腦版設定：完整標題，Pan 模式
             fig_desktop.update_layout(
                 height=800,
                 xaxis_rangeslider_visible=False, 
@@ -660,27 +653,28 @@ if stock_input:
                 paper_bgcolor='rgba(20,20,20,1)',
                 font=dict(color='white', size=12), 
                 title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
-                dragmode='pan', # 電腦版用 Pan
+                dragmode='pan',
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 margin=dict(l=0, r=0, t=50, b=0)
             )
 
-            # 手機版設定：高度 520 (縮小)，dragmode='zoom' (雙指縮放優化)
+            # ✅ 手機版關鍵修正：縮短標題，增加頂部邊距，Zoom 模式
             fig_mobile.update_layout(
-                height=520, 
+                height=800, 
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
-                font=dict(color='white', size=12), 
-                title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
-                dragmode='zoom', # ✅ 手機版改成 Zoom 模式，配合 touch-action: none 達到最佳縮放體驗
+                font=dict(color='white', size=12),
+                # 縮短標題以防重疊
+                title=dict(text=f"{stock_input} {stock_name}", font=dict(size=16)), 
+                dragmode='zoom', # 適合雙指縮放
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-                margin=dict(l=0, r=0, t=50, b=0)
+                # 增加上方邊距 (t=100)，讓按鈕與標題分離
+                margin=dict(l=0, r=0, t=100, b=0)
             )
             
-            # 設定互動組態
             config = {
                 "scrollZoom": True,
                 "displayModeBar": False,
@@ -688,7 +682,6 @@ if stock_input:
                 "doubleClick": "reset"
             }
 
-            # ✅ 渲染：利用 CSS 標記分別顯示
             with st.container():
                 st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
                 st.plotly_chart(fig_desktop, use_container_width=True, config=config)
