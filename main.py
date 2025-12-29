@@ -21,12 +21,16 @@ import twstock  # 確保已匯入
 
 # ================= 1. 系統設定 =================
 
-st.set_page_config(layout="wide", page_title="籌碼K線")
+# 加入 initial_sidebar_state="auto" 讓手機版預設收起側邊欄
+st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
+# ✅ 優化：加入 RWD 響應式 CSS，針對手機版調整字體與版面
 st.markdown("""
     <style>
+    /* --- 桌機版預設樣式 --- */
     html, body, [class*="css"] { font-size: 18px !important; }
     .stDataFrame { font-size: 16px !important; }
+    
     .metric-container {
         display: flex;
         justify-content: space-between;
@@ -34,18 +38,45 @@ st.markdown("""
         padding: 10px;
         border-radius: 5px;
         margin-top: 5px;
+        flex-wrap: wrap; /* 允許內容換行，防止破版 */
     }
     .metric-item {
         text-align: center;
-        width: 48%;
+        width: 48%; /* 預設佔一半寬度 */
+        min-width: 100px;
     }
     .metric-label {
         font-size: 0.9rem;
         color: #aaa;
+        white-space: nowrap;
     }
     .metric-value {
         font-size: 1.2rem;
         font-weight: bold;
+    }
+
+    /* --- 手機版優化 (螢幕寬度小於 768px) --- */
+    @media (max-width: 768px) {
+        /* 全域字體縮小，增加可視內容 */
+        html, body, [class*="css"] { font-size: 15px !important; }
+        .stDataFrame { font-size: 14px !important; }
+        
+        /* 調整標題大小 */
+        h1 { font-size: 1.8rem !important; }
+        h2 { font-size: 1.5rem !important; }
+        h3 { font-size: 1.3rem !important; }
+
+        /* 數據卡片微調 */
+        .metric-container {
+            padding: 8px;
+            gap: 5px;
+        }
+        .metric-label {
+            font-size: 0.8rem;
+        }
+        .metric-value {
+            font-size: 1rem;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -608,23 +639,31 @@ if stock_input:
                 row=2, col=1
             )
 
-            # ✅ 修改：圖表標題也加入股票名稱
+            # ✅ 修改：圖表標題也加入股票名稱，並調整圖例位置以適應手機
             fig.update_layout(
                 height=800, 
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
-                font=dict(color='white'), 
-                title=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
+                font=dict(color='white', size=12), 
+                title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
                 dragmode='pan',
                 hovermode='x unified',
-                legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center")
+                legend=dict(
+                    orientation="h", 
+                    y=1.02, 
+                    x=0.5, 
+                    xanchor="center",
+                    font=dict(size=10) # 手機版圖例縮小
+                ),
+                margin=dict(l=10, r=10, t=80, b=10) # 減少邊界，讓手機版顯示更多內容
             )
             
             fig.update_yaxes(title_text="股價", row=1, col=1, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
             fig.update_yaxes(title_text="每日張數", row=2, col=1, secondary_y=False, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
             fig.update_yaxes(title_text="累計張數", row=2, col=1, secondary_y=True, showgrid=False)
             
-            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+            # ✅ 手機版優化重點：關閉 scrollZoom 避免滑動頁面時被圖表卡住
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
