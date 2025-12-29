@@ -286,6 +286,7 @@ def get_real_data_matrix(stock_id, start_date, end_date):
     finally:
         driver.quit()
 
+# ✅ 使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date):
     BHID, b, c_val = broker_key
@@ -674,7 +675,8 @@ if stock_input:
                 title=dict(
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
                     font=dict(size=16),
-                    x=0, xanchor="left"
+                    x=0, xanchor="left",
+                    y=1.18 
                 ), 
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
@@ -722,7 +724,8 @@ if stock_input:
                 height=520, 
                 dragmode='pan',  # 手機用 pan + 雙指縮放
                 updatemenus=mobile_updatemenus, # 覆蓋按鈕位置
-                title=dict(fig.layout.title, y=1.18), # 標題往上
+                # ✅ 修正：使用 to_plotly_json() 避免 title 物件無法 dict() 的錯誤
+                title={**fig.layout.title.to_plotly_json(), "y": 1.18, "yanchor": "top"},
                 margin=dict(l=0, r=0, t=110, b=0) # 上邊距加高
             )
             
