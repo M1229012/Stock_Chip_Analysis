@@ -23,7 +23,7 @@ import twstock
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 修正：加上 ">" 符號限制選取範圍，解決畫面全黑問題
+# ✅ CSS 強力修正：使用「直接子層 >」語法，徹底解決畫面全黑問題
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -66,8 +66,8 @@ st.markdown("""
         .metric-label { font-size: 0.8rem; }
         .metric-value { font-size: 1rem; }
         
-        /* 手機時：隱藏包含 desktop-marker 的區塊 */
-        /* ✅ 修正：使用 > 確保只隱藏該層容器，避免誤殺最外層導致全黑 */
+        /* 手機時：隱藏包含 desktop-marker 的容器 */
+        /* ✅ 關鍵修正：加上 > .element-container 確保只隱藏直接包含標記的容器，不向上誤殺 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
             display: none !important;
         }
@@ -75,8 +75,8 @@ st.markdown("""
 
     /* --- 電腦版 RWD (螢幕 > 768px) --- */
     @media (min-width: 769px) {
-        /* 電腦時：隱藏包含 mobile-marker 的區塊 */
-        /* ✅ 修正：使用 > 確保只隱藏該層容器 */
+        /* 電腦時：隱藏包含 mobile-marker 的容器 */
+        /* ✅ 關鍵修正：加上 > .element-container 確保只隱藏直接包含標記的容器 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
             display: none !important;
         }
@@ -604,7 +604,7 @@ if stock_input:
                 row=1, col=1
             )
 
-            # ✅ K線放大：預設只顯示最近 20 根
+            # ✅ 變更：K線放大 (預設只顯示最後 20 根)
             total_len_with_future = len(plot_df)
             default_zoom_bars = 20 
             zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
@@ -613,7 +613,7 @@ if stock_input:
             x_min_allowed = -0.5
             x_max_allowed = total_len_with_future - 0.5
 
-            # ✅ 減少日期密度
+            # ✅ 變更：nticks=5 減少日期密度
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
@@ -640,6 +640,7 @@ if stock_input:
                 paper_bgcolor='rgba(20,20,20,1)',
                 font=dict(color='white', size=12), 
                 title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
+                # ✅ 關鍵修改：dragmode='pan' 讓手指拖動，兩指縮放；滑鼠滾輪也可縮放
                 dragmode='pan',
                 hovermode='x unified',
                 legend=dict(
@@ -656,6 +657,7 @@ if stock_input:
             fig.update_yaxes(title_text="每日張數", row=2, col=1, secondary_y=False, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
             fig.update_yaxes(title_text="累計張數", row=2, col=1, secondary_y=True, showgrid=False)
             
-            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
+            # ✅ 關鍵修改：開啟 scrollZoom: True 讓滾輪生效，並支援手機縮放
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
