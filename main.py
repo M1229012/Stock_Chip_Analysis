@@ -194,8 +194,9 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
+# ✅ 修改：增加 refresh_nonce 參數以強制更新
 @st.cache_data(persist="disk", ttl=604800)
-def get_real_data_matrix(stock_id, start_date, end_date):
+def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
     url = f"{base_url}?a={stock_id}&e={start_date}&f={end_date}"
@@ -286,9 +287,9 @@ def get_real_data_matrix(stock_id, start_date, end_date):
     finally:
         driver.quit()
 
-# ✅ 使用 tuple key 增加 cache 穩定性
+# ✅ 修改：增加 refresh_nonce 參數以強制更新
 @st.cache_data(persist="disk", ttl=604800)
-def get_specific_broker_daily(stock_id, broker_key, start_date, end_date):
+def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
     BHID, b, c_val = broker_key
     driver = get_driver()
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
@@ -443,6 +444,13 @@ with st.sidebar:
     
     if st.button("查詢", type="primary"):
         st.rerun()
+    
+    # ✅ 新增：強制更新按鈕
+    if "refresh_nonce" not in st.session_state:
+        st.session_state.refresh_nonce = 0
+    if st.button("🔄 強制更新籌碼資料（忽略快取）"):
+        st.session_state.refresh_nonce = int(time.time())
+        st.rerun()
 
 if stock_input:
     stock_name = get_stock_name(stock_input)
@@ -450,8 +458,11 @@ if stock_input:
 
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
+    # ✅ 呼叫 get_real_data_matrix 時傳入 refresh_nonce
     with st.spinner(f"正在分析 {stock_display} 近 {selected_days} 交易日 ({rank_start_date} ~ {rank_end_date})..."):
-        df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date)
+        df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(
+            stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce
+        )
         
     df_price = get_stock_price(stock_input)
 
@@ -503,16 +514,18 @@ if stock_input:
 
             if broker_params:
                 long_start_date = df_price['DateStr'].iloc[0] 
-                
-                # ✅ 修正：確保爬取完整兩年數據
                 long_end_date = df_price['DateStr'].iloc[-1] 
                 
                 broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
-                merged_key = (stock_input, broker_key)
+                # ✅ 邏輯微調：merged_key 加入 refresh_nonce，確保強制更新時能重跑
+                merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
 
                 if st.session_state.get('merged_key') != merged_key:
                     with st.spinner(f"正在爬取 {target_broker} 完整 2 年每日明細..."):
-                        broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date)
+                        # ✅ 呼叫時傳入 refresh_nonce
+                        broker_daily_df, detail_url = get_specific_broker_daily(
+                            stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce
+                        )
                         
                         st.markdown(f"**🔗 正在爬取單一券商網址：** `{detail_url}`")
                         
@@ -543,12 +556,10 @@ if stock_input:
             plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
             x_data = plot_df['Date']
 
-            # ✅ 關鍵新增：計算非交易日 (missing dates) 以填補空隙
             trading_days = pd.to_datetime(plot_df['Date']).dt.normalize().dropna().unique()
             trading_days = pd.DatetimeIndex(trading_days).sort_values()
 
             min_dt = trading_days[0]
-            # 注意：用最後一根K當右界，避免把你右側留白也壓縮掉
             last_dt_calc = trading_days[-1]
 
             all_days = pd.date_range(min_dt, last_dt_calc, freq="D")
@@ -565,7 +576,6 @@ if stock_input:
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
-                # ✅ 修正：均線使用 go.Scatter 確保顯示，並強制轉數值
                 if ma in plot_df.columns:
                     plot_df[ma] = pd.to_numeric(plot_df[ma], errors='coerce')
                     fig.add_trace(go.Scatter(
@@ -578,7 +588,6 @@ if stock_input:
             if merged_df is not None:
                 extended_buy_sell = list(merged_df['買賣超_Final'])
                 
-                # ✅ 修正：確保累計資料為數值
                 merged_df['cumulative_net'] = pd.to_numeric(merged_df['cumulative_net'], errors='coerce')
                 
                 bar_colors = [
@@ -587,7 +596,6 @@ if stock_input:
                     for v in extended_buy_sell
                 ]
                 
-                # ✅ 修正：透明度 0.55
                 fig.add_trace(go.Bar(
                     x=x_data, 
                     y=extended_buy_sell, 
@@ -596,7 +604,6 @@ if stock_input:
                     opacity=0.55
                 ), row=2, col=1, secondary_y=False)
                 
-                # ✅ 修正：使用 go.Scatter 確保折線顯示
                 fig.add_trace(go.Scatter(
                     x=x_data,
                     y=merged_df['cumulative_net'],
@@ -674,10 +681,9 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
-            # ✅ 修正：使用 values=missing_dates 來隱藏非交易日 (含國定假日)
             fig.update_xaxes(
                 type='date',
-                rangebreaks=[dict(values=missing_dates)], # 改用 values
+                rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1
@@ -685,13 +691,12 @@ if stock_input:
             
             fig.update_xaxes(
                 type='date',
-                rangebreaks=[dict(values=missing_dates)], # 改用 values
+                rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=2, col=1
             )
 
-            # ✅ 修正：移除 activebgcolor，showactive=False
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -711,7 +716,7 @@ if stock_input:
                         type="buttons",
                         direction="right",
                         buttons=range_buttons,
-                        showactive=False, # ✅ 關閉 active 高亮
+                        showactive=False,
                         x=1.0, xanchor="right",
                         y=1.0, yanchor="top",   
                         bgcolor="rgba(50,50,50,0.8)",
@@ -737,7 +742,7 @@ if stock_input:
                     type="buttons",
                     direction="right",
                     buttons=range_buttons,
-                    showactive=False, # ✅ 關閉 active 高亮
+                    showactive=False, 
                     x=1.0, xanchor="right",
                     y=0.92, yanchor="top", 
                     bgcolor="rgba(50,50,50,0.8)",
