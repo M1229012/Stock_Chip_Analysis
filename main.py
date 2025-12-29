@@ -194,7 +194,6 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
-# ✅ 修改：增加 refresh_nonce 參數以強制更新
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
@@ -287,7 +286,7 @@ def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     finally:
         driver.quit()
 
-# ✅ 修改：增加 refresh_nonce 參數以強制更新
+# ✅ 使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
     BHID, b, c_val = broker_key
@@ -445,7 +444,7 @@ with st.sidebar:
     if st.button("查詢", type="primary"):
         st.rerun()
     
-    # ✅ 新增：強制更新按鈕
+    # ✅ 強制更新按鈕
     if "refresh_nonce" not in st.session_state:
         st.session_state.refresh_nonce = 0
     if st.button("🔄 強制更新籌碼資料（忽略快取）"):
@@ -458,7 +457,6 @@ if stock_input:
 
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
-    # ✅ 呼叫 get_real_data_matrix 時傳入 refresh_nonce
     with st.spinner(f"正在分析 {stock_display} 近 {selected_days} 交易日 ({rank_start_date} ~ {rank_end_date})..."):
         df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(
             stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce
@@ -517,12 +515,10 @@ if stock_input:
                 long_end_date = df_price['DateStr'].iloc[-1] 
                 
                 broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
-                # ✅ 邏輯微調：merged_key 加入 refresh_nonce，確保強制更新時能重跑
                 merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
 
                 if st.session_state.get('merged_key') != merged_key:
                     with st.spinner(f"正在爬取 {target_broker} 完整 2 年每日明細..."):
-                        # ✅ 呼叫時傳入 refresh_nonce
                         broker_daily_df, detail_url = get_specific_broker_daily(
                             stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce
                         )
@@ -553,6 +549,10 @@ if stock_input:
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
+            # ✅ 確保有 '買賣超_Final' 欄位，供 customdata 使用 (若無券商數據則補 0)
+            if '買賣超_Final' not in plot_df.columns:
+                plot_df['買賣超_Final'] = 0
+
             plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
             x_data = plot_df['Date']
 
@@ -567,11 +567,19 @@ if stock_input:
 
             missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
 
+            # ✅ 優化：新增 hovertemplate 與 customdata
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
                 increasing_line_color=COLOR_UP, decreasing_line_color=COLOR_DOWN,
-                increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN
+                increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN,
+                customdata=plot_df[['DateStr', '買賣超_Final']], # 傳入日期與買賣超
+                hovertemplate=(
+                    "收盤：%{close:.1f}<br>"
+                    "日期：%{customdata[0]}<br>"
+                    "買賣超：%{customdata[1]:.0f} 張<br>"
+                    "<extra></extra>" # 隱藏 trace name
+                )
             ), row=1, col=1)
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
@@ -628,14 +636,17 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # Y 軸設定
+            # ✅ 優化：主圖 X/Y 軸新增十字線 (showspikes)
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
                 row=1, col=1, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
-                tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
+                tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
+                # 十字線設定
+                showspikes=True, spikemode="across", spikesnap="cursor", 
+                spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             fig.update_yaxes(
                 fixedrange=True, 
@@ -656,7 +667,6 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
-            # 按鈕逻辑
             last_dt_val = plot_df['Date'].iloc[-1]
             last_dt_str = last_dt_val.strftime('%Y-%m-%d')
             x_range_end_val = last_dt_val + timedelta(days=3)
@@ -681,12 +691,16 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
+            # ✅ 優化：主圖 X 軸新增十字線 (showspikes)
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
-                row=1, col=1
+                row=1, col=1,
+                # 十字線設定
+                showspikes=True, spikemode="across", spikesnap="cursor", 
+                spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
             fig.update_xaxes(
@@ -697,6 +711,7 @@ if stock_input:
                 row=2, col=1
             )
 
+            # ✅ 優化：標題字體加大 (size=22)、hovermode='x'
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -704,12 +719,12 @@ if stock_input:
                 font=dict(color='white', size=12), 
                 title=dict(
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
-                    font=dict(size=16),
+                    font=dict(size=22, color='white'), # 字體加大
                     x=0, xanchor="left",
                     y=0.985, yanchor="top",
                     pad=dict(t=8, b=0, l=0, r=0)
                 ), 
-                hovermode='closest',
+                hovermode='x', # 改為 x 以配合十字線
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 updatemenus=[
                     dict(
