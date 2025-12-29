@@ -300,6 +300,7 @@ def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     finally:
         driver.quit()
 
+# ✅ 使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
     BHID, b, c_val = broker_key
@@ -577,8 +578,12 @@ if stock_input:
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
+            # ✅ 先保證 Date 欄位存在並排序，避免 KeyError
+            plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
+            plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+            
             # --- 區間按鈕邏輯 ---
-            last_dt = plot_df['Date'].iloc[-1] # 資料最後一天 (Timestamp)
+            last_dt = plot_df['Date'].iloc[-1] # 資料最後一天
 
             def dt_nbars(n: int):
                 idx = max(0, len(plot_df) - n)
@@ -616,7 +621,7 @@ if stock_input:
             if '買賣超_Final' not in plot_df.columns:
                 plot_df['買賣超_Final'] = 0
 
-            plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
+            # ✅ 移除重複的 Date 轉換，只取 x_data
             x_data = plot_df['Date']
 
             trading_days = pd.to_datetime(plot_df['Date']).dt.normalize().dropna().unique()
