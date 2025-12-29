@@ -23,7 +23,7 @@ import twstock
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 強力修正：使用「直接子層 >」語法，徹底解決畫面全黑問題
+# ✅ CSS 優化：保持 RWD 與隱藏邏輯
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -67,7 +67,6 @@ st.markdown("""
         .metric-value { font-size: 1rem; }
         
         /* 手機時：隱藏包含 desktop-marker 的容器 */
-        /* ✅ 關鍵修正：加上 > .element-container 確保只隱藏直接包含標記的容器，不向上誤殺 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
             display: none !important;
         }
@@ -76,7 +75,6 @@ st.markdown("""
     /* --- 電腦版 RWD (螢幕 > 768px) --- */
     @media (min-width: 769px) {
         /* 電腦時：隱藏包含 mobile-marker 的容器 */
-        /* ✅ 關鍵修正：加上 > .element-container 確保只隱藏直接包含標記的容器 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
             display: none !important;
         }
@@ -100,7 +98,6 @@ def get_stock_name(stock_id):
     except:
         return ""
 
-# ✅ 渲染表格函式
 def render_broker_table(df, sum_data, color_hex, title):
     st.markdown(f"#### {title}")
     
@@ -511,18 +508,18 @@ if stock_input:
             
             fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
-                row_heights=[0.8, 0.2], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
+                row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
             )
             
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
-            # ========== 計算 2 年全域最高與最低價 ==========
+            # ========== 計算全域高低點，鎖定 Y 軸範圍 ==========
             global_min = plot_df['Low'].min()
             global_max = plot_df['High'].max()
             y_range = [global_min * 0.95, global_max * 1.05]
+            # ===============================================
             
-            # ========== 加入 T+3 空白日期 ==========
             last_date_str = plot_df['DateStr'].iloc[-1]
             last_date_dt = datetime.strptime(last_date_str, "%Y-%m-%d")
             
@@ -538,7 +535,6 @@ if stock_input:
             
             x_data = plot_df['DateStr']
             
-            # 1. K線圖
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -546,7 +542,6 @@ if stock_input:
                 increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN
             ), row=1, col=1)
 
-            # 2. 均線
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
                 fig.add_trace(go.Scatter(
@@ -567,7 +562,7 @@ if stock_input:
                 fig.add_trace(go.Bar(
                     x=x_data, 
                     y=extended_buy_sell, 
-                    name='每日買賣超(張)', 
+                    name='每日買賣超', 
                     marker_color=bar_colors,
                     opacity=1.0
                 ), row=2, col=1, secondary_y=False)
@@ -575,7 +570,7 @@ if stock_input:
                 fig.add_trace(go.Scatter(
                     x=x_data,
                     y=extended_cum_net,
-                    name='累計庫存(2年)',
+                    name='累計庫存',
                     mode='lines',
                     line=dict(color='yellow', width=2),
                     connectgaps=True
@@ -598,22 +593,26 @@ if stock_input:
                 if target_broker:
                       st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
 
+            # ✅ 修正：Y 軸設定為 fixedrange=True (鎖定)，但指定精確的 range
+            # 這樣既不會跑出 10000 這種誇張數字，也能保證 K 線都在畫面內
             fig.update_yaxes(
-                range=y_range,
-                fixedrange=True,
-                row=1, col=1
+                range=y_range, # 強制設定範圍
+                fixedrange=True, # 禁止 Y 軸拖曳縮放，防止跑版
+                row=1, col=1, 
+                showgrid=True, gridcolor='rgba(128,128,128,0.2)'
             )
+            fig.update_yaxes(showticklabels=True, row=2, col=1, secondary_y=False, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+            fig.update_yaxes(showticklabels=True, row=2, col=1, secondary_y=True, showgrid=False)
 
-            # ✅ 變更：K線放大 (預設只顯示最後 20 根)
             total_len_with_future = len(plot_df)
             default_zoom_bars = 20 
             zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
             end_idx = total_len_with_future - 1
             
-            x_min_allowed = -0.5
-            x_max_allowed = total_len_with_future - 0.5
+            # ✅ 保留寬鬆的邊界 (minallowed/maxallowed) 以維持電腦版拖曳順暢度
+            x_min_allowed = -50
+            x_max_allowed = total_len_with_future + 50
 
-            # ✅ 變更：nticks=5 減少日期密度
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
@@ -634,30 +633,25 @@ if stock_input:
             )
 
             fig.update_layout(
-                height=800, 
+                height=1200,
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
                 font=dict(color='white', size=12), 
                 title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
-                # ✅ 關鍵修改：dragmode='pan' 讓手指拖動，兩指縮放；滑鼠滾輪也可縮放
                 dragmode='pan',
                 hovermode='x unified',
                 legend=dict(
                     orientation="h", 
-                    y=1.02, 
-                    x=0.5, 
-                    xanchor="center",
+                    y=1, x=0, 
+                    xanchor="left",
+                    yanchor="top",
+                    bgcolor='rgba(0,0,0,0.5)',
                     font=dict(size=10)
                 ),
-                margin=dict(l=10, r=10, t=80, b=10)
+                margin=dict(l=0, r=0, t=50, b=0)
             )
             
-            fig.update_yaxes(title_text="股價", row=1, col=1, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
-            fig.update_yaxes(title_text="每日張數", row=2, col=1, secondary_y=False, showgrid=True, gridcolor='rgba(128,128,128,0.2)')
-            fig.update_yaxes(title_text="累計張數", row=2, col=1, secondary_y=True, showgrid=False)
-            
-            # ✅ 關鍵修改：開啟 scrollZoom: True 讓滾輪生效，並支援手機縮放
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
