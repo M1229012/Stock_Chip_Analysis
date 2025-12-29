@@ -114,7 +114,6 @@ def get_stock_name(stock_id):
 def render_broker_table(df, sum_data, color_hex, title):
     st.markdown(f"#### {title}")
     
-    # ✅ 修正：根據標題判斷顯示文字，符合使用者要求的格式
     if "買超" in title:
         label_total = "🔴 合計買超張數"
         label_avg = "🔴 平均買超成本"
@@ -135,7 +134,6 @@ def render_broker_table(df, sum_data, color_hex, title):
         use_container_width=True, height=500, hide_index=True, column_config=full_config
     )
     
-    # ✅ 修正：使用新的 label 變數
     st.markdown(f"""
     <div class="metric-container" style="border-left: 5px solid {color_hex};">
         <div class="metric-item">
@@ -559,7 +557,6 @@ if stock_input:
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
-            # ✅ 確保有 '買賣超_Final' 欄位，供 customdata 使用 (若無券商數據則補 0)
             if '買賣超_Final' not in plot_df.columns:
                 plot_df['買賣超_Final'] = 0
 
@@ -577,18 +574,18 @@ if stock_input:
 
             missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
 
-            # ✅ 優化：K 線圖 hovertemplate (顯示券商買賣超)
+            # ✅ 優化：調整 hovertemplate 順序：日期 -> 收盤 -> 買賣超
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
                 increasing_line_color=COLOR_UP, decreasing_line_color=COLOR_DOWN,
                 increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN,
-                customdata=plot_df[['DateStr', '買賣超_Final']], # 傳入日期與買賣超
+                customdata=plot_df[['DateStr', '買賣超_Final']], 
                 hovertemplate=(
-                    "收盤：%{close:.1f}<br>"
                     "日期：%{customdata[0]}<br>"
+                    "收盤：%{close:.1f}<br>"
                     "買賣超：%{customdata[1]:.0f} 張<br>"
-                    "<extra></extra>" # 隱藏 trace name
+                    "<extra></extra>"
                 )
             ), row=1, col=1)
 
@@ -596,11 +593,13 @@ if stock_input:
             for ma in selected_mas:
                 if ma in plot_df.columns:
                     plot_df[ma] = pd.to_numeric(plot_df[ma], errors='coerce')
+                    # ✅ 優化：MA 不顯示 hover，避免雜亂
                     fig.add_trace(go.Scatter(
                         x=x_data, y=plot_df[ma], name=ma,
                         mode='lines',
                         connectgaps=True,
-                        line=dict(color=ma_colors.get(ma, 'white'), width=1.5)
+                        line=dict(color=ma_colors.get(ma, 'white'), width=1.5),
+                        hoverinfo='skip' 
                     ), row=1, col=1)
 
             if merged_df is not None:
@@ -614,21 +613,25 @@ if stock_input:
                     for v in extended_buy_sell
                 ]
                 
+                # ✅ 優化：Bar 不顯示 hover
                 fig.add_trace(go.Bar(
                     x=x_data, 
                     y=extended_buy_sell, 
                     name='每日買賣超', 
                     marker_color=bar_colors,
-                    opacity=0.55
+                    opacity=0.55,
+                    hoverinfo='skip'
                 ), row=2, col=1, secondary_y=False)
                 
+                # ✅ 優化：累計折線不顯示 hover
                 fig.add_trace(go.Scatter(
                     x=x_data,
                     y=merged_df['cumulative_net'],
                     name='兩年累計買賣超',
                     mode='lines',
                     line=dict(color='yellow', width=2.5),
-                    connectgaps=True
+                    connectgaps=True,
+                    hoverinfo='skip'
                 ), row=2, col=1, secondary_y=True)
                 
                 start_dt = pd.to_datetime(rank_start_date)
@@ -646,7 +649,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 優化：主圖 X/Y 軸新增十字線 (showspikes) 與軸標籤 (showspikelabels)
+            # ✅ 修正：移除 showspikelabels，改用 spikesnap='data'，修復十字線錯誤
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -654,9 +657,7 @@ if stock_input:
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
-                # 十字線與軸標籤設定
-                showspikes=True, spikemode="across", spikesnap="cursor", 
-                showspikelabels=True, # 顯示右側價格標籤
+                showspikes=True, spikemode="across", spikesnap="data", 
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             fig.update_yaxes(
@@ -702,16 +703,14 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
-            # ✅ 優化：主圖 X 軸新增十字線 (showspikes) 與軸標籤 (showspikelabels)
+            # ✅ 修正：移除 showspikelabels，改用 spikesnap='data'
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1,
-                # 十字線與軸標籤設定
-                showspikes=True, spikemode="across", spikesnap="cursor", 
-                showspikelabels=True, # 顯示底部日期標籤
+                showspikes=True, spikemode="across", spikesnap="data", 
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
@@ -723,7 +722,7 @@ if stock_input:
                 row=2, col=1
             )
 
-            # ✅ 優化：標題字體加大 (size=22)、hovermode='x'
+            # ✅ 優化：hovermode='x unified'，加入 hoverlabel 樣式
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -731,12 +730,17 @@ if stock_input:
                 font=dict(color='white', size=12), 
                 title=dict(
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
-                    font=dict(size=22, color='white'), # 字體加大
+                    font=dict(size=22, color='white'), 
                     x=0, xanchor="left",
                     y=0.985, yanchor="top",
                     pad=dict(t=8, b=0, l=0, r=0)
                 ), 
-                hovermode='x', # 改為 x 以配合十字線
+                hovermode='x unified', # ✅ 統一顯示
+                hoverlabel=dict( # ✅ 樣式優化
+                    bgcolor="rgba(0,0,0,0.75)",
+                    font=dict(color="white", size=12),
+                    align="left"
+                ),
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 updatemenus=[
                     dict(
