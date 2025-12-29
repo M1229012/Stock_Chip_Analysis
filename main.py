@@ -574,7 +574,7 @@ if stock_input:
                     kwargs.pop("ticklabelposition", None)
                     fig.update_xaxes(row=row, col=col, **kwargs)
 
-            # ✅ 修正：使用 Streamlit 原生按鈕控制區間
+            # 使用 Streamlit 原生按鈕控制區間
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
@@ -583,7 +583,7 @@ if stock_input:
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
             
             # --- 區間按鈕邏輯 ---
-            last_dt = plot_df['Date'].iloc[-1] # 資料最後一天
+            last_dt = plot_df['Date'].iloc[-1] 
 
             def dt_nbars(n: int):
                 idx = max(0, len(plot_df) - n)
@@ -607,9 +607,8 @@ if stock_input:
                 if cols[i].button(k, use_container_width=True):
                     st.session_state.range_key = k
             
-            # 計算當前選擇的 start/end
             start_dt, end_dt = ranges[st.session_state.range_key]
-            x_range_end_val = end_dt + timedelta(days=3) # 右側留白
+            x_range_end_val = end_dt + timedelta(days=3)
 
             # ---------------------
 
@@ -621,7 +620,7 @@ if stock_input:
             if '買賣超_Final' not in plot_df.columns:
                 plot_df['買賣超_Final'] = 0
 
-            # ✅ 移除重複的 Date 轉換，只取 x_data
+            # 移除重複的 Date 轉換
             x_data = plot_df['Date']
 
             trading_days = pd.to_datetime(plot_df['Date']).dt.normalize().dropna().unique()
@@ -631,10 +630,9 @@ if stock_input:
             last_dt_calc = trading_days[-1]
 
             all_days = pd.date_range(min_dt, last_dt_calc, freq="D")
-            missing_days = all_days.difference(trading_days)
-            missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
+            missing_days_dt = pd.date_range(min_dt, last_dt_calc, freq="D").difference(trading_days)
+            missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days_dt]
 
-            # 確保欄位是數字
             plot_df["買賣超_Final"] = pd.to_numeric(plot_df.get("買賣超_Final", 0), errors="coerce").fillna(0)
 
             custom = np.stack([
@@ -648,7 +646,7 @@ if stock_input:
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
                 increasing_line_color=COLOR_UP, decreasing_line_color=COLOR_DOWN,
                 increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN,
-                hoverinfo="skip" # 關掉預設 hover
+                hoverinfo="skip" 
             ), row=1, col=1)
 
             # 隱形 Close 點
@@ -659,9 +657,9 @@ if stock_input:
                 marker=dict(size=18, opacity=0), 
                 customdata=custom,
                 hovertemplate=(
-                    "收盤：%{y:.1f}<br>"
-                    "日期：%{customdata[0]}<br>"
-                    "買賣超：%{customdata[1]:,.0f} 張"
+                    "<b>日期：%{customdata[0]}</b><br>"
+                    "<b>收盤：%{y:.1f}</b><br>"
+                    "<b>買賣超：%{customdata[1]:,.0f} 張</b>"
                     "<extra></extra>"
                 ),
                 showlegend=False,
@@ -760,7 +758,7 @@ if stock_input:
                 fig, row=1, col=1,
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
-                range=[start_dt, x_range_end_val], # 使用按鈕選擇的區間
+                range=[start_dt, x_range_end_val], 
                 fixedrange=False,
                 showspikes=True, spikemode="across", spikesnap="data",
                 showspikelabels=True,
@@ -771,14 +769,14 @@ if stock_input:
                 fig, row=2, col=1,
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
-                range=[start_dt, x_range_end_val], # 使用按鈕選擇的區間
+                range=[start_dt, x_range_end_val], 
                 fixedrange=False,
                 showspikes=True, spikemode="across", spikesnap="data",
                 showspikelabels=True,
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
 
-            # ✅ 修正：移除 updatemenus，因為已改用 Streamlit 按鈕
+            # ✅ 修正：移除 updatemenus，優化 hoverlabel 樣式 (字體 16 + 加粗)
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -793,14 +791,14 @@ if stock_input:
                 ), 
                 hovermode='x unified', 
                 hoverlabel=dict(
-                    bgcolor="rgba(0,0,0,0.75)",
-                    font=dict(color="white", size=12),
+                    bgcolor="rgba(0,0,0,0.78)", # 深色背景
+                    bordercolor="rgba(255,255,255,0.25)",
+                    font=dict(color="white", size=16), # 放大字體
                     align="left"
                 ),
                 spikedistance=-1, 
                 hoverdistance=50,
                 legend=dict(orientation="h", y=0.88, yanchor="top", x=0, xanchor="left", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-                # 移除了 updatemenus
             )
 
             fig_desktop = copy.deepcopy(fig)
@@ -812,7 +810,6 @@ if stock_input:
                 margin=dict(l=0, r=0, t=120, b=0) 
             )
 
-            # 手機版：只需設定高度與標題位置，無需處理 updatemenus
             fig_mobile.update_layout(
                 height=520, 
                 dragmode='pan',  
