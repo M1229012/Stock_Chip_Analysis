@@ -552,17 +552,21 @@ if stock_input:
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
-                # ✅ 修正 1：均線改回 mode='lines'，確保顯示
-                fig.add_trace(go.Scattergl(
-                    x=x_data, y=plot_df[ma], name=ma,
-                    mode='lines',
-                    connectgaps=True,
-                    line=dict(color=ma_colors.get(ma, 'white'), width=1.5)
-                ), row=1, col=1)
+                # ✅ 修正 1：均線改回 go.Scatter，確保顯示且資料為數值
+                if ma in plot_df.columns:
+                    plot_df[ma] = pd.to_numeric(plot_df[ma], errors='coerce')
+                    fig.add_trace(go.Scatter(
+                        x=x_data, y=plot_df[ma], name=ma,
+                        mode='lines',
+                        connectgaps=True,
+                        line=dict(color=ma_colors.get(ma, 'white'), width=1.5)
+                    ), row=1, col=1)
 
             if merged_df is not None:
                 extended_buy_sell = list(merged_df['買賣超_Final'])
-                extended_cum_net = list(merged_df['cumulative_net'])
+                
+                # ✅ 修正 2：確保累計資料為數值
+                merged_df['cumulative_net'] = pd.to_numeric(merged_df['cumulative_net'], errors='coerce')
                 
                 bar_colors = [
                     COLOR_UP if (v is not None and v > 0) else 
@@ -579,10 +583,10 @@ if stock_input:
                     opacity=0.55
                 ), row=2, col=1, secondary_y=False)
                 
-                # ✅ 修正 3：累計折線圖加粗，確保顯示
-                fig.add_trace(go.Scattergl(
+                # ✅ 修正 3：累計折線圖加粗，確保顯示，使用 go.Scatter
+                fig.add_trace(go.Scatter(
                     x=x_data,
-                    y=extended_cum_net,
+                    y=merged_df['cumulative_net'],
                     name='兩年累計買賣超',
                     mode='lines',
                     line=dict(color='yellow', width=2.5),
@@ -673,6 +677,7 @@ if stock_input:
                 row=2, col=1
             )
 
+            # ✅ 修正：移除 activebgcolor 以解決 ValueError，並將 showactive=False
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -692,7 +697,7 @@ if stock_input:
                         type="buttons",
                         direction="right",
                         buttons=range_buttons,
-                        showactive=False,
+                        showactive=False, # ✅ 修正: 關閉 active 高亮
                         x=1.0, xanchor="right",
                         y=1.0, yanchor="top",   
                         bgcolor="rgba(50,50,50,0.8)",
@@ -713,12 +718,13 @@ if stock_input:
                 margin=dict(l=0, r=0, t=120, b=0) 
             )
 
+            # 手機版：重新定義 updatemenus 位置 + 加大上邊距
             mobile_updatemenus = [
                 dict(
                     type="buttons",
                     direction="right",
                     buttons=range_buttons,
-                    showactive=False,
+                    showactive=False, # ✅ 修正
                     x=1.0, xanchor="right",
                     y=0.92, yanchor="top", 
                     bgcolor="rgba(50,50,50,0.8)",
