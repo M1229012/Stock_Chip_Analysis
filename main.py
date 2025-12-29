@@ -621,17 +621,12 @@ if stock_input:
             zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
             end_idx = total_len_with_future - 1
             
-            # ✅ 修改：放寬 X 軸的縮放邊界 (+/- 100)，讓手指縮放更順暢
-            x_min_allowed = -100
-            x_max_allowed = total_len_with_future + 100
-
+            # ✅ 移除移動範圍限制 (minallowed / maxallowed) 解決手指縮放卡頓
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
                 nticks=5, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
-                minallowed=x_min_allowed,
-                maxallowed=x_max_allowed,
                 fixedrange=False,
                 row=1, col=1
             )
@@ -640,15 +635,13 @@ if stock_input:
                 tickmode='auto', 
                 nticks=5, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
-                minallowed=x_min_allowed,
-                maxallowed=x_max_allowed,
                 fixedrange=False,
                 row=2, col=1
             )
 
-            # ✅ 修改：高度調整為 600
+            # ✅ 恢復高度為 800
             fig.update_layout(
-                height=600,
+                height=800,
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
