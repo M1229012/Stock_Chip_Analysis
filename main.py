@@ -23,7 +23,7 @@ import twstock
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 優化：修正可能導致黑畫面的選取器，並優化手機顯示
+# ✅ CSS 修正：加上 ">" 符號限制選取範圍，解決畫面全黑問題
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -66,18 +66,19 @@ st.markdown("""
         .metric-label { font-size: 0.8rem; }
         .metric-value { font-size: 1rem; }
         
-        /* 手機時：隱藏標記為 desktop-view 的區塊 */
-        /* 使用更安全的選取方式，避免舊瀏覽器崩潰 */
-        div[data-testid="stVerticalBlock"]:has(div.desktop-marker) {
-            display: none;
+        /* 手機時：隱藏包含 desktop-marker 的區塊 */
+        /* ✅ 修正：使用 > 確保只隱藏該層容器，避免誤殺最外層導致全黑 */
+        div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
+            display: none !important;
         }
     }
 
     /* --- 電腦版 RWD (螢幕 > 768px) --- */
     @media (min-width: 769px) {
-        /* 電腦時：隱藏標記為 mobile-view 的區塊 */
-        div[data-testid="stVerticalBlock"]:has(div.mobile-marker) {
-            display: none;
+        /* 電腦時：隱藏包含 mobile-marker 的區塊 */
+        /* ✅ 修正：使用 > 確保只隱藏該層容器 */
+        div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
+            display: none !important;
         }
     }
     </style>
@@ -99,7 +100,7 @@ def get_stock_name(stock_id):
     except:
         return ""
 
-# ✅ 將渲染表格函式移至全域，防止縮排錯誤導致執行崩潰
+# ✅ 渲染表格函式
 def render_broker_table(df, sum_data, color_hex, title):
     st.markdown(f"#### {title}")
     
@@ -603,20 +604,20 @@ if stock_input:
                 row=1, col=1
             )
 
-            # ✅ 關鍵修改：預設只顯示最近 20 根 K 棒，讓 K 棒變大 (手機版體驗更好)
+            # ✅ K線放大：預設只顯示最近 20 根
             total_len_with_future = len(plot_df)
-            default_zoom_bars = 20 # 預設顯示數量，數字越小K棒越大
+            default_zoom_bars = 20 
             zoom_start_idx = max(0, total_len_with_future - default_zoom_bars)
             end_idx = total_len_with_future - 1
             
             x_min_allowed = -0.5
             x_max_allowed = total_len_with_future - 0.5
 
-            # ✅ 關鍵修改：nticks=5 大幅減少日期標籤密度，避免手機版日期擠在一起
+            # ✅ 減少日期密度
             fig.update_xaxes(
                 type='category', 
                 tickmode='auto', 
-                nticks=5, # 減少刻度數量
+                nticks=5, 
                 range=[zoom_start_idx - 0.5, end_idx + 0.5], 
                 minallowed=x_min_allowed,
                 maxallowed=x_max_allowed,
