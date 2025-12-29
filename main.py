@@ -504,7 +504,7 @@ if stock_input:
             if broker_params:
                 long_start_date = df_price['DateStr'].iloc[0] 
                 
-                # ✅ 修正 2：確保爬取完整兩年數據，而非僅限於統計區間
+                # ✅ 修正：確保爬取完整兩年數據
                 long_end_date = df_price['DateStr'].iloc[-1] 
                 
                 broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
@@ -543,6 +543,19 @@ if stock_input:
             plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
             x_data = plot_df['Date']
 
+            # ✅ 關鍵新增：計算非交易日 (missing dates) 以填補空隙
+            trading_days = pd.to_datetime(plot_df['Date']).dt.normalize().dropna().unique()
+            trading_days = pd.DatetimeIndex(trading_days).sort_values()
+
+            min_dt = trading_days[0]
+            # 注意：用最後一根K當右界，避免把你右側留白也壓縮掉
+            last_dt_calc = trading_days[-1]
+
+            all_days = pd.date_range(min_dt, last_dt_calc, freq="D")
+            missing_days = all_days.difference(trading_days)
+
+            missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
+
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -552,7 +565,7 @@ if stock_input:
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
-                # ✅ 修正 1：均線改回 go.Scatter，確保顯示且資料為數值
+                # ✅ 修正：均線使用 go.Scatter 確保顯示，並強制轉數值
                 if ma in plot_df.columns:
                     plot_df[ma] = pd.to_numeric(plot_df[ma], errors='coerce')
                     fig.add_trace(go.Scatter(
@@ -565,7 +578,7 @@ if stock_input:
             if merged_df is not None:
                 extended_buy_sell = list(merged_df['買賣超_Final'])
                 
-                # ✅ 修正 2：確保累計資料為數值
+                # ✅ 修正：確保累計資料為數值
                 merged_df['cumulative_net'] = pd.to_numeric(merged_df['cumulative_net'], errors='coerce')
                 
                 bar_colors = [
@@ -574,7 +587,7 @@ if stock_input:
                     for v in extended_buy_sell
                 ]
                 
-                # ✅ 修正 3：柱狀圖透明度改為 0.55
+                # ✅ 修正：透明度 0.55
                 fig.add_trace(go.Bar(
                     x=x_data, 
                     y=extended_buy_sell, 
@@ -583,7 +596,7 @@ if stock_input:
                     opacity=0.55
                 ), row=2, col=1, secondary_y=False)
                 
-                # ✅ 修正 3：累計折線圖加粗，確保顯示，使用 go.Scatter
+                # ✅ 修正：使用 go.Scatter 確保折線顯示
                 fig.add_trace(go.Scatter(
                     x=x_data,
                     y=merged_df['cumulative_net'],
@@ -661,9 +674,10 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
+            # ✅ 修正：使用 values=missing_dates 來隱藏非交易日 (含國定假日)
             fig.update_xaxes(
                 type='date',
-                rangebreaks=[dict(bounds=["sat", "mon"])], 
+                rangebreaks=[dict(values=missing_dates)], # 改用 values
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1
@@ -671,13 +685,13 @@ if stock_input:
             
             fig.update_xaxes(
                 type='date',
-                rangebreaks=[dict(bounds=["sat", "mon"])], 
+                rangebreaks=[dict(values=missing_dates)], # 改用 values
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=2, col=1
             )
 
-            # ✅ 修正：移除 activebgcolor 以解決 ValueError，並將 showactive=False
+            # ✅ 修正：移除 activebgcolor，showactive=False
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -697,7 +711,7 @@ if stock_input:
                         type="buttons",
                         direction="right",
                         buttons=range_buttons,
-                        showactive=False, # ✅ 修正: 關閉 active 高亮
+                        showactive=False, # ✅ 關閉 active 高亮
                         x=1.0, xanchor="right",
                         y=1.0, yanchor="top",   
                         bgcolor="rgba(50,50,50,0.8)",
@@ -718,13 +732,12 @@ if stock_input:
                 margin=dict(l=0, r=0, t=120, b=0) 
             )
 
-            # 手機版：重新定義 updatemenus 位置 + 加大上邊距
             mobile_updatemenus = [
                 dict(
                     type="buttons",
                     direction="right",
                     buttons=range_buttons,
-                    showactive=False, # ✅ 修正
+                    showactive=False, # ✅ 關閉 active 高亮
                     x=1.0, xanchor="right",
                     y=0.92, yanchor="top", 
                     bgcolor="rgba(50,50,50,0.8)",
