@@ -548,7 +548,6 @@ if stock_input:
                 increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN
             ), row=1, col=1)
 
-            # ✅ 修正：確保均線 (MA) 被畫出
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
                 fig.add_trace(go.Scattergl(
@@ -556,7 +555,6 @@ if stock_input:
                     line=dict(color=ma_colors.get(ma, 'white'), width=1)
                 ), row=1, col=1)
 
-            # ✅ 修正：確保副圖（買賣超 & 累計庫存）被畫出
             if merged_df is not None:
                 extended_buy_sell = list(merged_df['買賣超_Final'])
                 extended_cum_net = list(merged_df['cumulative_net'])
@@ -599,7 +597,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # Y 軸設定
+            # ✅ 修正：主圖 Y 軸改為 autorange=True 搭配 fixedrange=True
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -668,7 +666,7 @@ if stock_input:
                 row=2, col=1
             )
 
-            # ✅ 修正：標題位置與按鈕樣式優化
+            # ✅ 修正：移除 activebgcolor 以解決 ValueError，並將 showactive=False
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -678,8 +676,8 @@ if stock_input:
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
                     font=dict(size=16),
                     x=0, xanchor="left",
-                    y=0.985, yanchor="top", # ✅ 修正: 標題往下
-                    pad=dict(t=8, b=0, l=0, r=0) # ✅ 修正: 標題內距
+                    y=0.985, yanchor="top",
+                    pad=dict(t=8, b=0, l=0, r=0)
                 ), 
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
@@ -688,12 +686,12 @@ if stock_input:
                         type="buttons",
                         direction="right",
                         buttons=range_buttons,
-                        showactive=True,
+                        showactive=False, # ✅ 修正: 關閉 active 高亮，解決白底白字
                         x=1.0, xanchor="right",
                         y=1.0, yanchor="top",   
                         bgcolor="rgba(50,50,50,0.8)",
-                        activebgcolor="rgba(90,90,90,1.0)",    # ✅ 修正: 選取背景色
-                        bordercolor="rgba(255,255,255,0.35)",  # ✅ 修正: 邊框
+                        # ✅ 修正: 移除了不支援的 activebgcolor
+                        bordercolor="rgba(255,255,255,0.35)",
                         borderwidth=1,
                         font=dict(color="white", size=11),
                         pad=dict(r=6, t=6)
@@ -704,11 +702,10 @@ if stock_input:
             fig_desktop = copy.deepcopy(fig)
             fig_mobile = copy.deepcopy(fig)
 
-            # 桌機版：加大上邊距
             fig_desktop.update_layout(
                 height=800,
                 dragmode='pan',
-                margin=dict(l=0, r=0, t=120, b=0) # ✅ 修正: margin.t 加大
+                margin=dict(l=0, r=0, t=120, b=0) 
             )
 
             # 手機版：重新定義 updatemenus 位置 + 加大上邊距
@@ -717,12 +714,12 @@ if stock_input:
                     type="buttons",
                     direction="right",
                     buttons=range_buttons,
-                    showactive=True,
+                    showactive=False, # ✅ 修正
                     x=1.0, xanchor="right",
                     y=0.92, yanchor="top", 
                     bgcolor="rgba(50,50,50,0.8)",
-                    activebgcolor="rgba(90,90,90,1.0)",    # ✅ 修正: 選取背景色
-                    bordercolor="rgba(255,255,255,0.35)",  # ✅ 修正: 邊框
+                    # ✅ 修正: 移除了不支援的 activebgcolor
+                    bordercolor="rgba(255,255,255,0.35)", 
                     borderwidth=1,
                     font=dict(color="white", size=11),
                     pad=dict(r=6, t=6)
@@ -731,10 +728,10 @@ if stock_input:
 
             fig_mobile.update_layout(
                 height=520, 
-                dragmode='pan',  # 手機用 pan + 雙指縮放
-                updatemenus=mobile_updatemenus, # 覆蓋按鈕位置
+                dragmode='pan',  
+                updatemenus=mobile_updatemenus, 
                 title={**fig.layout.title.to_plotly_json(), "y": 1.0, "yanchor": "top"},
-                margin=dict(l=0, r=0, t=155, b=0) # ✅ 修正: 上邊距再加高
+                margin=dict(l=0, r=0, t=155, b=0) 
             )
             
             config = {
