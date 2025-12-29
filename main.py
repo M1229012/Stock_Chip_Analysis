@@ -503,7 +503,9 @@ if stock_input:
 
             if broker_params:
                 long_start_date = df_price['DateStr'].iloc[0] 
-                long_end_date = rank_end_date 
+                
+                # ✅ 修正 2：確保爬取完整兩年數據，而非僅限於統計區間
+                long_end_date = df_price['DateStr'].iloc[-1] 
                 
                 broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
                 merged_key = (stock_input, broker_key)
@@ -550,9 +552,12 @@ if stock_input:
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
+                # ✅ 修正 1：均線改回 mode='lines'，確保顯示
                 fig.add_trace(go.Scattergl(
                     x=x_data, y=plot_df[ma], name=ma,
-                    line=dict(color=ma_colors.get(ma, 'white'), width=1)
+                    mode='lines',
+                    connectgaps=True,
+                    line=dict(color=ma_colors.get(ma, 'white'), width=1.5)
                 ), row=1, col=1)
 
             if merged_df is not None:
@@ -565,20 +570,22 @@ if stock_input:
                     for v in extended_buy_sell
                 ]
                 
+                # ✅ 修正 3：柱狀圖透明度改為 0.55
                 fig.add_trace(go.Bar(
                     x=x_data, 
                     y=extended_buy_sell, 
                     name='每日買賣超', 
                     marker_color=bar_colors,
-                    opacity=1.0
+                    opacity=0.55
                 ), row=2, col=1, secondary_y=False)
                 
+                # ✅ 修正 3：累計折線圖加粗，確保顯示
                 fig.add_trace(go.Scattergl(
                     x=x_data,
                     y=extended_cum_net,
-                    name='累計庫存',
+                    name='兩年累計買賣超',
                     mode='lines',
-                    line=dict(color='yellow', width=2),
+                    line=dict(color='yellow', width=2.5),
                     connectgaps=True
                 ), row=2, col=1, secondary_y=True)
                 
@@ -597,7 +604,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 修正：主圖 Y 軸改為 autorange=True 搭配 fixedrange=True
+            # Y 軸設定
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -666,7 +673,6 @@ if stock_input:
                 row=2, col=1
             )
 
-            # ✅ 修正：移除 activebgcolor 以解決 ValueError，並將 showactive=False
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -686,11 +692,10 @@ if stock_input:
                         type="buttons",
                         direction="right",
                         buttons=range_buttons,
-                        showactive=False, # ✅ 修正: 關閉 active 高亮，解決白底白字
+                        showactive=False,
                         x=1.0, xanchor="right",
                         y=1.0, yanchor="top",   
                         bgcolor="rgba(50,50,50,0.8)",
-                        # ✅ 修正: 移除了不支援的 activebgcolor
                         bordercolor="rgba(255,255,255,0.35)",
                         borderwidth=1,
                         font=dict(color="white", size=11),
@@ -708,17 +713,15 @@ if stock_input:
                 margin=dict(l=0, r=0, t=120, b=0) 
             )
 
-            # 手機版：重新定義 updatemenus 位置 + 加大上邊距
             mobile_updatemenus = [
                 dict(
                     type="buttons",
                     direction="right",
                     buttons=range_buttons,
-                    showactive=False, # ✅ 修正
+                    showactive=False,
                     x=1.0, xanchor="right",
                     y=0.92, yanchor="top", 
                     bgcolor="rgba(50,50,50,0.8)",
-                    # ✅ 修正: 移除了不支援的 activebgcolor
                     bordercolor="rgba(255,255,255,0.35)", 
                     borderwidth=1,
                     font=dict(color="white", size=11),
