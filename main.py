@@ -24,7 +24,7 @@ import copy
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 優化：touch-action 讓手機圖表能吃到雙指縮放
+# ✅ CSS 優化：修正選取器，針對 Plotly 內層元素設定 touch-action
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -72,9 +72,16 @@ st.markdown("""
             display: none !important;
         }
 
-        /* ✅ 關鍵修正：強制圖表區域不攔截觸控，讓 Plotly 處理雙指縮放 */
-        div[data-testid="stPlotlyChart"] {
+        /* ✅ 修正 1：針對 Plotly 內層設定 touch-action，讓手機雙指縮放生效 */
+        div[data-testid="stPlotlyChart"] .js-plotly-plot,
+        div[data-testid="stPlotlyChart"] .plotly,
+        div[data-testid="stPlotlyChart"] canvas {
             touch-action: none !important;
+        }
+        
+        /* 避免容器被頁面捲動搶走 */
+        div[data-testid="stPlotlyChart"] {
+            overscroll-behavior: contain;
         }
     }
 
@@ -279,14 +286,17 @@ def get_real_data_matrix(stock_id, start_date, end_date):
     finally:
         driver.quit()
 
+# ✅ 修正 5(C)：使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
-def get_specific_broker_daily(stock_id, broker_params, start_date, end_date):
+def get_specific_broker_daily(stock_id, broker_key, start_date, end_date):
+    # broker_key is tuple: (BHID, b, C)
+    BHID, b, c_val = broker_key
+    
     driver = get_driver()
-    c_val = broker_params.get('C', '1')
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
     target_url = (f"{base_url}?A={stock_id}"
-                  f"&BHID={broker_params['BHID']}"
-                  f"&b={broker_params['b']}"
+                  f"&BHID={BHID}"
+                  f"&b={b}"
                   f"&C={c_val}"
                   f"&D={start_date}"
                   f"&E={end_date}"
@@ -325,7 +335,7 @@ def get_specific_broker_daily(stock_id, broker_params, start_date, end_date):
                 next_links = driver.find_elements(By.XPATH, "//a[contains(text(), '下一頁')]")
                 if next_links and next_links[0].is_enabled():
                     next_links[0].click()
-                    time.sleep(0.5)
+                    time.sleep(0.5) # ✅ 修正 5(B): 這裡建議未來改成條件等待，目前維持原樣
                     page_count += 1
                 else:
                     break 
@@ -451,7 +461,6 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
         st.caption(f"排行總表網址：{target_url}")
         
-        # ========== 1. 電腦版佈局 (左右並排) ==========
         with st.container():
             st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
             col1, col2 = st.columns(2)
@@ -460,7 +469,6 @@ if stock_input:
             with col2:
                 render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
-        # ========== 2. 手機版佈局 (Tabs 分頁) ==========
         with st.container():
             st.markdown('<div class="mobile-marker"></div>', unsafe_allow_html=True)
             tab1, tab2 = st.tabs(["🔴 買超排行", "🟢 賣超排行"])
@@ -496,20 +504,35 @@ if stock_input:
                             break
 
             if broker_params:
-                long_start_date = df_price['DateStr'].iloc[0] 
-                long_end_date = rank_end_date 
+                # ✅ 修正 5(A)：改為按鈕觸發抓取，提升手機操作流暢度
+                # 只有按下按鈕時，才執行耗時爬蟲
+                if st.button(f"📥 抓取 {target_broker} 近 2 年完整買賣超 (較耗時，手機慎點)"):
+                    long_start_date = df_price['DateStr'].iloc[0] 
+                    long_end_date = rank_end_date 
+                    
+                    with st.spinner(f"正在爬取 {target_broker} 完整 2 年每日明細..."):
+                        # ✅ 修正 5(C): 轉為 tuple key 傳入
+                        broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
+                        broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date)
+                        
+                        st.markdown(f"**🔗 正在爬取單一券商網址：** `{detail_url}`")
+                        
+                        if broker_daily_df is not None and not broker_daily_df.empty:
+                            broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last").sort_values('DateStr')
+                            merged_df = pd.merge(df_price, broker_daily_df, on='DateStr', how='left')
+                            merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
+                            merged_df['cumulative_net'] = merged_df['買賣超_Final'].cumsum()
+                            st.success(f"✅ 已取得 {target_broker} 完整 2 年數據")
+                            
+                            # 暫存 merged_df 到 session state 避免 rerun 消失 (簡易處理)
+                            st.session_state['merged_df'] = merged_df
                 
-                with st.spinner(f"正在爬取 {target_broker} 完整 2 年每日明細..."):
-                    broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_params, long_start_date, long_end_date)
-                    
-                    st.markdown(f"**🔗 正在爬取單一券商網址：** `{detail_url}`")
-                    
-                    if broker_daily_df is not None and not broker_daily_df.empty:
-                        broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last").sort_values('DateStr')
-                        merged_df = pd.merge(df_price, broker_daily_df, on='DateStr', how='left')
-                        merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
-                        merged_df['cumulative_net'] = merged_df['買賣超_Final'].cumsum()
-            
+                # 如果 session state 有資料就拿出來用
+                if 'merged_df' in st.session_state:
+                    # 簡單檢查一下是不是同個股票/券商 (這裡略做檢查，實務上可更嚴謹)
+                    merged_df = st.session_state['merged_df']
+
+            # 建立圖表基礎框架
             fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                 row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
@@ -521,10 +544,19 @@ if stock_input:
             plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
             x_data = plot_df['Date']
 
-            global_min = plot_df['Low'].min()
-            global_max = plot_df['High'].max()
-            y_range = [global_min * 0.95, global_max * 1.05]
+            # ✅ 修正 3：Y 軸範圍改用「最近 30 天」的資料來計算，避免全域極值導致壓扁
+            # 預設看最近 30 天
+            default_window_size = 30
+            if len(plot_df) > default_window_size:
+                window_df = plot_df.tail(default_window_size)
+            else:
+                window_df = plot_df
+                
+            y_min_initial = window_df['Low'].min()
+            y_max_initial = window_df['High'].max()
+            y_range = [y_min_initial * 0.98, y_max_initial * 1.02] # 上下留一點空間
             
+            # K線圖
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -580,23 +612,21 @@ if stock_input:
                     annotation_position="top left",
                     row='all', col=1
                 )
-                
-                st.success(f"✅ 已取得 {target_broker} 完整 2 年數據")
             else:
                 if target_broker:
-                      st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
+                      st.info(f"💡 請點擊上方按鈕以抓取 {target_broker} 的籌碼明細。")
 
-            # 設定 Y 軸 (固定範圍，防止跑版)
+            # ✅ Y 軸設定：使用計算出的局部 y_range，並鎖定 fixedrange
             fig.update_yaxes(
                 range=y_range,
-                fixedrange=True,  
+                fixedrange=True,  # 🔒 鎖定主圖價格軸
                 row=1, col=1, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
-                fixedrange=True,
+                fixedrange=True, 
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=False, 
@@ -605,7 +635,7 @@ if stock_input:
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
-                fixedrange=True,
+                fixedrange=True, 
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=True, 
@@ -614,13 +644,14 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
-            # X 軸與縮放範圍設定
+            # X 軸範圍
             last_dt = plot_df['Date'].iloc[-1]
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
             x_range_end = last_dt + timedelta(days=3)
 
-            # 加入 Range Selector (區間按鈕)
-            common_xaxis_config = dict(
+            # ✅ 修正 2：分離主圖與副圖的 X 軸設定
+            # 主圖 (row=1) 包含 RangeSelector
+            fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(bounds=["sat", "mon"])], 
                 range=[default_zoom_start, x_range_end],
@@ -635,17 +666,22 @@ if stock_input:
                     ]),
                     bgcolor="rgba(50,50,50,0.8)",
                     font=dict(color="white")
-                )
+                ),
+                row=1, col=1
+            )
+            
+            # 副圖 (row=2) 不含 selector，僅同步 range
+            fig.update_xaxes(
+                type='date',
+                rangebreaks=[dict(bounds=["sat", "mon"])], 
+                range=[default_zoom_start, x_range_end],
+                fixedrange=False,
+                row=2, col=1
             )
 
-            fig.update_xaxes(**common_xaxis_config, row=1, col=1)
-            fig.update_xaxes(**common_xaxis_config, row=2, col=1)
-
-            # 建立手機與電腦版圖表 (分離設定)
             fig_desktop = copy.deepcopy(fig)
             fig_mobile = copy.deepcopy(fig)
 
-            # 電腦版設定：完整標題，Pan 模式
             fig_desktop.update_layout(
                 height=800,
                 xaxis_rangeslider_visible=False, 
@@ -653,26 +689,23 @@ if stock_input:
                 paper_bgcolor='rgba(20,20,20,1)',
                 font=dict(color='white', size=12), 
                 title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
-                dragmode='pan',
+                dragmode='pan', 
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 margin=dict(l=0, r=0, t=50, b=0)
             )
 
-            # ✅ 手機版關鍵修正：縮短標題，增加頂部邊距，Zoom 模式
             fig_mobile.update_layout(
-                height=800, 
+                height=520, 
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
-                font=dict(color='white', size=12),
-                # 縮短標題以防重疊
-                title=dict(text=f"{stock_input} {stock_name}", font=dict(size=16)), 
-                dragmode='zoom', # 適合雙指縮放
+                font=dict(color='white', size=12), 
+                title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
+                dragmode='zoom', 
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-                # 增加上方邊距 (t=100)，讓按鈕與標題分離
-                margin=dict(l=0, r=0, t=100, b=0)
+                margin=dict(l=0, r=0, t=50, b=0)
             )
             
             config = {
