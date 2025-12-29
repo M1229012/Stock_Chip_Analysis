@@ -676,7 +676,7 @@ if stock_input:
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
                     font=dict(size=16),
                     x=0, xanchor="left",
-                    y=1.18 
+                    y=1.0, yanchor="top" # ✅ 修正: y 不要超過 1
                 ), 
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
@@ -687,7 +687,7 @@ if stock_input:
                         buttons=range_buttons,
                         showactive=True,
                         x=1.0, xanchor="right",
-                        y=1.18, yanchor="top",   
+                        y=1.0, yanchor="top",   # ✅ 修正: y 不要超過 1
                         bgcolor="rgba(50,50,50,0.8)",
                         font=dict(color="white", size=11),
                         pad=dict(r=6, t=6)
@@ -702,7 +702,7 @@ if stock_input:
             fig_desktop.update_layout(
                 height=800,
                 dragmode='pan',
-                margin=dict(l=0, r=0, t=80, b=0)
+                margin=dict(l=0, r=0, t=95, b=0) # ✅ 修正: margin.t 加大
             )
 
             # 手機版：重新定義 updatemenus 位置 (下一行)
@@ -713,7 +713,7 @@ if stock_input:
                     buttons=range_buttons,
                     showactive=True,
                     x=1.0, xanchor="right",
-                    y=1.06, yanchor="top", 
+                    y=0.92, yanchor="top", # ✅ 修正: 下一行 y 設低一點
                     bgcolor="rgba(50,50,50,0.8)",
                     font=dict(color="white", size=11),
                     pad=dict(r=6, t=6)
@@ -724,9 +724,9 @@ if stock_input:
                 height=520, 
                 dragmode='pan',  # 手機用 pan + 雙指縮放
                 updatemenus=mobile_updatemenus, # 覆蓋按鈕位置
-                # ✅ 修正：使用 to_plotly_json() 避免 title 物件無法 dict() 的錯誤
-                title={**fig.layout.title.to_plotly_json(), "y": 1.18, "yanchor": "top"},
-                margin=dict(l=0, r=0, t=110, b=0) # 上邊距加高
+                # ✅ 修正：使用 to_plotly_json() 避免 title 物件無法 dict() 的錯誤，且 y=1.0
+                title={**fig.layout.title.to_plotly_json(), "y": 1.0, "yanchor": "top"},
+                margin=dict(l=0, r=0, t=125, b=0) # ✅ 修正: 上邊距再加高
             )
             
             config = {
