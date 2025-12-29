@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 import shutil
 import twstock
 import copy
+import numpy as np # ✅ 新增 numpy
 
 # ================= 1. 系統設定 =================
 
@@ -91,6 +92,11 @@ st.markdown("""
         div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
             display: none !important;
         }
+    }
+    
+    /* ✅ 新增：強制讓 Plotly 區塊優先吃 touch 事件 (補充) */
+    div[data-testid="stPlotlyChart"] > div {
+      touch-action: none;   
     }
     </style>
     """, unsafe_allow_html=True)
@@ -549,12 +555,11 @@ if stock_input:
                 else:
                     merged_df = st.session_state.get('merged_df')
 
-            # ✅ 新增安全更新函式 (放在最靠近使用的地方)
+            # ✅ 新增安全更新函式
             def safe_update_yaxes(fig, row, col, **kwargs):
                 try:
                     fig.update_yaxes(row=row, col=col, **kwargs)
                 except ValueError:
-                    # 移除可能導致錯誤的參數
                     kwargs.pop("showspikelabels", None)
                     kwargs.pop("spikesnap", None)
                     kwargs.pop("ticklabelposition", None)
@@ -592,30 +597,45 @@ if stock_input:
             all_days = pd.date_range(min_dt, last_dt_calc, freq="D")
             missing_days = all_days.difference(trading_days)
 
-            missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
+            # ✅ 修正：使用 DatetimeIndex 計算 rangebreaks，處理國定假日/颱風天
+            missing_days_dt = pd.date_range(min_dt, last_dt_calc, freq="D").difference(trading_days)
+            missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days_dt]
 
+            # ✅ 修正：確保買賣超欄位可用、且是數字 (給 customdata 用)
+            plot_df["買賣超_Final"] = pd.to_numeric(
+                plot_df.get("買賣超_Final", 0),
+                errors="coerce"
+            ).fillna(0)
+
+            # ✅ 修正：customdata 處理 (numpy)
+            custom = np.stack([
+                plot_df["DateStr"].astype(str).to_numpy(),
+                plot_df["買賣超_Final"].to_numpy(dtype=float),
+            ], axis=-1)
+
+            # 1) K 線本體：hoverinfo='skip'
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
                 increasing_line_color=COLOR_UP, decreasing_line_color=COLOR_DOWN,
                 increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN,
-                customdata=plot_df[['DateStr', '買賣超_Final']], 
-                hovertemplate=(
-                    "日期：%{customdata[0]}<br>"
-                    "收盤：%{close:.1f}<br>"
-                    "買賣超：%{customdata[1]:.0f} 張<br>"
-                    "<extra></extra>"
-                )
+                hoverinfo="skip" # ✅ 關鍵：關掉預設 hover
             ), row=1, col=1)
 
-            # 隱形 Close 點，確保 spikesnap="data" 永遠對準收盤價
+            # 2) 隱形 Close 點：負責 hover 與 spikesnap
             fig.add_trace(go.Scatter(
                 x=x_data,
                 y=plot_df["Close"],
                 mode="markers",
-                marker=dict(size=12, opacity=0), 
+                marker=dict(size=18, opacity=0), # 透明點，加大 size 方便 hover
+                customdata=custom,
+                hovertemplate=(
+                    "收盤：%{y:.1f}<br>"
+                    "日期：%{customdata[0]}<br>"
+                    "買賣超：%{customdata[1]:,.0f} 張"
+                    "<extra></extra>"
+                ),
                 showlegend=False,
-                hoverinfo="skip"
             ), row=1, col=1)
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
@@ -675,7 +695,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 修正：使用 safe_update_yaxes 取代原生的 fig.update_yaxes
+            # ✅ 修正：使用 safe_update_yaxes，只留 spikes (無 labels 以防萬一)
             safe_update_yaxes(
                 fig, row=1, col=1,
                 autorange=True,
@@ -683,11 +703,9 @@ if stock_input:
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
-                showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True, # 如果版本支援則顯示，否則自動忽略
+                showspikes=True, spikemode="across", spikesnap="cursor", # 游標吸附
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
-            
             fig.update_yaxes(
                 fixedrange=True, 
                 showticklabels=True, 
@@ -707,19 +725,22 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
+            # ✅ 修正：Range 按鈕使用 Timestamp
             last_dt_val = plot_df['Date'].iloc[-1]
-            last_dt_str = last_dt_val.strftime('%Y-%m-%d')
-            x_range_end_val = last_dt_val + timedelta(days=3)
-
-            def dt_nbars_str(n: int):
+            
+            def dt_nbars(n: int):
                 idx = max(0, len(plot_df) - n)
-                return plot_df['Date'].iloc[idx].strftime('%Y-%m-%d')
+                return plot_df['Date'].iloc[idx]
 
-            R_20  = [dt_nbars_str(20),  last_dt_str]
-            R_3M  = [dt_nbars_str(60),  last_dt_str]
-            R_6M  = [dt_nbars_str(120), last_dt_str]
-            R_1Y  = [dt_nbars_str(240), last_dt_str]
-            R_ALL = [plot_df['Date'].iloc[0].strftime('%Y-%m-%d'), last_dt_str]
+            R_20  = [dt_nbars(20),  last_dt_val]
+            R_3M  = [dt_nbars(60),  last_dt_val]
+            R_6M  = [dt_nbars(120), last_dt_val]
+            R_1Y  = [dt_nbars(240), last_dt_val]
+            R_ALL = [plot_df['Date'].iloc[0], last_dt_val]
+
+            # 預設 zoom (右邊留白)
+            default_zoom_start = dt_nbars(30)
+            x_range_end_val = last_dt_val + timedelta(days=3)
 
             range_buttons = [
                 dict(label="20日", method="relayout", args=[{"xaxis.range": R_20, "xaxis2.range": R_20}]),
@@ -729,32 +750,34 @@ if stock_input:
                 dict(label="全部", method="relayout", args=[{"xaxis.range": R_ALL, "xaxis2.range": R_ALL}]),
             ]
 
-            default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
-
-            # ✅ 修正：使用 safe_update_xaxes 取代原生的 fig.update_xaxes
+            # ✅ 修正：X 軸使用 rangebreaks (bounds + values)
             safe_update_xaxes(
                 fig, row=1, col=1,
                 type='date',
-                rangebreaks=[dict(values=missing_dates)], 
+                rangebreaks=[
+                    dict(bounds=["sat", "mon"]),
+                    dict(values=missing_days_dt), # 修正: 直接用 DatetimeIndex
+                ], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
-                showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True,
+                showspikes=True, spikemode="across", spikesnap="cursor",
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
-            # ✅ 修正：副圖 (row=2) X 軸也使用 safe_update_xaxes
             safe_update_xaxes(
                 fig, row=2, col=1,
                 type='date',
-                rangebreaks=[dict(values=missing_dates)], 
+                rangebreaks=[
+                    dict(bounds=["sat", "mon"]),
+                    dict(values=missing_days_dt),
+                ], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
-                showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True,
+                showspikes=True, spikemode="across", spikesnap="cursor",
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
 
+            # ✅ 修正：標題放大、按鈕配色
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -762,7 +785,7 @@ if stock_input:
                 font=dict(color='white', size=12), 
                 title=dict(
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
-                    font=dict(size=22, color='white'), 
+                    font=dict(size=28, color='white'), # 放大到 28
                     x=0, xanchor="left",
                     y=0.985, yanchor="top",
                     pad=dict(t=8, b=0, l=0, r=0)
@@ -773,18 +796,17 @@ if stock_input:
                     font=dict(color="white", size=12),
                     align="left"
                 ),
-                spikedistance=-1, 
-                hoverdistance=50,
                 legend=dict(orientation="h", y=0.88, yanchor="top", x=0, xanchor="left", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 updatemenus=[
                     dict(
                         type="buttons",
                         direction="right",
                         buttons=range_buttons,
-                        showactive=False,
+                        showactive=True,
                         x=1.0, xanchor="right",
                         y=1.0, yanchor="top",   
                         bgcolor="rgba(50,50,50,0.8)",
+                        activebgcolor="rgba(120,120,120,0.6)", # ✅ 修正: 避免白底
                         bordercolor="rgba(255,255,255,0.35)",
                         borderwidth=1,
                         font=dict(color="white", size=11),
@@ -807,10 +829,11 @@ if stock_input:
                     type="buttons",
                     direction="right",
                     buttons=range_buttons,
-                    showactive=False, 
+                    showactive=True, 
                     x=1.0, xanchor="right",
                     y=0.92, yanchor="top", 
                     bgcolor="rgba(50,50,50,0.8)",
+                    activebgcolor="rgba(120,120,120,0.6)", # ✅ 修正
                     bordercolor="rgba(255,255,255,0.35)", 
                     borderwidth=1,
                     font=dict(color="white", size=11),
