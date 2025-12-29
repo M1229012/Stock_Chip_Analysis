@@ -588,6 +588,16 @@ if stock_input:
                 )
             ), row=1, col=1)
 
+            # ✅ 關鍵新增：隱形 Close 點，確保 spikesnap="data" 永遠對準收盤價
+            fig.add_trace(go.Scatter(
+                x=x_data,
+                y=plot_df["Close"],
+                mode="markers",
+                marker=dict(size=12, opacity=0), # 透明點
+                showlegend=False,
+                hoverinfo="skip"
+            ), row=1, col=1)
+
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
                 if ma in plot_df.columns:
@@ -645,7 +655,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 修正 1：Y 軸 Row 1 (主圖) - 移除 showspikelabels，改用 spikesnap='data'
+            # ✅ 修正 1：主圖 Y 軸開啟 showspikelabels，並配合隱形點
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -653,7 +663,8 @@ if stock_input:
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
-                showspikes=True, spikemode="across", spikesnap="data", # 修正點
+                showspikes=True, spikemode="across", spikesnap="data",
+                showspikelabels=True, # 顯示右側收盤價
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             fig.update_yaxes(
@@ -699,17 +710,19 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
-            # ✅ 修正 2：X 軸 Row 1 - 移除 showspikelabels，改用 spikesnap='data'
+            # ✅ 修正 2：主圖 X 軸開啟 showspikelabels
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1,
-                showspikes=True, spikemode="across", spikesnap="data", # 修正點
+                showspikes=True, spikemode="across", spikesnap="data",
+                showspikelabels=True, # 顯示下方日期
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
+            # ✅ 修正 3：副圖 X 軸也開啟 showspikelabels
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
@@ -717,9 +730,11 @@ if stock_input:
                 fixedrange=False,
                 row=2, col=1,
                 showspikes=True, spikemode="across", spikesnap="data",
+                showspikelabels=True, # 顯示下方日期 (同步)
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
 
+            # ✅ 優化：調整 legend 到 y=0.88，確保 unified hover 不被擋
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -740,7 +755,7 @@ if stock_input:
                 ),
                 spikedistance=-1, 
                 hoverdistance=50,
-                legend=dict(orientation="h", y=0.93, yanchor="top", x=0, xanchor="left", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
+                legend=dict(orientation="h", y=0.88, yanchor="top", x=0, xanchor="left", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 updatemenus=[
                     dict(
                         type="buttons",
