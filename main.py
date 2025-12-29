@@ -549,6 +549,26 @@ if stock_input:
                 else:
                     merged_df = st.session_state.get('merged_df')
 
+            # ✅ 新增安全更新函式 (放在最靠近使用的地方)
+            def safe_update_yaxes(fig, row, col, **kwargs):
+                try:
+                    fig.update_yaxes(row=row, col=col, **kwargs)
+                except ValueError:
+                    # 移除可能導致錯誤的參數
+                    kwargs.pop("showspikelabels", None)
+                    kwargs.pop("spikesnap", None)
+                    kwargs.pop("ticklabelposition", None)
+                    fig.update_yaxes(row=row, col=col, **kwargs)
+
+            def safe_update_xaxes(fig, row, col, **kwargs):
+                try:
+                    fig.update_xaxes(row=row, col=col, **kwargs)
+                except ValueError:
+                    kwargs.pop("showspikelabels", None)
+                    kwargs.pop("spikesnap", None)
+                    kwargs.pop("ticklabelposition", None)
+                    fig.update_xaxes(row=row, col=col, **kwargs)
+
             fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                 row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
@@ -588,12 +608,12 @@ if stock_input:
                 )
             ), row=1, col=1)
 
-            # ✅ 關鍵新增：隱形 Close 點，確保 spikesnap="data" 永遠對準收盤價
+            # 隱形 Close 點，確保 spikesnap="data" 永遠對準收盤價
             fig.add_trace(go.Scatter(
                 x=x_data,
                 y=plot_df["Close"],
                 mode="markers",
-                marker=dict(size=12, opacity=0), # 透明點
+                marker=dict(size=12, opacity=0), 
                 showlegend=False,
                 hoverinfo="skip"
             ), row=1, col=1)
@@ -655,18 +675,19 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 修正 1：主圖 Y 軸開啟 showspikelabels，並配合隱形點
-            fig.update_yaxes(
-                autorange=True, 
+            # ✅ 修正：使用 safe_update_yaxes 取代原生的 fig.update_yaxes
+            safe_update_yaxes(
+                fig, row=1, col=1,
+                autorange=True,
                 fixedrange=True,
-                row=1, col=1, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
                 showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True, # 顯示右側收盤價
+                showspikelabels=True, # 如果版本支援則顯示，否則自動忽略
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
+            
             fig.update_yaxes(
                 fixedrange=True, 
                 showticklabels=True, 
@@ -710,31 +731,30 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
-            # ✅ 修正 2：主圖 X 軸開啟 showspikelabels
-            fig.update_xaxes(
+            # ✅ 修正：使用 safe_update_xaxes 取代原生的 fig.update_xaxes
+            safe_update_xaxes(
+                fig, row=1, col=1,
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
-                row=1, col=1,
                 showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True, # 顯示下方日期
+                showspikelabels=True,
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
-            # ✅ 修正 3：副圖 X 軸也開啟 showspikelabels
-            fig.update_xaxes(
+            # ✅ 修正：副圖 (row=2) X 軸也使用 safe_update_xaxes
+            safe_update_xaxes(
+                fig, row=2, col=1,
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
-                row=2, col=1,
                 showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True, # 顯示下方日期 (同步)
+                showspikelabels=True,
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
 
-            # ✅ 優化：調整 legend 到 y=0.88，確保 unified hover 不被擋
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
