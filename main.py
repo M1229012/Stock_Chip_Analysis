@@ -286,7 +286,6 @@ def get_real_data_matrix(stock_id, start_date, end_date):
     finally:
         driver.quit()
 
-# ✅ 使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date):
     BHID, b, c_val = broker_key
@@ -530,7 +529,6 @@ if stock_input:
                 else:
                     merged_df = st.session_state.get('merged_df')
 
-            # 建立圖表基礎框架
             fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                 row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
@@ -542,7 +540,6 @@ if stock_input:
             plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
             x_data = plot_df['Date']
 
-            # K線圖
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -599,7 +596,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 修正 1：主圖 Y 軸改為 autorange=True 搭配 fixedrange=True
+            # ✅ 修正：使用 autorange=True 搭配 fixedrange=True
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -627,22 +624,21 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
-            # ✅ 修正 1：改用交易日根數計算區間按鈕
-            last_dt = plot_df['Date'].iloc[-1]
-            x_range_end = last_dt + timedelta(days=3)
+            # ✅ 修正：按鈕逻辑使用日期字串，避免 ValueError
+            last_dt_val = plot_df['Date'].iloc[-1]
+            last_dt_str = last_dt_val.strftime('%Y-%m-%d')
+            x_range_end_val = last_dt_val + timedelta(days=3)
 
-            def dt_nbars(n: int):
-                return plot_df['Date'].iloc[max(0, len(plot_df) - n)]
+            def dt_nbars_str(n: int):
+                idx = max(0, len(plot_df) - n)
+                return plot_df['Date'].iloc[idx].strftime('%Y-%m-%d')
 
-            R_20  = [dt_nbars(20),  last_dt]
-            R_3M  = [dt_nbars(60),  last_dt]    # 約 3 個月交易日
-            R_6M  = [dt_nbars(120), last_dt]    # 約 6 個月交易日
-            R_1Y  = [dt_nbars(240), last_dt]    # 約 1 年交易日
-            R_ALL = [plot_df['Date'].iloc[0], last_dt]
+            R_20  = [dt_nbars_str(20),  last_dt_str]
+            R_3M  = [dt_nbars_str(60),  last_dt_str]
+            R_6M  = [dt_nbars_str(120), last_dt_str]
+            R_1Y  = [dt_nbars_str(240), last_dt_str]
+            R_ALL = [plot_df['Date'].iloc[0].strftime('%Y-%m-%d'), last_dt_str]
 
-            default_zoom_start = dt_nbars(30) # 預設 30 根
-
-            # ✅ 用 updatemenus 自訂按鈕（以 last_dt 為右界，不吃留白）
             range_buttons = [
                 dict(label="20日", method="relayout", args=[{"xaxis.range": R_20, "xaxis2.range": R_20}]),
                 dict(label="3月", method="relayout", args=[{"xaxis.range": R_3M, "xaxis2.range": R_3M}]),
@@ -651,10 +647,12 @@ if stock_input:
                 dict(label="全部", method="relayout", args=[{"xaxis.range": R_ALL, "xaxis2.range": R_ALL}]),
             ]
 
+            default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
+
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(bounds=["sat", "mon"])], 
-                range=[default_zoom_start, x_range_end],
+                range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1
             )
@@ -662,11 +660,12 @@ if stock_input:
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(bounds=["sat", "mon"])], 
-                range=[default_zoom_start, x_range_end],
+                range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=2, col=1
             )
 
+            # ✅ 基礎 Layout：預設按鈕在右上角 (桌機用)
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -675,12 +674,10 @@ if stock_input:
                 title=dict(
                     text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
                     font=dict(size=16),
-                    x=0, xanchor="left", # 標題靠左
-                    y=1.18 # 預設標題高度
+                    x=0, xanchor="left"
                 ), 
                 hovermode='closest',
                 legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-                # 預設按鈕 (桌機位置)
                 updatemenus=[
                     dict(
                         type="buttons",
@@ -699,24 +696,34 @@ if stock_input:
             fig_desktop = copy.deepcopy(fig)
             fig_mobile = copy.deepcopy(fig)
 
-            # ✅ 修正 2 & 3：手機版/桌機版按鈕位置與 dragmode 差異化
-            
-            # 桌機：按鈕在右上，pan 模式
+            # 桌機版：維持預設，調整 margin
             fig_desktop.update_layout(
                 height=800,
                 dragmode='pan',
                 margin=dict(l=0, r=0, t=80, b=0)
             )
 
-            # 手機：按鈕移到下一行（更靠下），pan 模式 (雙指縮放)
+            # 手機版：重新定義 updatemenus 位置 (下一行)
+            mobile_updatemenus = [
+                dict(
+                    type="buttons",
+                    direction="right",
+                    buttons=range_buttons,
+                    showactive=True,
+                    x=1.0, xanchor="right",
+                    y=1.06, yanchor="top", 
+                    bgcolor="rgba(50,50,50,0.8)",
+                    font=dict(color="white", size=11),
+                    pad=dict(r=6, t=6)
+                )
+            ]
+
             fig_mobile.update_layout(
                 height=520, 
-                dragmode='pan',  # ✅ 手機改回 pan，讓單指拖曳，雙指縮放
-                # 覆蓋按鈕位置到下一行
-                updatemenus=[dict(fig.layout.updatemenus[0], y=1.06, x=1.0, xanchor="right")],
-                # 標題往上
-                title=dict(fig.layout.title, y=1.18),
-                margin=dict(l=0, r=0, t=110, b=0) # ✅ 手機上邊距加高
+                dragmode='pan',  # 手機用 pan + 雙指縮放
+                updatemenus=mobile_updatemenus, # 覆蓋按鈕位置
+                title=dict(fig.layout.title, y=1.18), # 標題往上
+                margin=dict(l=0, r=0, t=110, b=0) # 上邊距加高
             )
             
             config = {
