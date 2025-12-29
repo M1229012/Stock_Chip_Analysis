@@ -18,12 +18,13 @@ import pytz
 from urllib.parse import urlparse, parse_qs
 import shutil
 import twstock
+import copy  # ✅ 新增：用於複製圖表物件以區分手機/電腦版設定
 
 # ================= 1. 系統設定 =================
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 優化：保持 RWD 與隱藏邏輯
+# ✅ CSS 優化：加入 touch-action 讓手機圖表能吃到雙指縮放
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -69,6 +70,11 @@ st.markdown("""
         /* 手機時：隱藏包含 desktop-marker 的容器 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
             display: none !important;
+        }
+
+        /* ✅ 關鍵修正：強制圖表區域不攔截觸控，讓 Plotly 處理雙指縮放 */
+        div[data-testid="stPlotlyChart"] {
+            touch-action: none !important;
         }
     }
 
@@ -377,7 +383,6 @@ def get_specific_broker_daily(stock_id, broker_params, start_date, end_date):
     finally:
         driver.quit()
 
-# ✅ 效能優化：加入快取避免每次重跑 yfinance
 @st.cache_data(ttl=21600)
 def get_stock_price(stock_id):
     ticker = f"{stock_id}.TW" if not stock_id.endswith('.TW') else stock_id
@@ -429,7 +434,6 @@ with st.sidebar:
     st.markdown(f"🕒 資料抓取時間: {current_time}")
     
     if st.button("查詢", type="primary"):
-        # ✅ 效能優化：移除清除快取的動作，只重跑頁面
         st.rerun()
 
 if stock_input:
@@ -508,6 +512,7 @@ if stock_input:
                         merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
                         merged_df['cumulative_net'] = merged_df['買賣超_Final'].cumsum()
             
+            # 建立圖表基礎框架
             fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                 row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
@@ -516,7 +521,6 @@ if stock_input:
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
             
-            # ✅ 資料處理優化：將字串轉為 datetime 物件，供 type='date' 軸使用
             plot_df['Date'] = pd.to_datetime(plot_df['DateStr'])
             x_data = plot_df['Date']
 
@@ -524,8 +528,7 @@ if stock_input:
             global_max = plot_df['High'].max()
             y_range = [global_min * 0.95, global_max * 1.05]
             
-            # 移除舊的迴圈加空資料，稍後用 xaxis range 處理右側空白
-            
+            # K線圖
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -535,7 +538,6 @@ if stock_input:
 
             ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
             for ma in selected_mas:
-                # ✅ 效能優化：改用 Scattergl (WebGL)
                 fig.add_trace(go.Scattergl(
                     x=x_data, y=plot_df[ma], name=ma,
                     line=dict(color=ma_colors.get(ma, 'white'), width=1)
@@ -559,7 +561,6 @@ if stock_input:
                     opacity=1.0
                 ), row=2, col=1, secondary_y=False)
                 
-                # ✅ 效能優化：改用 Scattergl
                 fig.add_trace(go.Scattergl(
                     x=x_data,
                     y=extended_cum_net,
@@ -569,7 +570,6 @@ if stock_input:
                     connectgaps=True
                 ), row=2, col=1, secondary_y=True)
                 
-                # 這裡需要把字串日期轉回 datetime 才能在 date 軸上正確顯示
                 start_dt = pd.to_datetime(rank_start_date)
                 end_dt = pd.to_datetime(rank_end_date)
 
@@ -590,15 +590,17 @@ if stock_input:
                 if target_broker:
                       st.warning(f"⚠️ 無法抓取 {target_broker} 的詳細資料。")
 
+            # ✅ 關鍵設定 1：全面鎖定 Y 軸 (fixedrange=True)，避免縮放時跑版
             fig.update_yaxes(
                 range=y_range,
-                fixedrange=False, # 允許 Y 軸縮放以防止卡頓
+                fixedrange=True,  # 🔒 鎖定主圖價格軸
                 row=1, col=1, 
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
+                fixedrange=True, # 🔒 鎖定副圖左軸
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=False, 
@@ -607,6 +609,7 @@ if stock_input:
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
             )
             fig.update_yaxes(
+                fixedrange=True, # 🔒 鎖定副圖右軸
                 showticklabels=True, 
                 row=2, col=1, 
                 secondary_y=True, 
@@ -615,52 +618,84 @@ if stock_input:
                 tickfont=dict(size=10, color='yellow')
             )
 
-            # ✅ X 軸與縮放範圍設定
+            # ✅ 關鍵設定 2：加入 Range Selector (區間按鈕)，防止 X 軸迷航
+            # 同時 X 軸保持 fixedrange=False 以允許縮放
             last_dt = plot_df['Date'].iloc[-1]
-            # 預設顯示最後 20 天
-            default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 20)]
-            # 右側留 3 天空白
+            default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
             x_range_end = last_dt + timedelta(days=3)
 
-            # ✅ 關鍵優化：type='date' + rangebreaks 跳過週末
             common_xaxis_config = dict(
                 type='date',
-                rangebreaks=[dict(bounds=["sat", "mon"])], # 隱藏六日
-                range=[default_zoom_start, x_range_end],   # 預設範圍
-                fixedrange=False # 允許縮放
+                rangebreaks=[dict(bounds=["sat", "mon"])], 
+                range=[default_zoom_start, x_range_end],
+                fixedrange=False,
+                # 加入 Range Selector 按鈕
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=20, label="20日", step="day", stepmode="backward"),
+                        dict(count=60, label="3月", step="day", stepmode="backward"),
+                        dict(count=120, label="6月", step="day", stepmode="backward"),
+                        dict(count=1, label="1年", step="year", stepmode="backward"),
+                        dict(step="all", label="全部")
+                    ]),
+                    bgcolor="rgba(50,50,50,0.8)", # 按鈕背景色
+                    font=dict(color="white")
+                )
             )
 
             fig.update_xaxes(**common_xaxis_config, row=1, col=1)
             fig.update_xaxes(**common_xaxis_config, row=2, col=1)
 
-            fig.update_layout(
+            # ✅ 關鍵設定 3：分離渲染 (Split Rendering)
+            # 建立兩個獨立的 Figure 物件，分別設定不同的高度與互動模式
+            
+            fig_desktop = copy.deepcopy(fig)
+            fig_mobile = copy.deepcopy(fig)
+
+            # 電腦版設定：高度 800，dragmode='pan' (滑鼠拖曳)
+            fig_desktop.update_layout(
                 height=800,
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
                 paper_bgcolor='rgba(20,20,20,1)',
                 font=dict(color='white', size=12), 
                 title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
-                dragmode='pan',
-                # ✅ 效能優化：手機版改用 closest hover
+                dragmode='pan', # 電腦版用 Pan
                 hovermode='closest',
-                legend=dict(
-                    orientation="h", 
-                    y=1, x=0, 
-                    xanchor="left",
-                    yanchor="top",
-                    bgcolor='rgba(0,0,0,0.5)',
-                    font=dict(size=10)
-                ),
+                legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
+                margin=dict(l=0, r=0, t=50, b=0)
+            )
+
+            # 手機版設定：高度 520 (縮小)，dragmode='zoom' (雙指縮放優化)
+            fig_mobile.update_layout(
+                height=520, 
+                xaxis_rangeslider_visible=False, 
+                plot_bgcolor='rgba(20,20,20,1)', 
+                paper_bgcolor='rgba(20,20,20,1)',
+                font=dict(color='white', size=12), 
+                title=dict(text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", font=dict(size=16)), 
+                dragmode='zoom', # ✅ 手機版改成 Zoom 模式，配合 touch-action: none 達到最佳縮放體驗
+                hovermode='closest',
+                legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 margin=dict(l=0, r=0, t=50, b=0)
             )
             
-            # ✅ 效能優化：更新 config 設定
+            # 設定互動組態
             config = {
                 "scrollZoom": True,
                 "displayModeBar": False,
                 "responsive": True,
                 "doubleClick": "reset"
             }
-            st.plotly_chart(fig, use_container_width=True, config=config)
+
+            # ✅ 渲染：利用 CSS 標記分別顯示
+            with st.container():
+                st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
+                st.plotly_chart(fig_desktop, use_container_width=True, config=config)
+
+            with st.container():
+                st.markdown('<div class="mobile-marker"></div>', unsafe_allow_html=True)
+                st.plotly_chart(fig_mobile, use_container_width=True, config=config)
+
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
