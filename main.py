@@ -574,7 +574,6 @@ if stock_input:
 
             missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days]
 
-            # ✅ 優化：調整 hovertemplate 順序：日期 -> 收盤 -> 買賣超
             fig.add_trace(go.Candlestick(
                 x=x_data, open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'], name='股價',
@@ -593,7 +592,6 @@ if stock_input:
             for ma in selected_mas:
                 if ma in plot_df.columns:
                     plot_df[ma] = pd.to_numeric(plot_df[ma], errors='coerce')
-                    # ✅ 優化：MA 不顯示 hover，避免雜亂
                     fig.add_trace(go.Scatter(
                         x=x_data, y=plot_df[ma], name=ma,
                         mode='lines',
@@ -613,7 +611,6 @@ if stock_input:
                     for v in extended_buy_sell
                 ]
                 
-                # ✅ 優化：Bar 不顯示 hover
                 fig.add_trace(go.Bar(
                     x=x_data, 
                     y=extended_buy_sell, 
@@ -623,7 +620,6 @@ if stock_input:
                     hoverinfo='skip'
                 ), row=2, col=1, secondary_y=False)
                 
-                # ✅ 優化：累計折線不顯示 hover
                 fig.add_trace(go.Scatter(
                     x=x_data,
                     y=merged_df['cumulative_net'],
@@ -649,7 +645,7 @@ if stock_input:
                     row='all', col=1
                 )
 
-            # ✅ 修正：移除 showspikelabels，改用 spikesnap='data'，修復十字線錯誤
+            # ✅ 修正：主圖 X/Y 軸開啟 showspikes (十字線) 與 spikesnap='data'
             fig.update_yaxes(
                 autorange=True, 
                 fixedrange=True,
@@ -657,7 +653,9 @@ if stock_input:
                 showgrid=True, gridcolor='rgba(128,128,128,0.2)',
                 ticklabelposition="inside", 
                 tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
+                # 十字線設定：顯示 Y 軸十字線與右側標籤
                 showspikes=True, spikemode="across", spikesnap="data", 
+                showspikelabels=True, # 顯示右側價格
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             fig.update_yaxes(
@@ -703,26 +701,32 @@ if stock_input:
 
             default_zoom_start = plot_df['Date'].iloc[max(0, len(plot_df) - 30)]
 
-            # ✅ 修正：移除 showspikelabels，改用 spikesnap='data'
+            # ✅ 修正：主圖 X 軸開啟 showspikes
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
                 row=1, col=1,
+                # 十字線設定：顯示 X 軸十字線與底部日期
                 showspikes=True, spikemode="across", spikesnap="data", 
+                showspikelabels=True, # 顯示底部日期
                 spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
             
+            # ✅ 修正：副圖 (row=2) X 軸也開啟 showspikes，實現上下同步
             fig.update_xaxes(
                 type='date',
                 rangebreaks=[dict(values=missing_dates)], 
                 range=[default_zoom_start, x_range_end_val],
                 fixedrange=False,
-                row=2, col=1
+                row=2, col=1,
+                # 同步十字線
+                showspikes=True, spikemode="across", spikesnap="data", 
+                spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
             )
 
-            # ✅ 優化：hovermode='x unified'，加入 hoverlabel 樣式
+            # ✅ 優化：調整 legend 位置與距離，防止遮擋 unified hover
             fig.update_layout(
                 xaxis_rangeslider_visible=False, 
                 plot_bgcolor='rgba(20,20,20,1)', 
@@ -736,12 +740,15 @@ if stock_input:
                     pad=dict(t=8, b=0, l=0, r=0)
                 ), 
                 hovermode='x unified', # ✅ 統一顯示
-                hoverlabel=dict( # ✅ 樣式優化
+                hoverlabel=dict(
                     bgcolor="rgba(0,0,0,0.75)",
                     font=dict(color="white", size=12),
                     align="left"
                 ),
-                legend=dict(orientation="h", y=1, x=0, xanchor="left", yanchor="top", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
+                spikedistance=-1, # ✅ 增加感應距離
+                hoverdistance=50,
+                # ✅ 圖例位置下移，避開 hover box
+                legend=dict(orientation="h", y=0.93, yanchor="top", x=0, xanchor="left", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
                 updatemenus=[
                     dict(
                         type="buttons",
