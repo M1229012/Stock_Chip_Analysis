@@ -1,9 +1,9 @@
 streamlit
 pandas
-plotly
 yfinance
 selenium
 webdriver-manager
 lxml
 html5lib
 twstock
+plotly>=5.20.0
