@@ -675,7 +675,57 @@ if stock_input:
                 })
                 next_panel_id += 1
 
-            # 2. 分點買賣超 (Chip) - ✅ 修改：加入累積折線圖並重疊
+            # 2. KD 指標
+            if show_kd and 'K' in plot_df.columns:
+                k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows() if not pd.isna(row['K'])]
+                d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows() if not pd.isna(row['D'])]
+                
+                series_list.append({
+                    "type": "Line",
+                    "data": k_data,
+                    "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"},
+                    "panel": next_panel_id
+                })
+                series_list.append({
+                    "type": "Line",
+                    "data": d_data,
+                    "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right"},
+                    "panel": next_panel_id
+                })
+                next_panel_id += 1
+
+            # 3. MACD 指標
+            if show_macd and 'DIF' in plot_df.columns:
+                dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
+                dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
+                hist_data = []
+                for i, row in plot_df.iterrows():
+                    val = row['MACD_Hist']
+                    if not pd.isna(val):
+                        color = COLOR_UP if val >= 0 else COLOR_DOWN
+                        hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
+                
+                series_list.append({
+                    "type": "Histogram",
+                    "data": hist_data,
+                    "options": {"title": "MACD Hist", "priceScaleId": "right"},
+                    "panel": next_panel_id
+                })
+                series_list.append({
+                    "type": "Line",
+                    "data": dif_data,
+                    "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"},
+                    "panel": next_panel_id
+                })
+                series_list.append({
+                    "type": "Line",
+                    "data": dea_data,
+                    "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"},
+                    "panel": next_panel_id
+                })
+                next_panel_id += 1
+
+            # 4. 分點買賣超 (Chip) - ✅ 修改：加入累積折線圖並重疊
             if show_chip and '買賣超_Final' in plot_df.columns:
                 chip_data = []
                 chip_cumulative_data = [] # ✅ 新增累積資料列表
@@ -722,56 +772,6 @@ if stock_input:
                     "panel": next_panel_id # ✅ 同一個 Panel
                 })
                 
-                next_panel_id += 1
-
-            # 3. KD 指標
-            if show_kd and 'K' in plot_df.columns:
-                k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows() if not pd.isna(row['K'])]
-                d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows() if not pd.isna(row['D'])]
-                
-                series_list.append({
-                    "type": "Line",
-                    "data": k_data,
-                    "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"},
-                    "panel": next_panel_id
-                })
-                series_list.append({
-                    "type": "Line",
-                    "data": d_data,
-                    "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right"},
-                    "panel": next_panel_id
-                })
-                next_panel_id += 1
-
-            # 4. MACD 指標
-            if show_macd and 'DIF' in plot_df.columns:
-                dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
-                dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
-                hist_data = []
-                for i, row in plot_df.iterrows():
-                    val = row['MACD_Hist']
-                    if not pd.isna(val):
-                        color = COLOR_UP if val >= 0 else COLOR_DOWN
-                        hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
-                
-                series_list.append({
-                    "type": "Histogram",
-                    "data": hist_data,
-                    "options": {"title": "MACD Hist", "priceScaleId": "right"},
-                    "panel": next_panel_id
-                })
-                series_list.append({
-                    "type": "Line",
-                    "data": dif_data,
-                    "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"},
-                    "panel": next_panel_id
-                })
-                series_list.append({
-                    "type": "Line",
-                    "data": dea_data,
-                    "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"},
-                    "panel": next_panel_id
-                })
                 next_panel_id += 1
 
             # === 圖表全域設定 ===
