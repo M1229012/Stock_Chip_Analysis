@@ -88,7 +88,7 @@ st.markdown("""
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式 =================
+# ================= 2. 輔助函式 (保留原樣) =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -182,7 +182,7 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ================= 3. 爬蟲核心 =================
+# ================= 3. 爬蟲核心 (保留原樣) =================
 
 @st.cache_resource
 def get_driver_path():
@@ -237,7 +237,7 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
-# ✅ 爬取三大法人資料
+# ✅ 爬取三大法人資料 (保留原樣)
 @st.cache_data(persist="disk", ttl=21600)
 def get_institutional_data(stock_id, start_date, end_date):
     driver = get_driver()
@@ -255,7 +255,6 @@ def get_institutional_data(stock_id, start_date, end_date):
                 break
         
         if target_df is not None:
-            # 欄位：日期(0), 外資(1), 投信(2), 自營商(3)
             if len(target_df.columns) >= 4:
                 clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
                 clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
@@ -285,7 +284,7 @@ def get_institutional_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取融資融券資料
+# ✅ 爬取融資融券資料 (保留原樣)
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
@@ -303,7 +302,6 @@ def get_margin_data(stock_id, start_date, end_date):
                 break
         
         if target_df is not None:
-            # 欄位：日期(0), 融資餘額(4), 融資增減(5), 融券餘額(11), 融券增減(12)
             if len(target_df.columns) >= 13:
                 clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
                 clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
@@ -706,7 +704,7 @@ if stock_input:
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
-            # ✅ 新增：計算累積買賣超 (分點)
+            # ✅ 新增：計算累積買賣超
             if '買賣超_Final' in plot_df.columns:
                 plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
@@ -814,7 +812,7 @@ if stock_input:
             inst_series_data = []
             if (show_inst_foreign or show_inst_trust or show_inst_dealer) and '外資買賣超' in plot_df.columns:
                 for i, row in plot_df.iterrows():
-                    pass # Just data prep below, no complex loop needed here
+                    pass 
                 
                 # 外資
                 if show_inst_foreign:
