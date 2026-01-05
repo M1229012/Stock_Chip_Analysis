@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import yfinance as yf
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -21,11 +19,14 @@ import twstock
 import copy
 import numpy as np
 
+# ✅ 新增：TradingView 圖表套件
+from streamlit_lightweight_charts import renderLightweightCharts
+
 # ================= 1. 系統設定 =================
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 優化：修正選取器，針對 Plotly 內層元素設定 touch-action
+# ✅ CSS 保留原樣，僅針對圖表容器做微調
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -72,18 +73,6 @@ st.markdown("""
         div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
             display: none !important;
         }
-
-        /* ✅ 針對 Plotly 內層設定 touch-action，讓手機雙指縮放生效 */
-        div[data-testid="stPlotlyChart"] .js-plotly-plot,
-        div[data-testid="stPlotlyChart"] .plotly,
-        div[data-testid="stPlotlyChart"] canvas {
-            touch-action: none !important;
-        }
-        
-        /* 避免容器被頁面捲動搶走 */
-        div[data-testid="stPlotlyChart"] {
-            overscroll-behavior: contain;
-        }
     }
 
     /* --- 電腦版 RWD (螢幕 > 768px) --- */
@@ -93,18 +82,13 @@ st.markdown("""
             display: none !important;
         }
     }
-    
-    /* 強制讓 Plotly 區塊優先吃 touch 事件 */
-    div[data-testid="stPlotlyChart"] > div {
-      touch-action: none;   
-    }
     </style>
     """, unsafe_allow_html=True)
 
-COLOR_UP = '#ef5350'
-COLOR_DOWN = '#26a69a'
+COLOR_UP = '#ef5350' # 紅色 (上漲)
+COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式 =================
+# ================= 2. 輔助函式 (保留原樣 + 新增指標計算) =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -153,7 +137,48 @@ def render_broker_table(df, sum_data, color_hex, title):
     </div>
     """, unsafe_allow_html=True)
 
-# ================= 3. 爬蟲核心 =================
+# ✅ 新增：計算 KD 與 MACD 的輔助函式
+def calculate_technical_indicators(df):
+    df = df.copy()
+    # 1. 計算 KD (9, 3, 3)
+    rsv_period = 9
+    
+    df['9_High'] = df['High'].rolling(window=rsv_period).max()
+    df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
+    df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
+    df['RSV'] = df['RSV'].fillna(50)
+    
+    # 計算 K, D (平滑計算)
+    k_list = []
+    d_list = []
+    k_prev = 50
+    d_prev = 50
+    
+    for rsv in df['RSV']:
+        if pd.isna(rsv):
+            k_now = k_prev
+            d_now = d_prev
+        else:
+            k_now = (2/3) * k_prev + (1/3) * rsv
+            d_now = (2/3) * d_prev + (1/3) * k_now
+        k_list.append(k_now)
+        d_list.append(d_now)
+        k_prev = k_now
+        d_prev = d_now
+        
+    df['K'] = k_list
+    df['D'] = d_list
+
+    # 2. 計算 MACD (12, 26, 9)
+    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['DIF'] = exp12 - exp26
+    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = 2 * (df['DIF'] - df['DEA'])
+    
+    return df
+
+# ================= 3. 爬蟲核心 (完全保留你的原始碼) =================
 
 @st.cache_resource
 def get_driver_path():
@@ -300,7 +325,6 @@ def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     finally:
         driver.quit()
 
-# ✅ 使用 tuple key 增加 cache 穩定性
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
     BHID, b, c_val = broker_key
@@ -424,13 +448,16 @@ def get_stock_price(stock_id):
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
         
+        # ✅ 新增：在抓取股價時順便計算 KD, MACD
+        df = calculate_technical_indicators(df)
+        
         return df
     except Exception:
         return None
 
-# ================= 4. 介面邏輯 =================
+# ================= 4. 介面邏輯 (保留原樣 + 替換圖表) =================
 
-st.title(f"📊 籌碼K線")
+st.title(f"📊 籌碼K線 (TradingView 風格)")
 
 tz = pytz.timezone('Asia/Taipei')
 current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
@@ -482,6 +509,7 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
         st.caption(f"排行總表網址：{target_url}")
         
+        # ✅ 保留原本的表格顯示與 RWD 邏輯
         with st.container():
             st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
             col1, col2 = st.columns(2)
@@ -501,16 +529,26 @@ if stock_input:
         st.markdown("---")
 
         if df_price is not None and not df_price.empty:
-            st.subheader("🔍 分點進出 vs 股價走勢")
+            st.subheader("🔍 TradingView 互動 K 線圖")
             
-            ma_options = ['MA5', 'MA10', 'MA20', 'MA60']
-            selected_mas = st.multiselect("選擇要顯示的均線", ma_options, default=['MA5', 'MA10', 'MA20'])
-            
+            # --- 選擇券商 ---
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             
-            target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
+            # 這裡改成兩欄，右邊放指標勾選
+            col_sel1, col_sel2 = st.columns([1, 2])
+            with col_sel1:
+                target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
             
+            # --- 指標勾選區 ---
+            with col_sel2:
+                st.write("顯示副圖指標：")
+                col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+                show_vol = col_c1.checkbox("成交量", value=True)
+                show_kd = col_c2.checkbox("KD", value=False)
+                show_macd = col_c3.checkbox("MACD", value=False)
+                show_chip = col_c4.checkbox("分點買賣超", value=True)
+
             merged_df = None
             target_key = normalize_name(target_broker)
             
@@ -524,6 +562,7 @@ if stock_input:
                             broker_params = v
                             break
 
+            # --- 爬取單一券商明細 (邏輯完全保留) ---
             if broker_params:
                 long_start_date = df_price['DateStr'].iloc[0] 
                 long_end_date = df_price['DateStr'].iloc[-1] 
@@ -532,305 +571,196 @@ if stock_input:
                 merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
 
                 if st.session_state.get('merged_key') != merged_key:
-                    with st.spinner(f"正在爬取 {target_broker} 完整 2 年每日明細..."):
+                    with st.spinner(f"正在爬取 {target_broker} 每日明細..."):
                         broker_daily_df, detail_url = get_specific_broker_daily(
                             stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce
                         )
-                        
-                        st.markdown(f"**🔗 正在爬取單一券商網址：** `{detail_url}`")
                         
                         if broker_daily_df is not None and not broker_daily_df.empty:
                             broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last").sort_values('DateStr')
                             merged_df = pd.merge(df_price, broker_daily_df, on='DateStr', how='left')
                             merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
-                            merged_df['cumulative_net'] = merged_df['買賣超_Final'].cumsum()
                             
-                            st.success(f"✅ 已載入 {target_broker} 2 年籌碼明細")
                             st.session_state['merged_df'] = merged_df
                             st.session_state['merged_key'] = merged_key
                         else:
                             st.session_state.pop('merged_df', None)
                             st.session_state['merged_key'] = merged_key
-                            st.warning("⚠️ 該券商明細抓取失敗，先顯示純股價")
+                            st.warning("⚠️ 該券商明細抓取失敗，顯示純股價")
                 else:
                     merged_df = st.session_state.get('merged_df')
 
-            # 安全更新函式
-            def safe_update_yaxes(fig, row, col, **kwargs):
-                try:
-                    fig.update_yaxes(row=row, col=col, **kwargs)
-                except ValueError:
-                    kwargs.pop("showspikelabels", None)
-                    kwargs.pop("spikesnap", None)
-                    kwargs.pop("ticklabelposition", None)
-                    fig.update_yaxes(row=row, col=col, **kwargs)
-
-            def safe_update_xaxes(fig, row, col, **kwargs):
-                try:
-                    fig.update_xaxes(row=row, col=col, **kwargs)
-                except ValueError:
-                    kwargs.pop("showspikelabels", None)
-                    kwargs.pop("spikesnap", None)
-                    kwargs.pop("ticklabelposition", None)
-                    fig.update_xaxes(row=row, col=col, **kwargs)
-
-            # 使用 Streamlit 原生按鈕控制區間
+            # --- 準備繪圖資料 (TradingView 格式) ---
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
-            
-            # ✅ 先保證 Date 欄位存在並排序，避免 KeyError
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+
+            # 1. K線資料
+            candlestick_data = []
+            for i, row in plot_df.iterrows():
+                candlestick_data.append({
+                    "time": row['DateStr'],
+                    "open": row['Open'],
+                    "high": row['High'],
+                    "low": row['Low'],
+                    "close": row['Close']
+                })
+
+            # 2. 均線資料
+            ma5_data = [{"time": row['DateStr'], "value": row['MA5']} for i, row in plot_df.iterrows() if not pd.isna(row['MA5'])]
+            ma10_data = [{"time": row['DateStr'], "value": row['MA10']} for i, row in plot_df.iterrows() if not pd.isna(row['MA10'])]
+            ma20_data = [{"time": row['DateStr'], "value": row['MA20']} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
+            ma60_data = [{"time": row['DateStr'], "value": row['MA60']} for i, row in plot_df.iterrows() if not pd.isna(row['MA60'])]
+
+            series_list = []
+
+            # === 主圖 (K線 + MA) ===
+            series_list.append({
+                "type": "Candlestick",
+                "data": candlestick_data,
+                "options": {
+                    "upColor": COLOR_UP,
+                    "downColor": COLOR_DOWN,
+                    "borderUpColor": COLOR_UP,
+                    "borderDownColor": COLOR_DOWN,
+                    "wickUpColor": COLOR_UP,
+                    "wickDownColor": COLOR_DOWN,
+                }
+            })
             
-            # --- 區間按鈕邏輯 ---
-            last_dt = plot_df['Date'].iloc[-1] 
+            # 加入均線
+            series_list.append({"type": "Line", "data": ma5_data, "options": {"color": "orange", "lineWidth": 1, "title": "MA5"}})
+            series_list.append({"type": "Line", "data": ma10_data, "options": {"color": "cyan", "lineWidth": 1, "title": "MA10"}})
+            series_list.append({"type": "Line", "data": ma20_data, "options": {"color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+            series_list.append({"type": "Line", "data": ma60_data, "options": {"color": "lime", "lineWidth": 2, "title": "MA60"}})
 
-            def dt_nbars(n: int):
-                idx = max(0, len(plot_df) - n)
-                return plot_df['Date'].iloc[idx]
+            # === 副圖管理 ===
+            current_panel = 1
+            
+            # 1. 成交量 (Volume)
+            if show_vol:
+                vol_data = []
+                for i, row in plot_df.iterrows():
+                    color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
+                    vol_data.append({
+                        "time": row['DateStr'],
+                        "value": row['Volume'],
+                        "color": color
+                    })
+                
+                series_list.append({
+                    "type": "Histogram",
+                    "data": vol_data,
+                    "options": {
+                        "priceFormat": {"type": "volume"},
+                        "priceScaleId": f"vol_scale",
+                    },
+                    "panel": current_panel
+                })
+                current_panel += 1
 
-            ranges = {
-                "20日": (dt_nbars(20), last_dt),
-                "3月":  (dt_nbars(60), last_dt),
-                "6月":  (dt_nbars(120), last_dt),
-                "1年":  (dt_nbars(240), last_dt),
-                "全部": (plot_df['Date'].iloc[0], last_dt),
+            # 2. 分點買賣超 (Chip)
+            if show_chip and '買賣超_Final' in plot_df.columns:
+                chip_data = []
+                for i, row in plot_df.iterrows():
+                    val = row['買賣超_Final']
+                    color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
+                    chip_data.append({
+                        "time": row['DateStr'],
+                        "value": val,
+                        "color": color
+                    })
+                
+                series_list.append({
+                    "type": "Histogram",
+                    "data": chip_data,
+                    "options": {
+                        "title": f"{target_broker} 買賣超",
+                        "priceScaleId": "chip_scale"
+                    },
+                    "panel": current_panel
+                })
+                current_panel += 1
+
+            # 3. KD 指標
+            if show_kd and 'K' in plot_df.columns:
+                k_data = [{"time": row['DateStr'], "value": row['K']} for i, row in plot_df.iterrows()]
+                d_data = [{"time": row['DateStr'], "value": row['D']} for i, row in plot_df.iterrows()]
+                
+                series_list.append({
+                    "type": "Line",
+                    "data": k_data,
+                    "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)"},
+                    "panel": current_panel
+                })
+                series_list.append({
+                    "type": "Line",
+                    "data": d_data,
+                    "options": {"color": "cyan", "lineWidth": 1, "title": "D"},
+                    "panel": current_panel
+                })
+                current_panel += 1
+
+            # 4. MACD 指標
+            if show_macd and 'DIF' in plot_df.columns:
+                dif_data = [{"time": row['DateStr'], "value": row['DIF']} for i, row in plot_df.iterrows()]
+                dea_data = [{"time": row['DateStr'], "value": row['DEA']} for i, row in plot_df.iterrows()]
+                hist_data = []
+                for i, row in plot_df.iterrows():
+                    val = row['MACD_Hist']
+                    color = COLOR_UP if val >= 0 else COLOR_DOWN
+                    hist_data.append({"time": row['DateStr'], "value": val, "color": color})
+                
+                series_list.append({
+                    "type": "Histogram",
+                    "data": hist_data,
+                    "options": {"title": "MACD Hist"},
+                    "panel": current_panel
+                })
+                series_list.append({
+                    "type": "Line",
+                    "data": dif_data,
+                    "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF"},
+                    "panel": current_panel
+                })
+                series_list.append({
+                    "type": "Line",
+                    "data": dea_data,
+                    "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA"},
+                    "panel": current_panel
+                })
+                current_panel += 1
+
+            # === 圖表全域設定 ===
+            chartOptions = {
+                "layout": {
+                    "textColor": 'white',
+                    "background": {
+                        "type": 'solid',
+                        "color": '#131722' # TradingView 深色背景
+                    }
+                },
+                "grid": {
+                    "vertLines": {"color": "rgba(42, 46, 57, 0.5)"},
+                    "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}
+                },
+                "timeScale": {
+                    "borderColor": "rgba(197, 203, 206, 0.8)",
+                    "timeVisible": True
+                },
+                "rightPriceScale": {
+                    "borderColor": "rgba(197, 203, 206, 0.8)"
+                },
+                # 高度根據副圖數量動態調整
+                "height": 450 + (current_panel - 1) * 150
             }
 
-            if "range_key" not in st.session_state:
-                st.session_state.range_key = "3月"
-
-            # 放置按鈕 (自動適配寬度)
-            cols = st.columns(5)
-            keys = ["20日", "3月", "6月", "1年", "全部"]
-            for i, k in enumerate(keys):
-                if cols[i].button(k, use_container_width=True):
-                    st.session_state.range_key = k
-            
-            start_dt, end_dt = ranges[st.session_state.range_key]
-            x_range_end_val = end_dt + timedelta(days=3)
-
-            # ---------------------
-
-            fig = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
-                row_heights=[0.85, 0.15], specs=[[{"secondary_y": False}], [{"secondary_y": True}]]
+            # ✅ 渲染圖表
+            renderLightweightCharts(
+                series=series_list,
+                options=chartOptions
             )
-            
-            if '買賣超_Final' not in plot_df.columns:
-                plot_df['買賣超_Final'] = 0
-
-            # 移除重複的 Date 轉換
-            x_data = plot_df['Date']
-
-            trading_days = pd.to_datetime(plot_df['Date']).dt.normalize().dropna().unique()
-            trading_days = pd.DatetimeIndex(trading_days).sort_values()
-
-            min_dt = trading_days[0]
-            last_dt_calc = trading_days[-1]
-
-            all_days = pd.date_range(min_dt, last_dt_calc, freq="D")
-            missing_days_dt = pd.date_range(min_dt, last_dt_calc, freq="D").difference(trading_days)
-            missing_dates = [d.strftime("%Y-%m-%d") for d in missing_days_dt]
-
-            plot_df["買賣超_Final"] = pd.to_numeric(plot_df.get("買賣超_Final", 0), errors="coerce").fillna(0)
-
-            custom = np.stack([
-                plot_df["DateStr"].astype(str).to_numpy(),
-                plot_df["買賣超_Final"].to_numpy(dtype=float),
-            ], axis=-1)
-
-            # K線圖
-            fig.add_trace(go.Candlestick(
-                x=x_data, open=plot_df['Open'], high=plot_df['High'],
-                low=plot_df['Low'], close=plot_df['Close'], name='股價',
-                increasing_line_color=COLOR_UP, decreasing_line_color=COLOR_DOWN,
-                increasing_fillcolor=COLOR_UP, decreasing_fillcolor=COLOR_DOWN,
-                hoverinfo="skip" 
-            ), row=1, col=1)
-
-            # 隱形 Close 點
-            fig.add_trace(go.Scatter(
-                x=x_data,
-                y=plot_df["Close"],
-                mode="markers",
-                marker=dict(size=18, opacity=0), 
-                customdata=custom,
-                hovertemplate=(
-                    "<b>日期：%{customdata[0]}</b><br>"
-                    "<b>收盤：%{y:.1f}</b><br>"
-                    "<b>買賣超：%{customdata[1]:,.0f} 張</b>"
-                    "<extra></extra>"
-                ),
-                showlegend=False,
-            ), row=1, col=1)
-
-            ma_colors = {'MA5': 'orange', 'MA10': 'cyan', 'MA20': 'magenta', 'MA60': 'green'}
-            for ma in selected_mas:
-                if ma in plot_df.columns:
-                    plot_df[ma] = pd.to_numeric(plot_df[ma], errors='coerce')
-                    fig.add_trace(go.Scatter(
-                        x=x_data, y=plot_df[ma], name=ma,
-                        mode='lines',
-                        connectgaps=True,
-                        line=dict(color=ma_colors.get(ma, 'white'), width=1.5),
-                        hoverinfo='skip' 
-                    ), row=1, col=1)
-
-            if merged_df is not None:
-                extended_buy_sell = list(merged_df['買賣超_Final'])
-                
-                merged_df['cumulative_net'] = pd.to_numeric(merged_df['cumulative_net'], errors='coerce')
-                
-                bar_colors = [
-                    COLOR_UP if (v is not None and v > 0) else 
-                    COLOR_DOWN if (v is not None and v < 0) else 'gray' 
-                    for v in extended_buy_sell
-                ]
-                
-                fig.add_trace(go.Bar(
-                    x=x_data, 
-                    y=extended_buy_sell, 
-                    name='每日買賣超', 
-                    marker_color=bar_colors,
-                    opacity=0.55,
-                    hoverinfo='skip'
-                ), row=2, col=1, secondary_y=False)
-                
-                fig.add_trace(go.Scatter(
-                    x=x_data,
-                    y=merged_df['cumulative_net'],
-                    name='兩年累計買賣超',
-                    mode='lines',
-                    line=dict(color='yellow', width=2.5),
-                    connectgaps=True,
-                    hoverinfo='skip'
-                ), row=2, col=1, secondary_y=True)
-                
-                start_dt_vrect = pd.to_datetime(rank_start_date)
-                end_dt_vrect = pd.to_datetime(rank_end_date)
-
-                fig.add_vrect(
-                    x0=start_dt_vrect, 
-                    x1=end_dt_vrect,
-                    fillcolor="gray", 
-                    opacity=0.15, 
-                    layer="below", 
-                    line_width=0,
-                    annotation_text="統計區間", 
-                    annotation_position="top left",
-                    row='all', col=1
-                )
-
-            # 設定 Y 軸
-            safe_update_yaxes(
-                fig, row=1, col=1,
-                autorange=True,
-                fixedrange=True,
-                showgrid=True, gridcolor='rgba(128,128,128,0.2)',
-                ticklabelposition="inside", 
-                tickfont=dict(size=10, color='rgba(255,255,255,0.7)'),
-                showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True, 
-                spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
-            )
-            fig.update_yaxes(
-                fixedrange=True, 
-                showticklabels=True, 
-                row=2, col=1, 
-                secondary_y=False, 
-                showgrid=True, gridcolor='rgba(128,128,128,0.2)',
-                ticklabelposition="inside", 
-                tickfont=dict(size=10, color='rgba(255,255,255,0.7)')
-            )
-            fig.update_yaxes(
-                fixedrange=True, 
-                showticklabels=True, 
-                row=2, col=1, 
-                secondary_y=True, 
-                showgrid=False,
-                ticklabelposition="inside", 
-                tickfont=dict(size=10, color='yellow')
-            )
-
-            # ✅ 修正：使用 Streamlit 按鈕計算出的 range
-            safe_update_xaxes(
-                fig, row=1, col=1,
-                type='date',
-                rangebreaks=[dict(values=missing_dates)], 
-                range=[start_dt, x_range_end_val], 
-                fixedrange=False,
-                showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True,
-                spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
-            )
-            
-            safe_update_xaxes(
-                fig, row=2, col=1,
-                type='date',
-                rangebreaks=[dict(values=missing_dates)], 
-                range=[start_dt, x_range_end_val], 
-                fixedrange=False,
-                showspikes=True, spikemode="across", spikesnap="data",
-                showspikelabels=True,
-                spikedash="solid", spikecolor="rgba(255,255,255,0.6)", spikethickness=1
-            )
-
-            # ✅ 修正：移除 updatemenus，優化 hoverlabel 樣式 (字體 16 + 加粗)
-            fig.update_layout(
-                xaxis_rangeslider_visible=False, 
-                plot_bgcolor='rgba(20,20,20,1)', 
-                paper_bgcolor='rgba(20,20,20,1)',
-                font=dict(color='white', size=12), 
-                title=dict(
-                    text=f"{stock_display} - {target_broker if target_broker else '股價'} 籌碼追蹤", 
-                    font=dict(size=28, color='white'), 
-                    x=0, xanchor="left",
-                    y=0.985, yanchor="top",
-                    pad=dict(t=8, b=0, l=0, r=0)
-                ), 
-                hovermode='x unified', 
-                hoverlabel=dict(
-                    bgcolor="rgba(0,0,0,0.78)", # 深色背景
-                    bordercolor="rgba(255,255,255,0.25)",
-                    font=dict(color="white", size=16), # 放大字體
-                    align="left"
-                ),
-                spikedistance=-1, 
-                hoverdistance=50,
-                legend=dict(orientation="h", y=0.88, yanchor="top", x=0, xanchor="left", bgcolor='rgba(0,0,0,0.5)', font=dict(size=10)),
-            )
-
-            fig_desktop = copy.deepcopy(fig)
-            fig_mobile = copy.deepcopy(fig)
-
-            fig_desktop.update_layout(
-                height=800,
-                dragmode='pan',
-                margin=dict(l=0, r=0, t=120, b=0) 
-            )
-
-            fig_mobile.update_layout(
-                height=520, 
-                dragmode='pan',  
-                title={**fig.layout.title.to_plotly_json(), "y": 1.0, "yanchor": "top"},
-                margin=dict(l=0, r=0, t=100, b=0) 
-            )
-            
-            config = {
-                "scrollZoom": True,
-                "displayModeBar": False,
-                "responsive": True,
-                "doubleClick": "reset"
-            }
-
-            with st.container():
-                st.markdown('<div class="desktop-marker"></div>', unsafe_allow_html=True)
-                st.plotly_chart(fig_desktop, use_container_width=True, config=config)
-
-            with st.container():
-                st.markdown('<div class="mobile-marker"></div>', unsafe_allow_html=True)
-                st.plotly_chart(fig_mobile, use_container_width=True, config=config)
 
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
