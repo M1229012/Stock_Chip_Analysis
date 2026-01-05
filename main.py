@@ -88,7 +88,7 @@ st.markdown("""
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式 =================
+# ================= 2. 輔助函式 (保留原樣) =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -137,11 +137,10 @@ def render_broker_table(df, sum_data, color_hex, title):
     </div>
     """, unsafe_allow_html=True)
 
-# ✅ 輔助函式：計算 KD, MACD, 布林通道
+# ✅ 輔助函式：計算 KD 與 MACD
 def calculate_technical_indicators(df):
     df = df.copy()
-    
-    # 1. 布林通道 (Bollinger Bands) - 20MA, 2std
+    # 1. 布林通道
     df['BB_Mid'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
@@ -149,6 +148,7 @@ def calculate_technical_indicators(df):
 
     # 2. 計算 KD (9, 3, 3)
     rsv_period = 9
+    
     df['9_High'] = df['High'].rolling(window=rsv_period).max()
     df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
     df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
@@ -158,6 +158,7 @@ def calculate_technical_indicators(df):
     d_list = []
     k_prev = 50
     d_prev = 50
+    
     for rsv in df['RSV']:
         if pd.isna(rsv):
             k_now = k_prev
@@ -169,6 +170,7 @@ def calculate_technical_indicators(df):
         d_list.append(d_now)
         k_prev = k_now
         d_prev = d_now
+        
     df['K'] = k_list
     df['D'] = d_list
 
@@ -181,7 +183,7 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ================= 3. 爬蟲核心 =================
+# ================= 3. 爬蟲核心 (保留原樣) =================
 
 @st.cache_resource
 def get_driver_path():
@@ -236,30 +238,54 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
-# ✅ 新增：爬取三大法人資料
+# ✅ 修正：依照您提供的 XPath/欄位邏輯重寫爬蟲
 @st.cache_data(persist="disk", ttl=21600)
 def get_institutional_data(stock_id, start_date, end_date):
     driver = get_driver()
-    # zcl = 三大法人
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
     try:
         driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '外資')]")))
+        # 等待特定元素載入
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
         html = driver.page_source
-        tables = pd.read_html(StringIO(html), match="日期")
-        if tables:
-            df = tables[0]
-            # 清理欄位
-            df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
-            # 必須包含的欄位
-            needed = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
-            if all(n in df.columns for n in needed):
-                # 數值處理
-                for col in needed[1:]:
-                    df[col] = (df[col].astype(str).str.replace(',', '').str.replace('+', '').replace('nan', '0'))
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        tables = pd.read_html(StringIO(html))
+        
+        # 尋找包含「外資買賣超」這類關鍵字的表格
+        target_df = None
+        for df in tables:
+            # 將欄位與內容轉字串比對
+            if df.astype(str).apply(lambda x: x.str.contains('外資買賣超', na=False)).any().any():
+                target_df = df
+                break
+        
+        if target_df is not None:
+            # 根據您提供的 XPath 結構，資料通常在特定行之後，但 pd.read_html 會讀入整個 table
+            # 我們直接取用 iloc 對應欄位：
+            # td[1] -> col 0 (日期)
+            # td[2] -> col 1 (外資買賣超)
+            # td[3] -> col 2 (投信買賣超)
+            # td[4] -> col 3 (自營商買賣超)
+            
+            # 先清除標題列 (假設標題列不包含日期格式)
+            def is_date(s):
+                return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
+
+            # 保留日期欄位 (col 0) 符合格式的行
+            if len(target_df.columns) >= 4:
+                # 重新命名以便後續使用
+                # 注意：read_html 可能會有多層 columns，直接用 iloc 最穩
+                clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
+                clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
                 
-                # 日期處理 (民國轉西元)
+                # 過濾非數據列
+                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                
+                # 數值清理
+                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
+                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+
+                # 日期轉西元
                 def parse_date(d_str):
                     parts = re.split(r'[/-]', str(d_str))
                     if len(parts) >= 2:
@@ -269,58 +295,50 @@ def get_institutional_data(stock_id, start_date, end_date):
                         return f"{y:04d}-{m:02d}-{d:02d}"
                     return None
                 
-                df['DateStr'] = df['日期'].apply(parse_date)
-                return df.dropna(subset=['DateStr'])
+                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                return clean_df.dropna(subset=['DateStr'])
     except:
         pass
     finally:
         driver.quit()
     return None
 
-# ✅ 新增：爬取融資融券資料
+# ✅ 修正：依照您提供的 XPath/欄位邏輯重寫爬蟲
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
-    # zcn = 融資融券
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
     try:
         driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '融資餘額')]")))
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
         html = driver.page_source
-        tables = pd.read_html(StringIO(html), match="日期")
-        if tables:
-            df = tables[0]
-            df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
-            # 尋找融資餘額與融券餘額 (有時候欄位名稱會有多層)
-            # 簡單處理：找包含 "餘額" 的欄位，通常前兩個是資餘、券餘，或者直接找 index
-            # DJHTM 融資融券通常格式：日期, 融資(買,賣,現償,餘額), 融券(買,賣,現償,餘額), ...
-            # 我們嘗試直接對應關鍵字
+        tables = pd.read_html(StringIO(html))
+        
+        target_df = None
+        for df in tables:
+            # 尋找包含「融資餘額」的表格
+            if df.astype(str).apply(lambda x: x.str.contains('融資餘額', na=False)).any().any():
+                target_df = df
+                break
+        
+        if target_df is not None:
+            # 根據您提供的 XPath 對應：
+            # td[1] -> col 0 (日期)
+            # td[5] -> col 4 (融資餘額)
+            # td[12] -> col 11 (融券餘額) (注意：Python 索引從 0 開始，所以 td[12] 是 index 11)
             
-            # 扁平化處理
-            new_cols = []
-            vals = []
-            # 假設已經是單層 columns 或清理一下
-            # 這裡簡化邏輯：抓取「融資餘額」和「融券餘額」
-            # 若欄位是 MultiIndex，需要特別處理，這裡假設 read_html 讀出來可能是單層或髒資料
-            
-            # 重新定位欄位
-            # 融資餘額通常在第 5 欄 (index 4), 融券餘額在第 9 欄 (index 8) 左右
-            # 比較保險是用關鍵字搜尋
-            
-            # 嘗試正規化
-            df = df[df['日期'] != '日期'] # 去除重複 header
-            
-            # 尋找目標欄位
-            margin_bal_col = [c for c in df.columns if '融資餘額' in c]
-            short_bal_col = [c for c in df.columns if '融券餘額' in c]
-            
-            if margin_bal_col and short_bal_col:
-                target_df = df[['日期', margin_bal_col[0], short_bal_col[0]]].copy()
-                target_df.columns = ['日期', '融資餘額', '融券餘額']
+            if len(target_df.columns) >= 12:
+                clean_df = target_df.iloc[:, [0, 4, 11]].copy()
+                clean_df.columns = ['日期', '融資餘額', '融券餘額']
+                
+                # 過濾
+                def is_date(s):
+                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
+                clean_df = clean_df[clean_df['日期'].apply(is_date)]
                 
                 for col in ['融資餘額', '融券餘額']:
-                    target_df[col] = (target_df[col].astype(str).str.replace(',', '').str.replace('+', '').replace('nan', '0'))
-                    target_df[col] = pd.to_numeric(target_df[col], errors='coerce').fillna(0)
+                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
                 
                 def parse_date(d_str):
                     parts = re.split(r'[/-]', str(d_str))
@@ -331,8 +349,8 @@ def get_margin_data(stock_id, start_date, end_date):
                         return f"{y:04d}-{m:02d}-{d:02d}"
                     return None
                 
-                target_df['DateStr'] = target_df['日期'].apply(parse_date)
-                return target_df.dropna(subset=['DateStr'])
+                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                return clean_df.dropna(subset=['DateStr'])
     except:
         pass
     finally:
@@ -554,7 +572,7 @@ def get_stock_price(stock_id):
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
         
-        # ✅ 計算指標 (包含布林通道)
+        # ✅ 計算指標
         df = calculate_technical_indicators(df)
         
         return df
