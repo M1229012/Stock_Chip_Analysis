@@ -555,7 +555,7 @@ def get_stock_price(stock_id):
 
 # ================= 4. 介面邏輯 (保留原樣) =================
 
-st.title(f"📊 籌碼K線 (TradingView 風格)")
+st.title(f"📊 籌碼K線")
 
 tz = pytz.timezone('Asia/Taipei')
 current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
