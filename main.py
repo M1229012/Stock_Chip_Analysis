@@ -88,7 +88,7 @@ st.markdown("""
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式 (保留原樣) =================
+# ================= 2. 輔助函式 =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -182,7 +182,7 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ================= 3. 爬蟲核心 (保留原樣) =================
+# ================= 3. 爬蟲核心 =================
 
 @st.cache_resource
 def get_driver_path():
@@ -237,7 +237,7 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
-# ✅ 爬取三大法人資料 (保留原樣)
+# ✅ 爬取三大法人資料
 @st.cache_data(persist="disk", ttl=21600)
 def get_institutional_data(stock_id, start_date, end_date):
     driver = get_driver()
@@ -284,7 +284,7 @@ def get_institutional_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取融資融券資料 (保留原樣)
+# ✅ 爬取融資融券資料
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
@@ -890,9 +890,9 @@ if stock_input:
 
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
-            # ✅ 修正：新增 time_visible 參數
-            def make_opts(height, time_visible=True):
-                return {
+            # ✅ 修正：新增 time_visible 參數 和 title (浮水印)
+            def make_opts(height, title=None, time_visible=True):
+                opts = {
                     "layout": {
                         "textColor": "white",
                         "background": {"type": "solid", "color": "#131722"},
@@ -909,6 +909,18 @@ if stock_input:
                     "crosshair": {"mode": 1},
                     "height": height,
                 }
+                
+                # ✅ 浮水印設定 (左上角標題)
+                if title:
+                    opts["watermark"] = {
+                        "visible": True,
+                        "fontSize": 18,
+                        "horzAlign": 'left',
+                        "vertAlign": 'top',
+                        "color": 'rgba(255, 255, 255, 0.7)',
+                        "text": title,
+                    }
+                return opts
 
             charts_payload = []
 
@@ -937,7 +949,7 @@ if stock_input:
                 main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_base_options, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB Upper"}})
                 main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_base_options, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB Lower"}})
 
-            charts_payload.append({"chart": make_opts(400, True), "series": main_series})
+            charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             # 2. 副圖：成交量 (✅ time_visible=False)
             if show_vol:
@@ -950,7 +962,7 @@ if stock_input:
                         "title": "Volume",
                     }
                 }]
-                charts_payload.append({"chart": make_opts(150, False), "series": vol_series})
+                charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
 
             # 3. 副圖：KD (✅ time_visible=False)
             if show_kd and k_data:
@@ -958,7 +970,7 @@ if stock_input:
                     {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"}},
                     {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",        "priceScaleId": "right"}},
                 ]
-                charts_payload.append({"chart": make_opts(150, False), "series": kd_series})
+                charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
 
             # 4. 副圖：MACD (✅ time_visible=False)
             if show_macd and dif_data:
@@ -967,7 +979,7 @@ if stock_input:
                     {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"}},
                     {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"}},
                 ]
-                charts_payload.append({"chart": make_opts(150, False), "series": macd_series})
+                charts_payload.append({"chart": make_opts(150, "MACD", False), "series": macd_series})
 
             # 5. 副圖：分點買賣超 (雙軸) (✅ time_visible=False)
             if show_chip and chip_data:
@@ -983,7 +995,7 @@ if stock_input:
                         "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left"}
                     }
                 ]
-                charts_payload.append({"chart": make_opts(200, False), "series": chip_series})
+                charts_payload.append({"chart": make_opts(200, "分點買賣超", False), "series": chip_series})
 
             # 6. 副圖：三大法人 (雙軸：單日+累積)
             if inst_series_data:
@@ -1005,7 +1017,7 @@ if stock_input:
                         "data": s_data,
                         "options": opts
                     })
-                charts_payload.append({"chart": make_opts(200, False), "series": final_inst_series})
+                charts_payload.append({"chart": make_opts(200, "三大法人", False), "series": final_inst_series})
 
             # 7. 副圖：融資融券 (雙軸：增減量 + 累積餘額)
             if show_margin and (margin_long_bal_data or margin_short_bal_data):
@@ -1023,7 +1035,7 @@ if stock_input:
                 if margin_short_bal_data:
                     margin_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left"}})
                 
-                charts_payload.append({"chart": make_opts(200, False), "series": margin_series})
+                charts_payload.append({"chart": make_opts(200, "融資融券", False), "series": margin_series})
 
             # ✅ 一次 render：多張 chart 會依序往下排
             renderLightweightCharts(charts_payload, key="tv_chart_stack")
