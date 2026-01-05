@@ -971,6 +971,8 @@ if stock_input:
                         "priceFormat": {"type": "volume"},
                         "priceScaleId": "right",
                         "title": "Volume",
+                        "priceLineVisible": False,  # ✅ 隱藏水平線
+                        "lastValueVisible": False   # ✅ 隱藏數值標籤
                     }
                 }]
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
@@ -978,17 +980,17 @@ if stock_input:
             # 3. 副圖：KD (✅ time_visible=False)
             if show_kd and k_data:
                 kd_series = [
-                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"}},
-                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",         "priceScaleId": "right"}},
+                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
+                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",         "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
                 ]
                 charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
 
             # 4. 副圖：MACD (✅ time_visible=False)
             if show_macd and dif_data:
                 macd_series = [
-                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right"}},
-                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"}},
-                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"}},
+                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
+                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
+                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
                 ]
                 charts_payload.append({"chart": make_opts(150, "MACD", False), "series": macd_series})
 
@@ -998,12 +1000,12 @@ if stock_input:
                     {
                         "type": "Histogram",
                         "data": chip_data,
-                        "options": {"title": f"{target_broker} 每日", "priceScaleId": "right"}
+                        "options": {"title": f"{target_broker} 每日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}
                     },
                     {
                         "type": "Line",
                         "data": chip_cumulative_data,
-                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left"}
+                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}
                     }
                 ]
                 charts_payload.append({"chart": make_opts(200, "分點買賣超", False), "series": chip_series})
@@ -1019,7 +1021,13 @@ if stock_input:
                     s_scale = item["scale"]
                     s_color = item.get("color")
                     
-                    opts = {"title": s_title, "priceScaleId": s_scale}
+                    # ✅ 隱藏水平線
+                    opts = {
+                        "title": s_title, 
+                        "priceScaleId": s_scale,
+                        "priceLineVisible": False,
+                        "lastValueVisible": False
+                    }
                     if s_color: opts["color"] = s_color
                     if s_type == "Line": opts["lineWidth"] = 2
                     
@@ -1036,15 +1044,15 @@ if stock_input:
                 
                 # 增減量 (柱狀圖，右軸)
                 if margin_long_diff_data:
-                    margin_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right"}})
+                    margin_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
                 if margin_short_diff_data:
-                    margin_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right"}})
+                    margin_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
                 
                 # 累積餘額 (折線圖，左軸)
                 if margin_long_bal_data:
-                    margin_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left"}})
+                    margin_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
                 if margin_short_bal_data:
-                    margin_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left"}})
+                    margin_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
                 
                 charts_payload.append({"chart": make_opts(200, "融資融券", False), "series": margin_series})
 
