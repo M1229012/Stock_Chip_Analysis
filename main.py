@@ -920,7 +920,7 @@ if stock_input:
                     "timeScale": {
                         "borderColor": "rgba(197, 203, 206, 0.8)",
                         "visible": time_visible, # ✅ 控制時間軸顯示
-                        "timeVisible": time_visible 
+                        "timeVisible": False     # ✅ 隱藏十字線標籤中的時間部分 (00:00:00)
                     },
                     "crosshair": {"mode": 1},
                     "height": height,
