@@ -680,8 +680,8 @@ if stock_input:
 
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
-            # 定義樣式 Helper (深色模式)
-            def make_opts(height):
+            # ✅ 修正：新增 time_visible 參數
+            def make_opts(height, time_visible=True):
                 return {
                     "layout": {
                         "textColor": "white",
@@ -693,7 +693,8 @@ if stock_input:
                     },
                     "timeScale": {
                         "borderColor": "rgba(197, 203, 206, 0.8)",
-                        "timeVisible": True,
+                        "visible": time_visible, # ✅ 控制時間軸顯示
+                        "timeVisible": time_visible 
                     },
                     "crosshair": {"mode": 1},
                     "height": height,
@@ -701,7 +702,7 @@ if stock_input:
 
             charts_payload = []
 
-            # 1. 主圖：K線 + MA
+            # 1. 主圖：K線 + MA (✅ time_visible=True)
             main_series = [
                 {
                     "type": "Candlestick",
@@ -720,9 +721,9 @@ if stock_input:
                 {"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}},
                 {"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime",   "lineWidth": 2, "title": "MA60"}},
             ]
-            charts_payload.append({"chart": make_opts(400), "series": main_series})
+            charts_payload.append({"chart": make_opts(400, True), "series": main_series})
 
-            # 2. 副圖：成交量
+            # 2. 副圖：成交量 (✅ time_visible=False)
             if show_vol:
                 vol_series = [{
                     "type": "Histogram",
@@ -733,26 +734,26 @@ if stock_input:
                         "title": "Volume",
                     }
                 }]
-                charts_payload.append({"chart": make_opts(150), "series": vol_series})
+                charts_payload.append({"chart": make_opts(150, False), "series": vol_series})
 
-            # 3. 副圖：KD
+            # 3. 副圖：KD (✅ time_visible=False)
             if show_kd and k_data:
                 kd_series = [
                     {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"}},
                     {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",        "priceScaleId": "right"}},
                 ]
-                charts_payload.append({"chart": make_opts(150), "series": kd_series})
+                charts_payload.append({"chart": make_opts(150, False), "series": kd_series})
 
-            # 4. 副圖：MACD
+            # 4. 副圖：MACD (✅ time_visible=False)
             if show_macd and dif_data:
                 macd_series = [
                     {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right"}},
                     {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"}},
                     {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"}},
                 ]
-                charts_payload.append({"chart": make_opts(150), "series": macd_series})
+                charts_payload.append({"chart": make_opts(150, False), "series": macd_series})
 
-            # 5. 副圖：分點買賣超 (雙軸)
+            # 5. 副圖：分點買賣超 (雙軸) (✅ time_visible=False)
             if show_chip and chip_data:
                 chip_series = [
                     {
@@ -766,7 +767,7 @@ if stock_input:
                         "options": {"title": "累積買賣超", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left"}
                     }
                 ]
-                charts_payload.append({"chart": make_opts(200), "series": chip_series})
+                charts_payload.append({"chart": make_opts(200, False), "series": chip_series})
 
             # ✅ 一次 render：多張 chart 會依序往下排
             renderLightweightCharts(charts_payload, key="tv_chart_stack")
