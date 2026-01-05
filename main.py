@@ -624,6 +624,7 @@ if stock_input:
             series_list = []
 
             # === 主圖 (K線 + MA) [Panel 0] ===
+            # ✅ 重點修正：明確指定 Panel 0，確保它佔據主區域，不會被副圖蓋過
             series_list.append({
                 "type": "Candlestick",
                 "data": candlestick_data,
@@ -634,16 +635,17 @@ if stock_input:
                     "borderDownColor": COLOR_DOWN,
                     "wickUpColor": COLOR_UP,
                     "wickDownColor": COLOR_DOWN,
-                }
+                },
+                "panel": 0 # ✅ 確保這是主圖
             })
             
-            # 加入均線 (隱藏軸標籤)
-            series_list.append({"type": "Line", "data": ma5_data, "options": {**ma_base_options, "color": "orange", "title": "MA5"}})
-            series_list.append({"type": "Line", "data": ma10_data, "options": {**ma_base_options, "color": "cyan", "title": "MA10"}})
-            series_list.append({"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
-            series_list.append({"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime", "lineWidth": 2, "title": "MA60"}})
+            # 加入均線 (Panel 0)
+            series_list.append({"type": "Line", "data": ma5_data, "options": {**ma_base_options, "color": "orange", "title": "MA5"}, "panel": 0})
+            series_list.append({"type": "Line", "data": ma10_data, "options": {**ma_base_options, "color": "cyan", "title": "MA10"}, "panel": 0})
+            series_list.append({"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}, "panel": 0})
+            series_list.append({"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime", "lineWidth": 2, "title": "MA60"}, "panel": 0})
 
-            # === 副圖管理 (✅ 確保 panel 索引正確) ===
+            # === 副圖管理 (從 Panel 1 開始) ===
             current_panel = 1
             
             # 1. 成交量 (Volume)
@@ -663,9 +665,9 @@ if stock_input:
                     "data": vol_data,
                     "options": {
                         "priceFormat": {"type": "volume"},
-                        "priceScaleId": "right", # 使用獨立右側刻度
+                        "priceScaleId": "right", 
                     },
-                    "panel": current_panel # ✅ 明確指定 Panel
+                    "panel": current_panel
                 })
                 current_panel += 1
 
@@ -761,10 +763,10 @@ if stock_input:
                     "timeVisible": True
                 },
                 "crosshair": {
-                    "mode": 1  # Magnet 模式，讓十字線自動吸附數據點，方便讀取 Legend
+                    "mode": 1
                 },
-                # 高度根據副圖數量動態調整
-                "height": 450 + (current_panel - 1) * 150
+                # ✅ 高度根據副圖數量動態調整 (基礎 400px 給主圖 + 每個副圖 120px)
+                "height": 400 + (current_panel - 1) * 120
             }
 
             # ✅ 正確的呼叫方式：List[Dict]
