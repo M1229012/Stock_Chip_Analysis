@@ -596,19 +596,20 @@ if stock_input:
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
-            # ✅ 修正重點：強制轉型 float()，解決 TypeError
             # 1. K線資料
             candlestick_data = []
             for i, row in plot_df.iterrows():
-                candlestick_data.append({
-                    "time": row['DateStr'],
-                    "open": float(row['Open']),
-                    "high": float(row['High']),
-                    "low": float(row['Low']),
-                    "close": float(row['Close'])
-                })
+                # 確保數值非 NaN
+                if not pd.isna(row['Open']) and not pd.isna(row['Close']):
+                    candlestick_data.append({
+                        "time": row['DateStr'],
+                        "open": float(row['Open']),
+                        "high": float(row['High']),
+                        "low": float(row['Low']),
+                        "close": float(row['Close'])
+                    })
 
-            # 2. 均線資料
+            # 2. 均線資料 (過濾 NaN)
             ma5_data = [{"time": row['DateStr'], "value": float(row['MA5'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA5'])]
             ma10_data = [{"time": row['DateStr'], "value": float(row['MA10'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA10'])]
             ma20_data = [{"time": row['DateStr'], "value": float(row['MA20'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
@@ -643,12 +644,14 @@ if stock_input:
             if show_vol:
                 vol_data = []
                 for i, row in plot_df.iterrows():
-                    color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
-                    vol_data.append({
-                        "time": row['DateStr'],
-                        "value": float(row['Volume']), # 強制轉 float
-                        "color": color
-                    })
+                    # 確保成交量非 NaN
+                    if not pd.isna(row['Volume']):
+                        color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
+                        vol_data.append({
+                            "time": row['DateStr'],
+                            "value": float(row['Volume']), 
+                            "color": color
+                        })
                 
                 series_list.append({
                     "type": "Histogram",
@@ -666,12 +669,14 @@ if stock_input:
                 chip_data = []
                 for i, row in plot_df.iterrows():
                     val = row['買賣超_Final']
-                    color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
-                    chip_data.append({
-                        "time": row['DateStr'],
-                        "value": float(val), # 強制轉 float
-                        "color": color
-                    })
+                    # 確保非 NaN (雖然已經 fillna(0) 但保險起見)
+                    if not pd.isna(val):
+                        color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
+                        chip_data.append({
+                            "time": row['DateStr'],
+                            "value": float(val), 
+                            "color": color
+                        })
                 
                 series_list.append({
                     "type": "Histogram",
@@ -684,10 +689,10 @@ if stock_input:
                 })
                 current_panel += 1
 
-            # 3. KD 指標
+            # 3. KD 指標 (過濾 NaN)
             if show_kd and 'K' in plot_df.columns:
-                k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows()]
-                d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows()]
+                k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows() if not pd.isna(row['K'])]
+                d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows() if not pd.isna(row['D'])]
                 
                 series_list.append({
                     "type": "Line",
@@ -703,15 +708,16 @@ if stock_input:
                 })
                 current_panel += 1
 
-            # 4. MACD 指標
+            # 4. MACD 指標 (過濾 NaN)
             if show_macd and 'DIF' in plot_df.columns:
-                dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows()]
-                dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows()]
+                dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
+                dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
                 hist_data = []
                 for i, row in plot_df.iterrows():
                     val = row['MACD_Hist']
-                    color = COLOR_UP if val >= 0 else COLOR_DOWN
-                    hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
+                    if not pd.isna(val):
+                        color = COLOR_UP if val >= 0 else COLOR_DOWN
+                        hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
                 
                 series_list.append({
                     "type": "Histogram",
@@ -757,11 +763,14 @@ if stock_input:
                 "height": 450 + (current_panel - 1) * 150
             }
 
-            # ✅ 渲染圖表
-            renderLightweightCharts(
-                series=series_list,
-                options=chartOptions
-            )
+            # ✅ 修正：使用正確的 List[Dict] 參數格式
+            charts_payload = [
+                {
+                    "chart": chartOptions,
+                    "series": series_list,
+                }
+            ]
+            renderLightweightCharts(charts_payload, key="tv_chart")
 
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
