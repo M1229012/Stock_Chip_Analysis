@@ -32,7 +32,7 @@ st.markdown("""
     /* --- 通用字體設定 --- */
     html, body, [class*="css"] { font-size: 18px !important; }
     .stDataFrame { font-size: 16px !important; }
-    
+     
     /* --- 數據卡片樣式 --- */
     .metric-container {
         display: flex;
@@ -633,29 +633,40 @@ if stock_input:
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             
-            # 這裡改成兩欄，右邊放指標勾選
+            # 這裡改成兩欄，右邊放指標勾選 (✅ 優化：改用 Multiselect)
             col_sel1, col_sel2 = st.columns([1, 2])
             with col_sel1:
                 target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
             
-            # --- 指標勾選區 ---
+            # --- 指標勾選區 (優化版) ---
             with col_sel2:
-                st.write("顯示副圖指標：")
-                col_c1, col_c2, col_c3, col_c4 = st.columns(4)
-                show_vol = col_c1.checkbox("成交量", value=True)
-                show_kd = col_c2.checkbox("KD", value=True)
-                show_macd = col_c3.checkbox("MACD", value=True)
-                show_chip = col_c4.checkbox("分點買賣超", value=True)
+                # 定義選項
+                default_options = [
+                    "成交量", "KD", "MACD", "分點買賣超", 
+                    "外資", "投信", "自營商"
+                ]
+                all_options = [
+                    "成交量", "KD", "MACD", "分點買賣超", 
+                    "布林通道", "融資融券", 
+                    "外資", "投信", "自營商"
+                ]
                 
-                col_c5, col_c6, col_c7, col_c8 = st.columns(4)
-                show_bb = col_c5.checkbox("布林通道", value=False)
-                show_margin = col_c6.checkbox("融資融券", value=False)
-                
-                st.write("三大法人:")
-                col_i1, col_i2, col_i3 = st.columns(3)
-                show_inst_foreign = col_i1.checkbox("外資", value=False)
-                show_inst_trust = col_i2.checkbox("投信", value=False)
-                show_inst_dealer = col_i3.checkbox("自營商", value=False)
+                selected_indicators = st.multiselect(
+                    "顯示副圖指標 (可多選)",
+                    options=all_options,
+                    default=default_options
+                )
+
+                # 將選擇結果映射回 boolean 變數，保持後續邏輯不變
+                show_vol = "成交量" in selected_indicators
+                show_kd = "KD" in selected_indicators
+                show_macd = "MACD" in selected_indicators
+                show_chip = "分點買賣超" in selected_indicators
+                show_bb = "布林通道" in selected_indicators
+                show_margin = "融資融券" in selected_indicators
+                show_inst_foreign = "外資" in selected_indicators
+                show_inst_trust = "投信" in selected_indicators
+                show_inst_dealer = "自營商" in selected_indicators
 
             merged_df = None
             target_key = normalize_name(target_broker)
@@ -968,7 +979,7 @@ if stock_input:
             if show_kd and k_data:
                 kd_series = [
                     {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"}},
-                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",        "priceScaleId": "right"}},
+                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",         "priceScaleId": "right"}},
                 ]
                 charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
 
