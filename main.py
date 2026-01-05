@@ -26,7 +26,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 保留原樣，僅針對圖表容器做微調
+# ✅ CSS 保留原樣
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -88,7 +88,7 @@ st.markdown("""
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式 (保留原樣 + 新增指標計算) =================
+# ================= 2. 輔助函式 (保留原樣) =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -137,7 +137,7 @@ def render_broker_table(df, sum_data, color_hex, title):
     </div>
     """, unsafe_allow_html=True)
 
-# ✅ 新增：計算 KD 與 MACD 的輔助函式
+# ✅ 輔助函式：計算 KD 與 MACD
 def calculate_technical_indicators(df):
     df = df.copy()
     # 1. 計算 KD (9, 3, 3)
@@ -178,7 +178,7 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ================= 3. 爬蟲核心 (完全保留你的原始碼) =================
+# ================= 3. 爬蟲核心 (保留原樣) =================
 
 @st.cache_resource
 def get_driver_path():
@@ -448,14 +448,14 @@ def get_stock_price(stock_id):
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
         
-        # ✅ 新增：在抓取股價時順便計算 KD, MACD
+        # ✅ 計算指標
         df = calculate_technical_indicators(df)
         
         return df
     except Exception:
         return None
 
-# ================= 4. 介面邏輯 (保留原樣 + 替換圖表) =================
+# ================= 4. 介面邏輯 (保留原樣) =================
 
 st.title(f"📊 籌碼K線 (TradingView 風格)")
 
@@ -596,22 +596,23 @@ if stock_input:
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
+            # ✅ 修正重點：強制轉型 float()，解決 TypeError
             # 1. K線資料
             candlestick_data = []
             for i, row in plot_df.iterrows():
                 candlestick_data.append({
                     "time": row['DateStr'],
-                    "open": row['Open'],
-                    "high": row['High'],
-                    "low": row['Low'],
-                    "close": row['Close']
+                    "open": float(row['Open']),
+                    "high": float(row['High']),
+                    "low": float(row['Low']),
+                    "close": float(row['Close'])
                 })
 
             # 2. 均線資料
-            ma5_data = [{"time": row['DateStr'], "value": row['MA5']} for i, row in plot_df.iterrows() if not pd.isna(row['MA5'])]
-            ma10_data = [{"time": row['DateStr'], "value": row['MA10']} for i, row in plot_df.iterrows() if not pd.isna(row['MA10'])]
-            ma20_data = [{"time": row['DateStr'], "value": row['MA20']} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
-            ma60_data = [{"time": row['DateStr'], "value": row['MA60']} for i, row in plot_df.iterrows() if not pd.isna(row['MA60'])]
+            ma5_data = [{"time": row['DateStr'], "value": float(row['MA5'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA5'])]
+            ma10_data = [{"time": row['DateStr'], "value": float(row['MA10'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA10'])]
+            ma20_data = [{"time": row['DateStr'], "value": float(row['MA20'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
+            ma60_data = [{"time": row['DateStr'], "value": float(row['MA60'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA60'])]
 
             series_list = []
 
@@ -645,7 +646,7 @@ if stock_input:
                     color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
                     vol_data.append({
                         "time": row['DateStr'],
-                        "value": row['Volume'],
+                        "value": float(row['Volume']), # 強制轉 float
                         "color": color
                     })
                 
@@ -668,7 +669,7 @@ if stock_input:
                     color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
                     chip_data.append({
                         "time": row['DateStr'],
-                        "value": val,
+                        "value": float(val), # 強制轉 float
                         "color": color
                     })
                 
@@ -685,8 +686,8 @@ if stock_input:
 
             # 3. KD 指標
             if show_kd and 'K' in plot_df.columns:
-                k_data = [{"time": row['DateStr'], "value": row['K']} for i, row in plot_df.iterrows()]
-                d_data = [{"time": row['DateStr'], "value": row['D']} for i, row in plot_df.iterrows()]
+                k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows()]
+                d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows()]
                 
                 series_list.append({
                     "type": "Line",
@@ -704,13 +705,13 @@ if stock_input:
 
             # 4. MACD 指標
             if show_macd and 'DIF' in plot_df.columns:
-                dif_data = [{"time": row['DateStr'], "value": row['DIF']} for i, row in plot_df.iterrows()]
-                dea_data = [{"time": row['DateStr'], "value": row['DEA']} for i, row in plot_df.iterrows()]
+                dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows()]
+                dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows()]
                 hist_data = []
                 for i, row in plot_df.iterrows():
                     val = row['MACD_Hist']
                     color = COLOR_UP if val >= 0 else COLOR_DOWN
-                    hist_data.append({"time": row['DateStr'], "value": val, "color": color})
+                    hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
                 
                 series_list.append({
                     "type": "Histogram",
