@@ -596,6 +596,10 @@ if stock_input:
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
+            # ✅ 新增：計算累積買賣超
+            if '買賣超_Final' in plot_df.columns:
+                plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
+
             # 1. K線資料
             candlestick_data = []
             for i, row in plot_df.iterrows():
@@ -621,36 +625,9 @@ if stock_input:
             ma20_data = [{"time": row['DateStr'], "value": float(row['MA20'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
             ma60_data = [{"time": row['DateStr'], "value": float(row['MA60'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA60'])]
 
-            series_list = []
-
-            # === 主圖 (K線 + MA) [Panel 0] ===
-            # ✅ 重點修正：明確指定 Panel 0，確保它佔據主區域
-            series_list.append({
-                "type": "Candlestick",
-                "data": candlestick_data,
-                "options": {
-                    "upColor": COLOR_UP,
-                    "downColor": COLOR_DOWN,
-                    "borderUpColor": COLOR_UP,
-                    "borderDownColor": COLOR_DOWN,
-                    "wickUpColor": COLOR_UP,
-                    "wickDownColor": COLOR_DOWN,
-                },
-                "panel": 0 
-            })
-            
-            # 加入均線 (Panel 0)
-            series_list.append({"type": "Line", "data": ma5_data, "options": {**ma_base_options, "color": "orange", "title": "MA5"}, "panel": 0})
-            series_list.append({"type": "Line", "data": ma10_data, "options": {**ma_base_options, "color": "cyan", "title": "MA10"}, "panel": 0})
-            series_list.append({"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}, "panel": 0})
-            series_list.append({"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime", "lineWidth": 2, "title": "MA60"}, "panel": 0})
-
-            # === 副圖管理 (從 Panel 1 開始遞增) ===
-            next_panel_id = 1
-            
-            # 1. 成交量 (Volume)
+            # ✅ 數據準備：成交量
+            vol_data = []
             if show_vol:
-                vol_data = []
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Volume']):
                         color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
@@ -659,73 +636,32 @@ if stock_input:
                             "value": float(row['Volume']), 
                             "color": color
                         })
-                
-                series_list.append({
-                    "type": "Histogram",
-                    "data": vol_data,
-                    "options": {
-                        "priceFormat": {"type": "volume"},
-                        "priceScaleId": "right", 
-                    },
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                next_panel_id += 1
 
-            # 2. KD 指標
+            # ✅ 數據準備：KD
+            k_data = []
+            d_data = []
             if show_kd and 'K' in plot_df.columns:
                 k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows() if not pd.isna(row['K'])]
                 d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows() if not pd.isna(row['D'])]
-                
-                series_list.append({
-                    "type": "Line",
-                    "data": k_data,
-                    "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"},
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                series_list.append({
-                    "type": "Line",
-                    "data": d_data,
-                    "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right"},
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                next_panel_id += 1
 
-            # 3. MACD 指標
+            # ✅ 數據準備：MACD
+            dif_data = []
+            dea_data = []
+            hist_data = []
             if show_macd and 'DIF' in plot_df.columns:
                 dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
                 dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
-                hist_data = []
                 for i, row in plot_df.iterrows():
                     val = row['MACD_Hist']
                     if not pd.isna(val):
                         color = COLOR_UP if val >= 0 else COLOR_DOWN
                         hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
-                
-                series_list.append({
-                    "type": "Histogram",
-                    "data": hist_data,
-                    "options": {"title": "MACD Hist", "priceScaleId": "right"},
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                series_list.append({
-                    "type": "Line",
-                    "data": dif_data,
-                    "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"},
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                series_list.append({
-                    "type": "Line",
-                    "data": dea_data,
-                    "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"},
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                next_panel_id += 1
 
-            # 4. 分點買賣超 (Chip)
+            # ✅ 數據準備：分點買賣超
+            chip_data = []
+            chip_cumulative_data = []
             if show_chip and '買賣超_Final' in plot_df.columns:
-                chip_data = []
                 for i, row in plot_df.iterrows():
-                    # 單日買賣超
                     val = row.get('買賣超_Final')
                     if not pd.isna(val):
                         color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
@@ -734,54 +670,106 @@ if stock_input:
                             "value": float(val), 
                             "color": color
                         })
-                
-                # 加入單日買賣超直方圖
-                series_list.append({
-                    "type": "Histogram",
-                    "data": chip_data,
-                    "options": {
-                        "title": f"{target_broker} 每日買賣超",
-                        "priceScaleId": "right"
+                    
+                    cum_val = row.get('cumulative_chip')
+                    if not pd.isna(cum_val):
+                        chip_cumulative_data.append({
+                            "time": row['DateStr'],
+                            "value": float(cum_val)
+                        })
+
+            # ========= 🚀 改用多 chart 堆疊模式 =========
+            
+            # 定義樣式 Helper (深色模式)
+            def make_opts(height):
+                return {
+                    "layout": {
+                        "textColor": "white",
+                        "background": {"type": "solid", "color": "#131722"},
                     },
-                    "panel": next_panel_id # ✅ 使用獨立 Panel
-                })
-                next_panel_id += 1
-
-            # === 圖表全域設定 ===
-            # ✅ 計算總高度：主圖 400px + 每個副圖 150px
-            num_sub_panels = next_panel_id - 1
-            total_height = 400 + num_sub_panels * 150
-
-            chartOptions = {
-                "layout": {
-                    "textColor": 'white',
-                    "background": {
-                        "type": 'solid',
-                        "color": '#131722' # TradingView 深色背景
-                    }
-                },
-                "grid": {
-                    "vertLines": {"color": "rgba(42, 46, 57, 0.5)"},
-                    "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}
-                },
-                "timeScale": {
-                    "borderColor": "rgba(197, 203, 206, 0.8)",
-                    "timeVisible": True
-                },
-                "crosshair": {
-                    "mode": 1
-                },
-                "height": total_height # ✅ 套用計算出的總高度
-            }
-
-            # ✅ 正確的呼叫方式：List[Dict]
-            charts_payload = [
-                {
-                    "chart": chartOptions,
-                    "series": series_list,
+                    "grid": {
+                        "vertLines": {"color": "rgba(42, 46, 57, 0.5)"},
+                        "horzLines": {"color": "rgba(42, 46, 57, 0.5)"},
+                    },
+                    "timeScale": {
+                        "borderColor": "rgba(197, 203, 206, 0.8)",
+                        "timeVisible": True,
+                    },
+                    "crosshair": {"mode": 1},
+                    "height": height,
                 }
+
+            charts_payload = []
+
+            # 1. 主圖：K線 + MA
+            main_series = [
+                {
+                    "type": "Candlestick",
+                    "data": candlestick_data,
+                    "options": {
+                        "upColor": COLOR_UP,
+                        "downColor": COLOR_DOWN,
+                        "borderUpColor": COLOR_UP,
+                        "borderDownColor": COLOR_DOWN,
+                        "wickUpColor": COLOR_UP,
+                        "wickDownColor": COLOR_DOWN,
+                    },
+                },
+                {"type": "Line", "data": ma5_data,  "options": {**ma_base_options, "color": "orange", "title": "MA5"}},
+                {"type": "Line", "data": ma10_data, "options": {**ma_base_options, "color": "cyan",   "title": "MA10"}},
+                {"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}},
+                {"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime",   "lineWidth": 2, "title": "MA60"}},
             ]
-            renderLightweightCharts(charts_payload, key="tv_chart")
+            charts_payload.append({"chart": make_opts(400), "series": main_series})
+
+            # 2. 副圖：成交量
+            if show_vol:
+                vol_series = [{
+                    "type": "Histogram",
+                    "data": vol_data,
+                    "options": {
+                        "priceFormat": {"type": "volume"},
+                        "priceScaleId": "right",
+                        "title": "Volume",
+                    }
+                }]
+                charts_payload.append({"chart": make_opts(150), "series": vol_series})
+
+            # 3. 副圖：KD
+            if show_kd and k_data:
+                kd_series = [
+                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"}},
+                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",        "priceScaleId": "right"}},
+                ]
+                charts_payload.append({"chart": make_opts(150), "series": kd_series})
+
+            # 4. 副圖：MACD
+            if show_macd and dif_data:
+                macd_series = [
+                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right"}},
+                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"}},
+                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"}},
+                ]
+                charts_payload.append({"chart": make_opts(150), "series": macd_series})
+
+            # 5. 副圖：分點買賣超 (雙軸)
+            if show_chip and chip_data:
+                chip_series = [
+                    {
+                        "type": "Histogram",
+                        "data": chip_data,
+                        "options": {"title": f"{target_broker} 買賣超", "priceScaleId": "right"}
+                    },
+                    {
+                        "type": "Line",
+                        "data": chip_cumulative_data,
+                        "options": {"title": "累積買賣超", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left"}
+                    }
+                ]
+                charts_payload.append({"chart": make_opts(200), "series": chip_series})
+
+            # ✅ 一次 render：多張 chart 會依序往下排
+            renderLightweightCharts(charts_payload, key="tv_chart_stack")
 
     else:
         st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
