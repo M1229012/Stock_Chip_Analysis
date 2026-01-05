@@ -88,7 +88,7 @@ st.markdown("""
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式 (保留原樣) =================
+# ================= 2. 輔助函式 =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
@@ -137,23 +137,27 @@ def render_broker_table(df, sum_data, color_hex, title):
     </div>
     """, unsafe_allow_html=True)
 
-# ✅ 輔助函式：計算 KD 與 MACD
+# ✅ 輔助函式：計算 KD, MACD, 布林通道
 def calculate_technical_indicators(df):
     df = df.copy()
-    # 1. 計算 KD (9, 3, 3)
-    rsv_period = 9
     
+    # 1. 布林通道 (Bollinger Bands) - 20MA, 2std
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
+    df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
+
+    # 2. 計算 KD (9, 3, 3)
+    rsv_period = 9
     df['9_High'] = df['High'].rolling(window=rsv_period).max()
     df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
     df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
     df['RSV'] = df['RSV'].fillna(50)
     
-    # 計算 K, D (平滑計算)
     k_list = []
     d_list = []
     k_prev = 50
     d_prev = 50
-    
     for rsv in df['RSV']:
         if pd.isna(rsv):
             k_now = k_prev
@@ -165,11 +169,10 @@ def calculate_technical_indicators(df):
         d_list.append(d_now)
         k_prev = k_now
         d_prev = d_now
-        
     df['K'] = k_list
     df['D'] = d_list
 
-    # 2. 計算 MACD (12, 26, 9)
+    # 3. 計算 MACD (12, 26, 9)
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
     exp26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['DIF'] = exp12 - exp26
@@ -178,7 +181,7 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ================= 3. 爬蟲核心 (保留原樣) =================
+# ================= 3. 爬蟲核心 =================
 
 @st.cache_resource
 def get_driver_path():
@@ -232,6 +235,109 @@ def calculate_date_range(stock_id, days):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+# ✅ 新增：爬取三大法人資料
+@st.cache_data(persist="disk", ttl=21600)
+def get_institutional_data(stock_id, start_date, end_date):
+    driver = get_driver()
+    # zcl = 三大法人
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '外資')]")))
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html), match="日期")
+        if tables:
+            df = tables[0]
+            # 清理欄位
+            df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
+            # 必須包含的欄位
+            needed = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
+            if all(n in df.columns for n in needed):
+                # 數值處理
+                for col in needed[1:]:
+                    df[col] = (df[col].astype(str).str.replace(',', '').str.replace('+', '').replace('nan', '0'))
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                
+                # 日期處理 (民國轉西元)
+                def parse_date(d_str):
+                    parts = re.split(r'[/-]', str(d_str))
+                    if len(parts) >= 2:
+                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
+                        m = int(parts[1])
+                        d = int(parts[2]) if len(parts) > 2 else 1
+                        return f"{y:04d}-{m:02d}-{d:02d}"
+                    return None
+                
+                df['DateStr'] = df['日期'].apply(parse_date)
+                return df.dropna(subset=['DateStr'])
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
+
+# ✅ 新增：爬取融資融券資料
+@st.cache_data(persist="disk", ttl=21600)
+def get_margin_data(stock_id, start_date, end_date):
+    driver = get_driver()
+    # zcn = 融資融券
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '融資餘額')]")))
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html), match="日期")
+        if tables:
+            df = tables[0]
+            df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
+            # 尋找融資餘額與融券餘額 (有時候欄位名稱會有多層)
+            # 簡單處理：找包含 "餘額" 的欄位，通常前兩個是資餘、券餘，或者直接找 index
+            # DJHTM 融資融券通常格式：日期, 融資(買,賣,現償,餘額), 融券(買,賣,現償,餘額), ...
+            # 我們嘗試直接對應關鍵字
+            
+            # 扁平化處理
+            new_cols = []
+            vals = []
+            # 假設已經是單層 columns 或清理一下
+            # 這裡簡化邏輯：抓取「融資餘額」和「融券餘額」
+            # 若欄位是 MultiIndex，需要特別處理，這裡假設 read_html 讀出來可能是單層或髒資料
+            
+            # 重新定位欄位
+            # 融資餘額通常在第 5 欄 (index 4), 融券餘額在第 9 欄 (index 8) 左右
+            # 比較保險是用關鍵字搜尋
+            
+            # 嘗試正規化
+            df = df[df['日期'] != '日期'] # 去除重複 header
+            
+            # 尋找目標欄位
+            margin_bal_col = [c for c in df.columns if '融資餘額' in c]
+            short_bal_col = [c for c in df.columns if '融券餘額' in c]
+            
+            if margin_bal_col and short_bal_col:
+                target_df = df[['日期', margin_bal_col[0], short_bal_col[0]]].copy()
+                target_df.columns = ['日期', '融資餘額', '融券餘額']
+                
+                for col in ['融資餘額', '融券餘額']:
+                    target_df[col] = (target_df[col].astype(str).str.replace(',', '').str.replace('+', '').replace('nan', '0'))
+                    target_df[col] = pd.to_numeric(target_df[col], errors='coerce').fillna(0)
+                
+                def parse_date(d_str):
+                    parts = re.split(r'[/-]', str(d_str))
+                    if len(parts) >= 2:
+                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
+                        m = int(parts[1])
+                        d = int(parts[2]) if len(parts) > 2 else 1
+                        return f"{y:04d}-{m:02d}-{d:02d}"
+                    return None
+                
+                target_df['DateStr'] = target_df['日期'].apply(parse_date)
+                return target_df.dropna(subset=['DateStr'])
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
 
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
@@ -448,7 +554,7 @@ def get_stock_price(stock_id):
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
         
-        # ✅ 計算指標
+        # ✅ 計算指標 (包含布林通道)
         df = calculate_technical_indicators(df)
         
         return df
@@ -548,6 +654,11 @@ if stock_input:
                 show_kd = col_c2.checkbox("KD", value=True)
                 show_macd = col_c3.checkbox("MACD", value=True)
                 show_chip = col_c4.checkbox("分點買賣超", value=True)
+                
+                col_c5, col_c6, col_c7, col_c8 = st.columns(4)
+                show_bb = col_c5.checkbox("布林通道", value=False)
+                show_inst = col_c6.checkbox("三大法人", value=False)
+                show_margin = col_c7.checkbox("融資融券", value=False)
 
             merged_df = None
             target_key = normalize_name(target_broker)
@@ -600,6 +711,17 @@ if stock_input:
             if '買賣超_Final' in plot_df.columns:
                 plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
+            # ✅ 新增：如果勾選了三大法人或融資融券，進行爬蟲並合併
+            if show_inst:
+                inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
+                if inst_df is not None:
+                    plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
+            
+            if show_margin:
+                margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
+                if margin_df is not None:
+                    plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
+
             # 1. K線資料
             candlestick_data = []
             for i, row in plot_df.iterrows():
@@ -624,6 +746,13 @@ if stock_input:
             ma10_data = [{"time": row['DateStr'], "value": float(row['MA10'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA10'])]
             ma20_data = [{"time": row['DateStr'], "value": float(row['MA20'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
             ma60_data = [{"time": row['DateStr'], "value": float(row['MA60'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA60'])]
+
+            # ✅ 數據準備：布林通道
+            bb_up_data = []
+            bb_low_data = []
+            if show_bb:
+                bb_up_data = [{"time": row['DateStr'], "value": float(row['BB_Up'])} for i, row in plot_df.iterrows() if not pd.isna(row['BB_Up'])]
+                bb_low_data = [{"time": row['DateStr'], "value": float(row['BB_Low'])} for i, row in plot_df.iterrows() if not pd.isna(row['BB_Low'])]
 
             # ✅ 數據準備：成交量
             vol_data = []
@@ -678,6 +807,38 @@ if stock_input:
                             "value": float(cum_val)
                         })
 
+            # ✅ 數據準備：三大法人 (外資、投信、自營商)
+            inst_foreign_data = []
+            inst_trust_data = []
+            inst_dealer_data = []
+            if show_inst and '外資買賣超' in plot_df.columns:
+                for i, row in plot_df.iterrows():
+                    # 外資 (Histogram)
+                    val_f = row.get('外資買賣超')
+                    if not pd.isna(val_f):
+                        color = COLOR_UP if val_f > 0 else (COLOR_DOWN if val_f < 0 else "gray")
+                        inst_foreign_data.append({"time": row['DateStr'], "value": float(val_f), "color": color})
+                    # 投信 (Line)
+                    val_t = row.get('投信買賣超')
+                    if not pd.isna(val_t):
+                        inst_trust_data.append({"time": row['DateStr'], "value": float(val_t)})
+                    # 自營商 (Line)
+                    val_d = row.get('自營商買賣超')
+                    if not pd.isna(val_d):
+                        inst_dealer_data.append({"time": row['DateStr'], "value": float(val_d)})
+
+            # ✅ 數據準備：融資融券
+            margin_long_data = []
+            margin_short_data = []
+            if show_margin and '融資餘額' in plot_df.columns:
+                for i, row in plot_df.iterrows():
+                    val_m = row.get('融資餘額')
+                    if not pd.isna(val_m):
+                        margin_long_data.append({"time": row['DateStr'], "value": float(val_m)})
+                    val_s = row.get('融券餘額')
+                    if not pd.isna(val_s):
+                        margin_short_data.append({"time": row['DateStr'], "value": float(val_s)})
+
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
             # ✅ 修正：新增 time_visible 參數
@@ -702,7 +863,7 @@ if stock_input:
 
             charts_payload = []
 
-            # 1. 主圖：K線 + MA (✅ time_visible=True)
+            # 1. 主圖：K線 + MA + BB (✅ time_visible=True)
             main_series = [
                 {
                     "type": "Candlestick",
@@ -721,6 +882,12 @@ if stock_input:
                 {"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}},
                 {"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime",   "lineWidth": 2, "title": "MA60"}},
             ]
+            
+            # 加入布林通道
+            if show_bb:
+                main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_base_options, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB Upper"}})
+                main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_base_options, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB Lower"}})
+
             charts_payload.append({"chart": make_opts(400, True), "series": main_series})
 
             # 2. 副圖：成交量 (✅ time_visible=False)
@@ -768,6 +935,23 @@ if stock_input:
                     }
                 ]
                 charts_payload.append({"chart": make_opts(200, False), "series": chip_series})
+
+            # 6. 副圖：三大法人 (✅ time_visible=False)
+            if show_inst and inst_foreign_data:
+                inst_series = [
+                    {"type": "Histogram", "data": inst_foreign_data, "options": {"title": "外資買賣超", "priceScaleId": "right"}},
+                    {"type": "Line", "data": inst_trust_data, "options": {"title": "投信買賣超", "color": "yellow", "lineWidth": 2, "priceScaleId": "left"}},
+                    {"type": "Line", "data": inst_dealer_data, "options": {"title": "自營商買賣超", "color": "cyan", "lineWidth": 2, "priceScaleId": "left"}}
+                ]
+                charts_payload.append({"chart": make_opts(200, False), "series": inst_series})
+
+            # 7. 副圖：融資融券 (✅ time_visible=False)
+            if show_margin and margin_long_data:
+                margin_series = [
+                    {"type": "Line", "data": margin_long_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "right"}},
+                    {"type": "Line", "data": margin_short_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left"}}
+                ]
+                charts_payload.append({"chart": make_opts(150, False), "series": margin_series})
 
             # ✅ 一次 render：多張 chart 會依序往下排
             renderLightweightCharts(charts_payload, key="tv_chart_stack")
