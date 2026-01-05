@@ -527,17 +527,28 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
     finally:
         driver.quit()
 
+# ✅ 修改：加入 refresh_nonce 參數並優化邏輯
 @st.cache_data(ttl=21600)
-def get_stock_price(stock_id):
-    ticker = f"{stock_id}.TW" if not stock_id.endswith('.TW') else stock_id
-    try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="2y")
-        if df.empty:
-            ticker = f"{stock_id}.TWO"
+def get_stock_price(stock_id, refresh_nonce=0):
+    # 定義要嘗試的後綴順序
+    tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
+    
+    df = None
+    
+    for ticker in tickers_to_try:
+        try:
             stock = yf.Ticker(ticker)
-            df = stock.history(period="2y")
-        if df.empty: return None
+            temp_df = stock.history(period="2y")
+            if not temp_df.empty:
+                df = temp_df
+                break
+        except Exception:
+            continue
+            
+    if df is None or df.empty:
+        return None
+
+    try:
         df.index = df.index.tz_localize(None)
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
         
@@ -548,14 +559,13 @@ def get_stock_price(stock_id):
         
         # ✅ 計算指標
         df = calculate_technical_indicators(df)
-        
         return df
     except Exception:
         return None
 
 # ================= 4. 介面邏輯 (保留原樣) =================
 
-st.title(f"📊 籌碼K線")
+st.title(f"📊 籌碼K線 (TradingView 風格)")
 
 tz = pytz.timezone('Asia/Taipei')
 current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
@@ -601,7 +611,8 @@ if stock_input:
             stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce
         )
         
-    df_price = get_stock_price(stock_input)
+    # ✅ 修改：加入 refresh_nonce
+    df_price = get_stock_price(stock_input, st.session_state.refresh_nonce)
 
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date}) - 主力買賣超排行")
@@ -1065,4 +1076,9 @@ if stock_input:
             renderLightweightCharts(charts_payload, key="tv_chart_stack")
 
     else:
-        st.error(f"⚠️ 查無資料，請確認股票代號或稍後再試。")
+        # ✅ 新增：明確告訴使用者為什麼沒圖 (當資料完全抓不到時)
+        st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
+        st.info("可能有以下原因：\n"
+                "1. 此股票為「興櫃股票」或 Yahoo Finance 無資料。\n"
+                "2. 股票代號輸入錯誤。\n"
+                "3. Yahoo API 暫時連線失敗，請稍後再試。")
