@@ -19,7 +19,7 @@ import twstock
 import copy
 import numpy as np
 
-# ✅ 新增：TradingView 圖表套件
+# ✅ TradingView 圖表套件
 from streamlit_lightweight_charts import renderLightweightCharts
 
 # ================= 1. 系統設定 =================
@@ -599,7 +599,6 @@ if stock_input:
             # 1. K線資料
             candlestick_data = []
             for i, row in plot_df.iterrows():
-                # 確保數值非 NaN
                 if not pd.isna(row['Open']) and not pd.isna(row['Close']):
                     candlestick_data.append({
                         "time": row['DateStr'],
@@ -609,7 +608,14 @@ if stock_input:
                         "close": float(row['Close'])
                     })
 
-            # 2. 均線資料 (過濾 NaN)
+            # 2. 均線資料 (✅ 修正：加入 options 隱藏 Y 軸標籤與價格線)
+            ma_base_options = {
+                "lastValueVisible": False, 
+                "priceLineVisible": False, 
+                "crosshairMarkerVisible": False,
+                "lineWidth": 1
+            }
+            
             ma5_data = [{"time": row['DateStr'], "value": float(row['MA5'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA5'])]
             ma10_data = [{"time": row['DateStr'], "value": float(row['MA10'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA10'])]
             ma20_data = [{"time": row['DateStr'], "value": float(row['MA20'])} for i, row in plot_df.iterrows() if not pd.isna(row['MA20'])]
@@ -617,7 +623,7 @@ if stock_input:
 
             series_list = []
 
-            # === 主圖 (K線 + MA) ===
+            # === 主圖 (K線 + MA) [Panel 0] ===
             series_list.append({
                 "type": "Candlestick",
                 "data": candlestick_data,
@@ -631,20 +637,19 @@ if stock_input:
                 }
             })
             
-            # 加入均線
-            series_list.append({"type": "Line", "data": ma5_data, "options": {"color": "orange", "lineWidth": 1, "title": "MA5"}})
-            series_list.append({"type": "Line", "data": ma10_data, "options": {"color": "cyan", "lineWidth": 1, "title": "MA10"}})
-            series_list.append({"type": "Line", "data": ma20_data, "options": {"color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
-            series_list.append({"type": "Line", "data": ma60_data, "options": {"color": "lime", "lineWidth": 2, "title": "MA60"}})
+            # 加入均線 (隱藏軸標籤)
+            series_list.append({"type": "Line", "data": ma5_data, "options": {**ma_base_options, "color": "orange", "title": "MA5"}})
+            series_list.append({"type": "Line", "data": ma10_data, "options": {**ma_base_options, "color": "cyan", "title": "MA10"}})
+            series_list.append({"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+            series_list.append({"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime", "lineWidth": 2, "title": "MA60"}})
 
-            # === 副圖管理 ===
+            # === 副圖管理 (✅ 確保 panel 索引正確) ===
             current_panel = 1
             
             # 1. 成交量 (Volume)
             if show_vol:
                 vol_data = []
                 for i, row in plot_df.iterrows():
-                    # 確保成交量非 NaN
                     if not pd.isna(row['Volume']):
                         color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
                         vol_data.append({
@@ -658,9 +663,9 @@ if stock_input:
                     "data": vol_data,
                     "options": {
                         "priceFormat": {"type": "volume"},
-                        "priceScaleId": f"vol_scale",
+                        "priceScaleId": "right", # 使用獨立右側刻度
                     },
-                    "panel": current_panel
+                    "panel": current_panel # ✅ 明確指定 Panel
                 })
                 current_panel += 1
 
@@ -669,7 +674,6 @@ if stock_input:
                 chip_data = []
                 for i, row in plot_df.iterrows():
                     val = row['買賣超_Final']
-                    # 確保非 NaN (雖然已經 fillna(0) 但保險起見)
                     if not pd.isna(val):
                         color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
                         chip_data.append({
@@ -683,13 +687,13 @@ if stock_input:
                     "data": chip_data,
                     "options": {
                         "title": f"{target_broker} 買賣超",
-                        "priceScaleId": "chip_scale"
+                        "priceScaleId": "right"
                     },
                     "panel": current_panel
                 })
                 current_panel += 1
 
-            # 3. KD 指標 (過濾 NaN)
+            # 3. KD 指標
             if show_kd and 'K' in plot_df.columns:
                 k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows() if not pd.isna(row['K'])]
                 d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows() if not pd.isna(row['D'])]
@@ -697,18 +701,18 @@ if stock_input:
                 series_list.append({
                     "type": "Line",
                     "data": k_data,
-                    "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)"},
+                    "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"},
                     "panel": current_panel
                 })
                 series_list.append({
                     "type": "Line",
                     "data": d_data,
-                    "options": {"color": "cyan", "lineWidth": 1, "title": "D"},
+                    "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right"},
                     "panel": current_panel
                 })
                 current_panel += 1
 
-            # 4. MACD 指標 (過濾 NaN)
+            # 4. MACD 指標
             if show_macd and 'DIF' in plot_df.columns:
                 dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
                 dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
@@ -722,19 +726,19 @@ if stock_input:
                 series_list.append({
                     "type": "Histogram",
                     "data": hist_data,
-                    "options": {"title": "MACD Hist"},
+                    "options": {"title": "MACD Hist", "priceScaleId": "right"},
                     "panel": current_panel
                 })
                 series_list.append({
                     "type": "Line",
                     "data": dif_data,
-                    "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF"},
+                    "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"},
                     "panel": current_panel
                 })
                 series_list.append({
                     "type": "Line",
                     "data": dea_data,
-                    "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA"},
+                    "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"},
                     "panel": current_panel
                 })
                 current_panel += 1
@@ -756,14 +760,14 @@ if stock_input:
                     "borderColor": "rgba(197, 203, 206, 0.8)",
                     "timeVisible": True
                 },
-                "rightPriceScale": {
-                    "borderColor": "rgba(197, 203, 206, 0.8)"
+                "crosshair": {
+                    "mode": 1  # Magnet 模式，讓十字線自動吸附數據點，方便讀取 Legend
                 },
                 # 高度根據副圖數量動態調整
                 "height": 450 + (current_panel - 1) * 150
             }
 
-            # ✅ 修正：使用正確的 List[Dict] 參數格式
+            # ✅ 正確的呼叫方式：List[Dict]
             charts_payload = [
                 {
                     "chart": chartOptions,
