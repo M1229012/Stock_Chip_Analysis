@@ -908,6 +908,11 @@ if stock_input:
                         "textColor": "white",
                         "background": {"type": "solid", "color": "#131722"},
                     },
+                    # ✅ 新增：設定日期格式為台灣慣用 (yyyy年MM月dd日)
+                    "localization": {
+                        "locale": "zh-TW",
+                        "dateFormat": "yyyy年MM月dd日",
+                    },
                     "grid": {
                         "vertLines": {"color": "rgba(42, 46, 57, 0.5)"},
                         "horzLines": {"color": "rgba(42, 46, 57, 0.5)"},
