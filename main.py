@@ -140,13 +140,7 @@ def render_broker_table(df, sum_data, color_hex, title):
 # ✅ 輔助函式：計算 KD 與 MACD
 def calculate_technical_indicators(df):
     df = df.copy()
-    # 1. 布林通道
-    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
-    df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
-
-    # 2. 計算 KD (9, 3, 3)
+    # 1. 計算 KD (9, 3, 3)
     rsv_period = 9
     
     df['9_High'] = df['High'].rolling(window=rsv_period).max()
@@ -154,6 +148,7 @@ def calculate_technical_indicators(df):
     df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
     df['RSV'] = df['RSV'].fillna(50)
     
+    # 計算 K, D (平滑計算)
     k_list = []
     d_list = []
     k_prev = 50
@@ -174,12 +169,18 @@ def calculate_technical_indicators(df):
     df['K'] = k_list
     df['D'] = d_list
 
-    # 3. 計算 MACD (12, 26, 9)
+    # 2. 計算 MACD (12, 26, 9)
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
     exp26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['DIF'] = exp12 - exp26
     df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = 2 * (df['DIF'] - df['DEA'])
+
+    # 3. 計算 BB
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
+    df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
     
     return df
 
@@ -237,125 +238,6 @@ def calculate_date_range(stock_id, days):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
-
-# ✅ 修正：依照您提供的 XPath/欄位邏輯重寫爬蟲
-@st.cache_data(persist="disk", ttl=21600)
-def get_institutional_data(stock_id, start_date, end_date):
-    driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
-    try:
-        driver.get(url)
-        # 等待特定元素載入
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        # 尋找包含「外資買賣超」這類關鍵字的表格
-        target_df = None
-        for df in tables:
-            # 將欄位與內容轉字串比對
-            if df.astype(str).apply(lambda x: x.str.contains('外資買賣超', na=False)).any().any():
-                target_df = df
-                break
-        
-        if target_df is not None:
-            # 根據您提供的 XPath 結構，資料通常在特定行之後，但 pd.read_html 會讀入整個 table
-            # 我們直接取用 iloc 對應欄位：
-            # td[1] -> col 0 (日期)
-            # td[2] -> col 1 (外資買賣超)
-            # td[3] -> col 2 (投信買賣超)
-            # td[4] -> col 3 (自營商買賣超)
-            
-            # 先清除標題列 (假設標題列不包含日期格式)
-            def is_date(s):
-                return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
-
-            # 保留日期欄位 (col 0) 符合格式的行
-            if len(target_df.columns) >= 4:
-                # 重新命名以便後續使用
-                # 注意：read_html 可能會有多層 columns，直接用 iloc 最穩
-                clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
-                clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
-                
-                # 過濾非數據列
-                clean_df = clean_df[clean_df['日期'].apply(is_date)]
-                
-                # 數值清理
-                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
-                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
-                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
-
-                # 日期轉西元
-                def parse_date(d_str):
-                    parts = re.split(r'[/-]', str(d_str))
-                    if len(parts) >= 2:
-                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                        m = int(parts[1])
-                        d = int(parts[2]) if len(parts) > 2 else 1
-                        return f"{y:04d}-{m:02d}-{d:02d}"
-                    return None
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
-                return clean_df.dropna(subset=['DateStr'])
-    except:
-        pass
-    finally:
-        driver.quit()
-    return None
-
-# ✅ 修正：依照您提供的 XPath/欄位邏輯重寫爬蟲
-@st.cache_data(persist="disk", ttl=21600)
-def get_margin_data(stock_id, start_date, end_date):
-    driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        target_df = None
-        for df in tables:
-            # 尋找包含「融資餘額」的表格
-            if df.astype(str).apply(lambda x: x.str.contains('融資餘額', na=False)).any().any():
-                target_df = df
-                break
-        
-        if target_df is not None:
-            # 根據您提供的 XPath 對應：
-            # td[1] -> col 0 (日期)
-            # td[5] -> col 4 (融資餘額)
-            # td[12] -> col 11 (融券餘額) (注意：Python 索引從 0 開始，所以 td[12] 是 index 11)
-            
-            if len(target_df.columns) >= 12:
-                clean_df = target_df.iloc[:, [0, 4, 11]].copy()
-                clean_df.columns = ['日期', '融資餘額', '融券餘額']
-                
-                # 過濾
-                def is_date(s):
-                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
-                clean_df = clean_df[clean_df['日期'].apply(is_date)]
-                
-                for col in ['融資餘額', '融券餘額']:
-                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
-                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
-                
-                def parse_date(d_str):
-                    parts = re.split(r'[/-]', str(d_str))
-                    if len(parts) >= 2:
-                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                        m = int(parts[1])
-                        d = int(parts[2]) if len(parts) > 2 else 1
-                        return f"{y:04d}-{m:02d}-{d:02d}"
-                    return None
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
-                return clean_df.dropna(subset=['DateStr'])
-    except:
-        pass
-    finally:
-        driver.quit()
-    return None
 
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
@@ -553,6 +435,127 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
     finally:
         driver.quit()
 
+# ✅ 修正：依照您提供的 XPath/欄位邏輯重寫爬蟲
+@st.cache_data(persist="disk", ttl=21600)
+def get_institutional_data(stock_id, start_date, end_date):
+    driver = get_driver()
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+    try:
+        driver.get(url)
+        # 等待特定元素載入
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html))
+        
+        # 尋找包含「外資買賣超」這類關鍵字的表格
+        target_df = None
+        for df in tables:
+            # 將欄位與內容轉字串比對
+            if df.astype(str).apply(lambda x: x.str.contains('外資買賣超', na=False)).any().any():
+                target_df = df
+                break
+        
+        if target_df is not None:
+            # 根據您提供的 XPath 結構，資料通常在特定行之後，但 pd.read_html 會讀入整個 table
+            # 我們直接取用 iloc 對應欄位：
+            # td[1] -> col 0 (日期)
+            # td[2] -> col 1 (外資買賣超)
+            # td[3] -> col 2 (投信買賣超)
+            # td[4] -> col 3 (自營商買賣超)
+            
+            # 先清除標題列 (假設標題列不包含日期格式)
+            def is_date(s):
+                return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
+
+            # 保留日期欄位 (col 0) 符合格式的行
+            if len(target_df.columns) >= 4:
+                # 重新命名以便後續使用
+                # 注意：read_html 可能會有多層 columns，直接用 iloc 最穩
+                clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
+                clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
+                
+                # 過濾非數據列
+                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                
+                # 數值清理
+                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
+                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+
+                # 日期轉西元
+                def parse_date(d_str):
+                    parts = re.split(r'[/-]', str(d_str))
+                    if len(parts) >= 2:
+                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
+                        m = int(parts[1])
+                        d = int(parts[2]) if len(parts) > 2 else 1
+                        return f"{y:04d}-{m:02d}-{d:02d}"
+                    return None
+                
+                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                return clean_df.dropna(subset=['DateStr'])
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
+
+# ✅ 修正：依照您提供的 XPath/欄位邏輯重寫爬蟲
+@st.cache_data(persist="disk", ttl=21600)
+def get_margin_data(stock_id, start_date, end_date):
+    driver = get_driver()
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html))
+        
+        target_df = None
+        for df in tables:
+            # 尋找包含「融資餘額」的表格
+            if df.astype(str).apply(lambda x: x.str.contains('融資餘額', na=False)).any().any():
+                target_df = df
+                break
+        
+        if target_df is not None:
+            # 根據您提供的 XPath 對應：
+            # td[1] -> col 0 (日期)
+            # td[5] -> col 4 (融資餘額)
+            # td[6] -> col 5 (融資增減)
+            # td[12] -> col 11 (融券餘額)
+            # td[13] -> col 12 (融券增減)
+            
+            if len(target_df.columns) >= 13:
+                clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
+                clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
+                
+                # 過濾
+                def is_date(s):
+                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
+                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                
+                for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
+                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+                
+                def parse_date(d_str):
+                    parts = re.split(r'[/-]', str(d_str))
+                    if len(parts) >= 2:
+                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
+                        m = int(parts[1])
+                        d = int(parts[2]) if len(parts) > 2 else 1
+                        return f"{y:04d}-{m:02d}-{d:02d}"
+                    return None
+                
+                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                return clean_df.dropna(subset=['DateStr'])
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
+
 @st.cache_data(ttl=21600)
 def get_stock_price(stock_id):
     ticker = f"{stock_id}.TW" if not stock_id.endswith('.TW') else stock_id
@@ -675,8 +678,13 @@ if stock_input:
                 
                 col_c5, col_c6, col_c7, col_c8 = st.columns(4)
                 show_bb = col_c5.checkbox("布林通道", value=False)
-                show_inst = col_c6.checkbox("三大法人", value=False)
-                show_margin = col_c7.checkbox("融資融券", value=False)
+                show_margin = col_c6.checkbox("融資融券", value=False)
+                
+                st.write("三大法人:")
+                col_i1, col_i2, col_i3 = st.columns(3)
+                show_inst_foreign = col_i1.checkbox("外資", value=False)
+                show_inst_trust = col_i2.checkbox("投信", value=False)
+                show_inst_dealer = col_i3.checkbox("自營商", value=False)
 
             merged_df = None
             target_key = normalize_name(target_broker)
@@ -730,7 +738,7 @@ if stock_input:
                 plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
             # ✅ 新增：如果勾選了三大法人或融資融券，進行爬蟲並合併
-            if show_inst:
+            if show_inst_foreign or show_inst_trust or show_inst_dealer:
                 inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
                 if inst_df is not None:
                     plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
@@ -825,37 +833,56 @@ if stock_input:
                             "value": float(cum_val)
                         })
 
-            # ✅ 數據準備：三大法人 (外資、投信、自營商)
+            # ✅ 數據準備：三大法人 (獨立判斷)
             inst_foreign_data = []
             inst_trust_data = []
             inst_dealer_data = []
-            if show_inst and '外資買賣超' in plot_df.columns:
+            if (show_inst_foreign or show_inst_trust or show_inst_dealer) and '外資買賣超' in plot_df.columns:
                 for i, row in plot_df.iterrows():
-                    # 外資 (Histogram)
-                    val_f = row.get('外資買賣超')
-                    if not pd.isna(val_f):
-                        color = COLOR_UP if val_f > 0 else (COLOR_DOWN if val_f < 0 else "gray")
-                        inst_foreign_data.append({"time": row['DateStr'], "value": float(val_f), "color": color})
-                    # 投信 (Line)
-                    val_t = row.get('投信買賣超')
-                    if not pd.isna(val_t):
-                        inst_trust_data.append({"time": row['DateStr'], "value": float(val_t)})
-                    # 自營商 (Line)
-                    val_d = row.get('自營商買賣超')
-                    if not pd.isna(val_d):
-                        inst_dealer_data.append({"time": row['DateStr'], "value": float(val_d)})
+                    if show_inst_foreign:
+                        val_f = row.get('外資買賣超')
+                        if not pd.isna(val_f):
+                            color = COLOR_UP if val_f > 0 else (COLOR_DOWN if val_f < 0 else "gray")
+                            inst_foreign_data.append({"time": row['DateStr'], "value": float(val_f), "color": color})
+                    if show_inst_trust:
+                        val_t = row.get('投信買賣超')
+                        if not pd.isna(val_t):
+                            color = COLOR_UP if val_t > 0 else (COLOR_DOWN if val_t < 0 else "gray")
+                            inst_trust_data.append({"time": row['DateStr'], "value": float(val_t), "color": color})
+                    if show_inst_dealer:
+                        val_d = row.get('自營商買賣超')
+                        if not pd.isna(val_d):
+                            color = COLOR_UP if val_d > 0 else (COLOR_DOWN if val_d < 0 else "gray")
+                            inst_dealer_data.append({"time": row['DateStr'], "value": float(val_d), "color": color})
 
             # ✅ 數據準備：融資融券
-            margin_long_data = []
-            margin_short_data = []
+            margin_long_bal_data = []
+            margin_short_bal_data = []
+            margin_long_diff_data = []
+            margin_short_diff_data = []
+            
             if show_margin and '融資餘額' in plot_df.columns:
                 for i, row in plot_df.iterrows():
-                    val_m = row.get('融資餘額')
-                    if not pd.isna(val_m):
-                        margin_long_data.append({"time": row['DateStr'], "value": float(val_m)})
-                    val_s = row.get('融券餘額')
-                    if not pd.isna(val_s):
-                        margin_short_data.append({"time": row['DateStr'], "value": float(val_s)})
+                    # 融資餘額 (Line)
+                    val_mb = row.get('融資餘額')
+                    if not pd.isna(val_mb):
+                        margin_long_bal_data.append({"time": row['DateStr'], "value": float(val_mb)})
+                    # 融券餘額 (Line)
+                    val_sb = row.get('融券餘額')
+                    if not pd.isna(val_sb):
+                        margin_short_bal_data.append({"time": row['DateStr'], "value": float(val_sb)})
+                        
+                    # 融資增減 (Histogram)
+                    val_md = row.get('融資增減')
+                    if not pd.isna(val_md):
+                        color = COLOR_UP if val_md > 0 else (COLOR_DOWN if val_md < 0 else "gray")
+                        margin_long_diff_data.append({"time": row['DateStr'], "value": float(val_md), "color": color})
+                        
+                    # 融券增減 (Histogram)
+                    val_sd = row.get('融券增減')
+                    if not pd.isna(val_sd):
+                        color = COLOR_UP if val_sd > 0 else (COLOR_DOWN if val_sd < 0 else "gray")
+                        margin_short_diff_data.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
 
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
@@ -954,22 +981,36 @@ if stock_input:
                 ]
                 charts_payload.append({"chart": make_opts(200, False), "series": chip_series})
 
-            # 6. 副圖：三大法人 (✅ time_visible=False)
-            if show_inst and inst_foreign_data:
-                inst_series = [
-                    {"type": "Histogram", "data": inst_foreign_data, "options": {"title": "外資買賣超", "priceScaleId": "right"}},
-                    {"type": "Line", "data": inst_trust_data, "options": {"title": "投信買賣超", "color": "yellow", "lineWidth": 2, "priceScaleId": "left"}},
-                    {"type": "Line", "data": inst_dealer_data, "options": {"title": "自營商買賣超", "color": "cyan", "lineWidth": 2, "priceScaleId": "left"}}
-                ]
-                charts_payload.append({"chart": make_opts(200, False), "series": inst_series})
+            # 6. 副圖：三大法人 (獨立勾選)
+            if (show_inst_foreign or show_inst_trust or show_inst_dealer) and (inst_foreign_data or inst_trust_data or inst_dealer_data):
+                inst_series = []
+                if show_inst_foreign and inst_foreign_data:
+                    inst_series.append({"type": "Histogram", "data": inst_foreign_data, "options": {"title": "外資買賣超", "priceScaleId": "right"}})
+                if show_inst_trust and inst_trust_data:
+                    inst_series.append({"type": "Histogram", "data": inst_trust_data, "options": {"title": "投信買賣超", "priceScaleId": "right"}}) # 投信也改用 Histogram
+                if show_inst_dealer and inst_dealer_data:
+                    inst_series.append({"type": "Histogram", "data": inst_dealer_data, "options": {"title": "自營商買賣超", "priceScaleId": "right"}}) # 自營商也改用 Histogram
+                
+                if inst_series:
+                    charts_payload.append({"chart": make_opts(200, False), "series": inst_series})
 
-            # 7. 副圖：融資融券 (✅ time_visible=False)
-            if show_margin and margin_long_data:
-                margin_series = [
-                    {"type": "Line", "data": margin_long_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "right"}},
-                    {"type": "Line", "data": margin_short_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left"}}
-                ]
-                charts_payload.append({"chart": make_opts(150, False), "series": margin_series})
+            # 7. 副圖：融資融券 (雙軸：增減量 + 累積餘額)
+            if show_margin and (margin_long_bal_data or margin_short_bal_data):
+                margin_series = []
+                
+                # 增減量 (柱狀圖，右軸)
+                if margin_long_diff_data:
+                    margin_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right"}})
+                if margin_short_diff_data:
+                    margin_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right"}})
+                
+                # 累積餘額 (折線圖，左軸)
+                if margin_long_bal_data:
+                    margin_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left"}})
+                if margin_short_bal_data:
+                    margin_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left"}})
+                
+                charts_payload.append({"chart": make_opts(200, False), "series": margin_series})
 
             # ✅ 一次 render：多張 chart 會依序往下排
             renderLightweightCharts(charts_payload, key="tv_chart_stack")
