@@ -596,6 +596,10 @@ if stock_input:
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
+            # ✅ 新增：計算累積買賣超
+            if '買賣超_Final' in plot_df.columns:
+                plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
+
             # 1. K線資料
             candlestick_data = []
             for i, row in plot_df.iterrows():
@@ -608,7 +612,7 @@ if stock_input:
                         "close": float(row['Close'])
                     })
 
-            # 2. 均線資料 (✅ 修正：加入 options 隱藏 Y 軸標籤與價格線)
+            # 2. 均線資料
             ma_base_options = {
                 "lastValueVisible": False, 
                 "priceLineVisible": False, 
@@ -624,7 +628,7 @@ if stock_input:
             series_list = []
 
             # === 主圖 (K線 + MA) [Panel 0] ===
-            # ✅ 重點修正：明確指定 Panel 0，確保它佔據主區域，不會被副圖蓋過
+            # ✅ 重點修正：明確指定 Panel 0，確保它佔據主區域
             series_list.append({
                 "type": "Candlestick",
                 "data": candlestick_data,
@@ -636,7 +640,7 @@ if stock_input:
                     "wickUpColor": COLOR_UP,
                     "wickDownColor": COLOR_DOWN,
                 },
-                "panel": 0 # ✅ 確保這是主圖
+                "panel": 0 
             })
             
             # 加入均線 (Panel 0)
@@ -645,8 +649,8 @@ if stock_input:
             series_list.append({"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}, "panel": 0})
             series_list.append({"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime", "lineWidth": 2, "title": "MA60"}, "panel": 0})
 
-            # === 副圖管理 (從 Panel 1 開始) ===
-            current_panel = 1
+            # === 副圖管理 (從 Panel 1 開始遞增) ===
+            next_panel_id = 1
             
             # 1. 成交量 (Volume)
             if show_vol:
@@ -667,15 +671,17 @@ if stock_input:
                         "priceFormat": {"type": "volume"},
                         "priceScaleId": "right", 
                     },
-                    "panel": current_panel
+                    "panel": next_panel_id # ✅ 使用遞增的 ID
                 })
-                current_panel += 1
+                next_panel_id += 1
 
-            # 2. 分點買賣超 (Chip)
+            # 2. 分點買賣超 (Chip) - ✅ 修改：加入累積折線圖並重疊
             if show_chip and '買賣超_Final' in plot_df.columns:
                 chip_data = []
+                chip_cumulative_data = [] # ✅ 新增累積資料列表
                 for i, row in plot_df.iterrows():
-                    val = row['買賣超_Final']
+                    # 單日買賣超
+                    val = row.get('買賣超_Final')
                     if not pd.isna(val):
                         color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
                         chip_data.append({
@@ -683,17 +689,40 @@ if stock_input:
                             "value": float(val), 
                             "color": color
                         })
+                    
+                    # ✅ 累積買賣超
+                    cum_val = row.get('cumulative_chip')
+                    if not pd.isna(cum_val):
+                        chip_cumulative_data.append({
+                            "time": row['DateStr'],
+                            "value": float(cum_val)
+                        })
                 
+                # 加入單日買賣超直方圖
                 series_list.append({
                     "type": "Histogram",
                     "data": chip_data,
                     "options": {
-                        "title": f"{target_broker} 買賣超",
+                        "title": f"{target_broker} 每日買賣超",
                         "priceScaleId": "right"
                     },
-                    "panel": current_panel
+                    "panel": next_panel_id # ✅ 同一個 Panel
                 })
-                current_panel += 1
+
+                # ✅ 加入累積買賣超折線圖 (疊加在同一個 Panel)
+                series_list.append({
+                    "type": "Line",
+                    "data": chip_cumulative_data,
+                    "options": {
+                        "title": f"{target_broker} 累積買賣超",
+                        "color": "#FFD700", # 金黃色
+                        "lineWidth": 2,
+                        "priceScaleId": "left" # ✅ 使用左側刻度以區分
+                    },
+                    "panel": next_panel_id # ✅ 同一個 Panel
+                })
+                
+                next_panel_id += 1
 
             # 3. KD 指標
             if show_kd and 'K' in plot_df.columns:
@@ -704,15 +733,15 @@ if stock_input:
                     "type": "Line",
                     "data": k_data,
                     "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"},
-                    "panel": current_panel
+                    "panel": next_panel_id
                 })
                 series_list.append({
                     "type": "Line",
                     "data": d_data,
                     "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right"},
-                    "panel": current_panel
+                    "panel": next_panel_id
                 })
-                current_panel += 1
+                next_panel_id += 1
 
             # 4. MACD 指標
             if show_macd and 'DIF' in plot_df.columns:
@@ -729,23 +758,26 @@ if stock_input:
                     "type": "Histogram",
                     "data": hist_data,
                     "options": {"title": "MACD Hist", "priceScaleId": "right"},
-                    "panel": current_panel
+                    "panel": next_panel_id
                 })
                 series_list.append({
                     "type": "Line",
                     "data": dif_data,
                     "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"},
-                    "panel": current_panel
+                    "panel": next_panel_id
                 })
                 series_list.append({
                     "type": "Line",
                     "data": dea_data,
                     "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"},
-                    "panel": current_panel
+                    "panel": next_panel_id
                 })
-                current_panel += 1
+                next_panel_id += 1
 
             # === 圖表全域設定 ===
+            # ✅ 計算總高度：主圖 400px + 每個副圖 150px
+            total_height = 400 + (next_panel_id - 1) * 150
+
             chartOptions = {
                 "layout": {
                     "textColor": 'white',
@@ -765,8 +797,7 @@ if stock_input:
                 "crosshair": {
                     "mode": 1
                 },
-                # ✅ 高度根據副圖數量動態調整 (基礎 400px 給主圖 + 每個副圖 120px)
-                "height": 400 + (current_panel - 1) * 120
+                "height": total_height # ✅ 套用計算出的總高度
             }
 
             # ✅ 正確的呼叫方式：List[Dict]
