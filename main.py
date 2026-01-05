@@ -545,8 +545,8 @@ if stock_input:
                 st.write("顯示副圖指標：")
                 col_c1, col_c2, col_c3, col_c4 = st.columns(4)
                 show_vol = col_c1.checkbox("成交量", value=True)
-                show_kd = col_c2.checkbox("KD", value=False)
-                show_macd = col_c3.checkbox("MACD", value=False)
+                show_kd = col_c2.checkbox("KD", value=True)
+                show_macd = col_c3.checkbox("MACD", value=True)
                 show_chip = col_c4.checkbox("分點買賣超", value=True)
 
             merged_df = None
@@ -595,10 +595,6 @@ if stock_input:
             plot_df = plot_df.copy()
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-
-            # ✅ 新增：計算累積買賣超
-            if '買賣超_Final' in plot_df.columns:
-                plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
             # 1. K線資料
             candlestick_data = []
@@ -671,7 +667,7 @@ if stock_input:
                         "priceFormat": {"type": "volume"},
                         "priceScaleId": "right", 
                     },
-                    "panel": next_panel_id # ✅ 使用遞增的 ID
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
                 next_panel_id += 1
 
@@ -684,13 +680,13 @@ if stock_input:
                     "type": "Line",
                     "data": k_data,
                     "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right"},
-                    "panel": next_panel_id
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
                 series_list.append({
                     "type": "Line",
                     "data": d_data,
                     "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right"},
-                    "panel": next_panel_id
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
                 next_panel_id += 1
 
@@ -709,26 +705,25 @@ if stock_input:
                     "type": "Histogram",
                     "data": hist_data,
                     "options": {"title": "MACD Hist", "priceScaleId": "right"},
-                    "panel": next_panel_id
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
                 series_list.append({
                     "type": "Line",
                     "data": dif_data,
                     "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right"},
-                    "panel": next_panel_id
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
                 series_list.append({
                     "type": "Line",
                     "data": dea_data,
                     "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right"},
-                    "panel": next_panel_id
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
                 next_panel_id += 1
 
-            # 4. 分點買賣超 (Chip) - ✅ 修改：加入累積折線圖並重疊
+            # 4. 分點買賣超 (Chip)
             if show_chip and '買賣超_Final' in plot_df.columns:
                 chip_data = []
-                chip_cumulative_data = [] # ✅ 新增累積資料列表
                 for i, row in plot_df.iterrows():
                     # 單日買賣超
                     val = row.get('買賣超_Final')
@@ -739,14 +734,6 @@ if stock_input:
                             "value": float(val), 
                             "color": color
                         })
-                    
-                    # ✅ 累積買賣超
-                    cum_val = row.get('cumulative_chip')
-                    if not pd.isna(cum_val):
-                        chip_cumulative_data.append({
-                            "time": row['DateStr'],
-                            "value": float(cum_val)
-                        })
                 
                 # 加入單日買賣超直方圖
                 series_list.append({
@@ -756,27 +743,14 @@ if stock_input:
                         "title": f"{target_broker} 每日買賣超",
                         "priceScaleId": "right"
                     },
-                    "panel": next_panel_id # ✅ 同一個 Panel
+                    "panel": next_panel_id # ✅ 使用獨立 Panel
                 })
-
-                # ✅ 加入累積買賣超折線圖 (疊加在同一個 Panel)
-                series_list.append({
-                    "type": "Line",
-                    "data": chip_cumulative_data,
-                    "options": {
-                        "title": f"{target_broker} 累積買賣超",
-                        "color": "#FFD700", # 金黃色
-                        "lineWidth": 2,
-                        "priceScaleId": "left" # ✅ 使用左側刻度以區分
-                    },
-                    "panel": next_panel_id # ✅ 同一個 Panel
-                })
-                
                 next_panel_id += 1
 
             # === 圖表全域設定 ===
             # ✅ 計算總高度：主圖 400px + 每個副圖 150px
-            total_height = 400 + (next_panel_id - 1) * 150
+            num_sub_panels = next_panel_id - 1
+            total_height = 400 + num_sub_panels * 150
 
             chartOptions = {
                 "layout": {
