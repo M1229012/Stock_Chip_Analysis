@@ -8,3 +8,5 @@ html5lib
 twstock
 plotly>=5.20.0
 streamlit-lightweight-charts
+pytz
+numpy
