@@ -807,9 +807,9 @@ if stock_input:
 
             # 2. 均線資料
             ma_base_options = {
-                "lastValueVisible": True,  # ✅ 確保數值顯示
+                "lastValueVisible": False,  # ✅ [FIX] 隱藏右側軸標籤，讓數值顯示在左上角 Legend
                 "priceLineVisible": False, 
-                "crosshairMarkerVisible": True, # ✅ 確保十字線標記
+                "crosshairMarkerVisible": True, 
                 "lineWidth": 1
             }
             
@@ -917,14 +917,14 @@ if stock_input:
 
             # 準備合併圖表的數據 (如果有勾選 "三大法人")
             if show_inst_total:
-                if f_hist: combined_inst_series.append({"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}})
-                if f_line: combined_inst_series.append({"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}})
+                if f_hist: combined_inst_series.append({"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                if f_line: combined_inst_series.append({"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 
-                if t_hist: combined_inst_series.append({"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}})
-                if t_line: combined_inst_series.append({"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}})
+                if t_hist: combined_inst_series.append({"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                if t_line: combined_inst_series.append({"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 
-                if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}})
-                if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}})
+                if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
 
             # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
             margin_long_bal_data = []
@@ -1035,9 +1035,10 @@ if stock_input:
                     "options": {
                         "priceFormat": {"type": "volume"},
                         "priceScaleId": "right",
-                        "title": "成交量", # ✅ 中文化
+                        "title": "成交量",
                         "priceLineVisible": False,
-                        "crosshairMarkerVisible": True # ✅ 顯示標記
+                        "crosshairMarkerVisible": True,
+                        "lastValueVisible": False # ✅ [FIX] 隱藏右側軸標籤
                     }
                 }]
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
@@ -1045,17 +1046,17 @@ if stock_input:
             # 3. 副圖：KD (✅ time_visible=False)
             if show_kd and k_data:
                 kd_series = [
-                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K值", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}}, # ✅ 中文化
-                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D值", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}}, # ✅ 中文化
+                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K值", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
+                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D值", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
                 ]
                 charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
 
             # 4. 副圖：MACD (✅ time_visible=False)
             if show_macd and dif_data:
                 macd_series = [
-                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD柱狀", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}}, # ✅ 中文化
-                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}},
-                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}},
+                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD柱狀", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
+                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
+                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
                 ]
                 charts_payload.append({"chart": make_opts(150, "MACD", False), "series": macd_series})
 
@@ -1065,12 +1066,12 @@ if stock_input:
                     {
                         "type": "Histogram",
                         "data": chip_data,
-                        "options": {"title": f"{target_broker} 買賣超", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True} # ✅ 中文化
+                        "options": {"title": f"{target_broker} 買賣超", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False} # ✅ [FIX]
                     },
                     {
                         "type": "Line",
                         "data": chip_cumulative_data,
-                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}
+                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False} # ✅ [FIX]
                     }
                 ]
                 charts_payload.append({"chart": make_opts(200, "分點買賣超", False), "series": chip_series})
@@ -1078,24 +1079,24 @@ if stock_input:
             # 6. [NEW] 副圖：三大法人 - 外資獨立 (✅ time_visible=False)
             if show_inst_foreign and f_hist:
                 foreign_series = [
-                    {"type": "Histogram", "data": f_hist, "options": {"title": "外資買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}}, # ✅ 中文化
-                    {"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}}
+                    {"type": "Histogram", "data": f_hist, "options": {"title": "外資買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
+                    {"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}} # ✅ [FIX]
                 ]
                 charts_payload.append({"chart": make_opts(150, "外資", False), "series": foreign_series})
 
             # 7. [NEW] 副圖：三大法人 - 投信獨立 (✅ time_visible=False)
             if show_inst_trust and t_hist:
                 trust_series = [
-                    {"type": "Histogram", "data": t_hist, "options": {"title": "投信買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}}, # ✅ 中文化
-                    {"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}}
+                    {"type": "Histogram", "data": t_hist, "options": {"title": "投信買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
+                    {"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}} # ✅ [FIX]
                 ]
                 charts_payload.append({"chart": make_opts(150, "投信", False), "series": trust_series})
 
             # 8. [NEW] 副圖：三大法人 - 自營商獨立 (✅ time_visible=False)
             if show_inst_dealer and d_hist:
                 dealer_series = [
-                    {"type": "Histogram", "data": d_hist, "options": {"title": "自營買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True}}, # ✅ 中文化
-                    {"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True}}
+                    {"type": "Histogram", "data": d_hist, "options": {"title": "自營買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
+                    {"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}} # ✅ [FIX]
                 ]
                 charts_payload.append({"chart": make_opts(150, "自營商", False), "series": dealer_series})
 
@@ -1108,10 +1109,10 @@ if stock_input:
                 margin_long_series = []
                 # 融資增減 (Histogram)
                 if margin_long_diff_data:
-                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
+                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 # 融資餘額 (Line)
                 if margin_long_bal_data:
-                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
+                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 
                 charts_payload.append({"chart": make_opts(150, "融資", False), "series": margin_long_series})
 
@@ -1120,10 +1121,10 @@ if stock_input:
                 margin_short_series = []
                 # 融券增減 (Histogram)
                 if margin_short_diff_data:
-                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
+                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 # 融券餘額 (Line)
                 if margin_short_bal_data:
-                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
+                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 
                 charts_payload.append({"chart": make_opts(150, "融券", False), "series": margin_short_series})
 
