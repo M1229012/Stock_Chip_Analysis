@@ -12,6 +12,7 @@ from io import StringIO
 import time
 import re
 import math
+import requests # ✅ [NEW] 新增 requests
 from datetime import datetime, timedelta
 import pytz
 from urllib.parse import urlparse, parse_qs
@@ -343,165 +344,45 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ [FIX] 改用 Norway 網站的集保分級表
-@st.cache_data(persist="disk", ttl=604800)
-def get_shareholding_data(stock_id):
-    driver = get_driver()
-    # 目標改為 StockHoldersLevel.aspx
-    url = f"https://norway.twsthr.info/StockHoldersLevel.aspx?STOCK={stock_id}"
+# ✅ [FIX] 使用 requests 爬取 Norway 神秘金字塔 StockHolders.aspx
+def _norm_col(x: str) -> str:
+    return re.sub(r"\s+", "", str(x)).replace("\u3000", "")
+
+@st.cache_data(ttl=60*60*6)
+def get_norway_stockholders_tables(stock_id: str) -> dict:
+    url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     try:
-        driver.get(url)
-        time.sleep(1.5)
-        
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        def looks_like_level_table(df: pd.DataFrame) -> bool:
-            if df.shape[1] < 2: return False
-            # 檢查第一欄是否有分級文字 (股/張/以上)
-            col0 = df.iloc[:, 0].astype(str)
-            hit = col0.str.contains(r"股|張|以上", regex=True, na=False).sum()
-            return hit > 5 # 至少要有幾列是分級
+        r = requests.get(url, headers=headers, timeout=20)
+        r.raise_for_status()
+        r.encoding = "utf-8"
 
-        cand = [t for t in tables if looks_like_level_table(t)]
-        if cand:
-            # 通常最大的那張表就是
-            cand.sort(key=lambda d: d.shape[0] * d.shape[1], reverse=True)
-            return cand[0]
-            
+        dfs = pd.read_html(StringIO(r.text))
+        norm_dfs = []
+        for df in dfs:
+            df = df.copy()
+            df.columns = [_norm_col(c) for c in df.columns]
+            norm_dfs.append(df)
+
+        def has_any_col(df, keywords):
+            cols = " ".join(map(str, df.columns))
+            return all(k in cols for k in keywords)
+
+        # 1. 明細表 (含 資料日期, 總股東人數, 收盤價)
+        summary = next((df for df in norm_dfs if has_any_col(df, ["資料日期", "總股東人數"]) and ("收盤價" in " ".join(df.columns))), None)
+
+        # 2. 分級比例表 (含 資料日期, 1000張以上)
+        ratio = next((df for df in norm_dfs if ("資料日期" in df.columns) and any("1000張以上" in c or ("1000" in c and "以上" in c) for c in df.columns)), None)
+
+        # 3. 前期比較表 (含 持股張數分級)
+        compare = next((df for df in norm_dfs if any("持股張數分級" in str(c) for c in df.columns) or (df.shape[1] > 0 and "持股張數分級" in str(df.columns[0]))), None)
+
+        return {"summary": summary, "ratio": ratio, "compare": compare}
     except Exception:
-        pass
-    finally:
-        driver.quit()
-    return None
-
-# ✅ [FIX] 解析 Norway 分級表結構
-def _upper_lots_from_label(label: str) -> int | None:
-    s = str(label).replace(" ", "").replace(",", "").replace("股", "")
-    if "以上" in s: return 10**9
-    m = re.search(r"(\d+)[-~～](\d+)", s)
-    if not m: return None
-    # 如果單位是股 (1-999)，上界是 999 股 ~= 1 張
-    # 如果單位是張 (1-5)，上界是 5
-    # 這裡簡化：如果是 "股"，回傳 1；如果是張，回傳數字
-    if "股" in str(label):
-        return 1
-    
-    upper = int(m.group(2))
-    return upper
-
-def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
-    df = raw_df.copy()
-    if df.empty: return None
-
-    # Norway 的表頭通常是多層的，或者第一列是日期
-    # 我們嘗試正規化
-    # 假設 Row 0 是日期 (20260102, 20251226...)
-    # Row 1 是欄位 (人數, 張數, 百分比...)
-    # Col 0 是分級 (1-999股, 1-5張...)
-    
-    # 1. 找出日期列
-    date_row_idx = -1
-    for i in range(min(5, len(df))):
-        row_str = df.iloc[i].astype(str).str.cat()
-        if re.search(r"20\d{6}", row_str): # 找 YYYYMMDD
-            date_row_idx = i
-            break
-    
-    if date_row_idx == -1: return None
-
-    # 2. 提取日期與其對應的欄位索引
-    dates = []
-    date_cols = []
-    
-    row_vals = df.iloc[date_row_idx].values
-    for i, val in enumerate(row_vals):
-        d_str = str(val).replace(".0", "")
-        if re.match(r"^20\d{6}$", d_str):
-            # 轉換為 YYYY-MM-DD
-            d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
-            dates.append(d_fmt)
-            date_cols.append(i)
-    
-    if not dates: return None
-
-    # 3. 找出分級資料的起始列 (通常在日期列後面 1-2 列)
-    data_start_idx = date_row_idx + 1
-    # 往後找直到看到 "1-999" 或 "1-5"
-    for i in range(data_start_idx, len(df)):
-        val = str(df.iloc[i, 0])
-        if "1-999" in val or "1-5" in val:
-            data_start_idx = i
-            break
-            
-    # 4. 解析每一列的分級上界
-    rows_map = [] # (upper_limit, row_index)
-    for i in range(data_start_idx, len(df)):
-        label = str(df.iloc[i, 0])
-        upper = _upper_lots_from_label(label)
-        if upper:
-            rows_map.append((upper, i))
-
-    # 5. 彙整數據
-    out = []
-    for idx, date_str in enumerate(dates):
-        base_col = date_cols[idx]
-        # Norway 結構：日期下分三欄：人數, 張數, 百分比
-        # 所以 百分比 在 base_col + 2, 人數 在 base_col
-        # 有時候 pd.read_html 會合併儲存格，需要小心
-        # 我們假設相對位置：
-        # Col 0: 人數
-        # Col 1: 張數
-        # Col 2: 百分比
-        
-        ratio_col = base_col + 2
-        people_col = base_col
-        
-        if ratio_col >= df.shape[1]: continue
-
-        large_ratio = 0.0
-        large_people = 0
-        retail_ratio = 0.0
-        retail_people = 0
-
-        for upper, row_idx in rows_map:
-            try:
-                r_val = df.iloc[row_idx, ratio_col]
-                p_val = df.iloc[row_idx, people_col]
-                
-                # 清洗數據
-                r = float(str(r_val).replace("%", "").replace(",", "")) if pd.notna(r_val) and str(r_val) != 'nan' else 0.0
-                p = int(str(p_val).replace(",", "")) if pd.notna(p_val) and str(p_val).replace(",","").isdigit() else 0
-                
-                if upper >= large_threshold:
-                    large_ratio += r
-                    large_people += p
-                
-                # 散戶定義：小於門檻 (注意：如果是 1-5張，upper=5，若門檻=5，則不包含)
-                # 題目要求：散戶持股 < 50
-                # 若 upper=5, 5 < 50 (True)
-                # 若 upper=50, 50 < 50 (False) -> 符合
-                if upper < retail_threshold:
-                    retail_ratio += r
-                    retail_people += p
-                elif upper == retail_threshold and "以上" not in str(df.iloc[row_idx, 0]):
-                     # 邊界處理：通常區間是包含上界的，所以 < 門檻 應該不包含等於門檻的區間
-                     pass
-
-            except:
-                continue
-
-        out.append({
-            "日期": date_str,
-            "DateStr": date_str,
-            "大戶持股(%)": round(large_ratio, 2),
-            "大戶人數": large_people,
-            "散戶持股(%)": round(retail_ratio, 2),
-            "散戶人數": retail_people
-        })
-
-    if not out: return None
-    return pd.DataFrame(out).sort_values("DateStr")
+        return {"summary": None, "ratio": None, "compare": None}
 
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
@@ -1155,74 +1036,76 @@ if stock_input:
 
         # ==================== Tab 5: 大戶 (集保分佈) ====================
         with tab_holder:
-            # 確保大戶選項過濾防呆
+            # ✅ [FIX] 啟用 session_state 防呆邏輯：大戶/散戶門檻連動
+            LOT_CHOICES = [10, 50, 100, 200, 400, 600, 800, 1000]
+
+            if "retail_lot" not in st.session_state:
+                st.session_state.retail_lot = 50
+            if "large_lot" not in st.session_state:
+                st.session_state.large_lot = 400
+
+            def clamp_retail():
+                if st.session_state.retail_lot > st.session_state.large_lot:
+                    st.session_state.retail_lot = st.session_state.large_lot
+
+            def clamp_large():
+                if st.session_state.large_lot < st.session_state.retail_lot:
+                    st.session_state.large_lot = st.session_state.retail_lot
+
             c1, c2 = st.columns(2)
-            large_opts_all = [100, 200, 400, 600, 800, 1000]
-            retail_opts_all = [10, 50, 100, 200, 400, 600]
-
-            with c2:
-                # 先選散戶 (通常散戶門檻較低)
-                retail_th = st.select_slider(
-                    "散戶持股標準 (< 張)", 
-                    options=retail_opts_all, 
-                    value=50,
-                    key="retail_th_slider"
-                )
-
             with c1:
-                # 大戶選項必須 >= 散戶，避免邏輯矛盾
-                valid_large_opts = [x for x in large_opts_all if x >= retail_th]
-                # 預設值防呆
-                default_large = 400
-                if default_large < retail_th: default_large = retail_th
-                if default_large not in valid_large_opts and valid_large_opts: default_large = valid_large_opts[0]
-                
-                large_th = st.select_slider(
-                    "大戶持股標準 (>= 張)", 
-                    options=valid_large_opts if valid_large_opts else [retail_th], 
-                    value=default_large,
-                    key="large_th_slider"
-                )
+                # 注意：這裡 key 綁定 session_state
+                st.selectbox("大戶持股標準 (>= 張)", LOT_CHOICES, key="large_lot", on_change=clamp_large)
+            with c2:
+                st.selectbox("散戶持股標準 (< 張)", LOT_CHOICES, key="retail_lot", on_change=clamp_retail)
 
-            raw_holder_df = get_shareholding_data(stock_input)
+            # ✅ [FIX] 抓取資料並呈現
+            tables = get_norway_stockholders_tables(stock_input)
             
-            if raw_holder_df is None or raw_holder_df.empty:
-                st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
+            # 使用我們新寫的 get_norway... 會回傳三個表，這裡我們只需要「明細」表(tables["summary"]) 或 「分級比例」表(tables["ratio"]) 嗎？
+            # 其實你需要的是「分級比例」表來計算你自定義的門檻
+            # 但 Norway 的 StockHolders.aspx 其實已經把常用的 400/1000 算好了，若要算「任意」門檻，
+            # 需要用「前期比較」表 (tables["compare"])，因為它才有詳細的分級數據 (1-999, 1-5, 5-10...)
+            
+            df_compare = tables.get("compare")
+            
+            if df_compare is None or df_compare.empty:
+                 st.warning("⚠️ 抓不到集保分級詳細數據（前期比較表），可能該個股無資料或網站結構改變。")
+                 # 嘗試顯示 summary 當備案
+                 if tables.get("summary") is not None:
+                     st.info("顯示基本大戶(>400/>1000)趨勢：")
+                     st.dataframe(tables["summary"].head(10), use_container_width=True)
             else:
-                holder_df = process_shareholding_df(raw_holder_df, large_th, retail_th)
-                
-                if holder_df is not None and not holder_df.empty:
-                    # 準備圖表資料 (需要合併股價)
-                    # 注意：集保是週資料，股價是日資料。我們只取集保日期的股價。
-                    
-                    # 1. 處理表格變動 (增加紅字/減少綠字)
-                    # 為了顯示變動，我們需要計算 Diff
+                 # 重新處理 df_compare (它通常是寬表：左邊是分級，右邊是日期)
+                 # 我們需要轉置它，變成 (日期, 分級1人數, 分級1股數...)
+                 # 這裡呼叫新的 process_shareholding_df (改寫版) 來處理
+                 holder_df = process_shareholding_df(df_compare, st.session_state.large_lot, st.session_state.retail_lot)
+                 
+                 if holder_df is not None and not holder_df.empty:
+                    # 1. 表格顯示
                     display_df = holder_df.copy()
                     display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
                     display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
                     display_df['大戶人數增減'] = display_df['大戶人數'].diff()
                     
-                    # 反轉順序顯示 (最新在上面)
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
-                    # 使用 Pandas Styler 進行著色
                     def color_diff(val):
                         if pd.isna(val): return ''
-                        if val > 0: return 'color: #ff4b4b' # Red
-                        if val < 0: return 'color: #26a69a' # Green
+                        if val > 0: return 'color: #ff4b4b' 
+                        if val < 0: return 'color: #26a69a'
                         return ''
 
-                    st.markdown("#### 集保戶股權分散表")
                     st.dataframe(
                         display_df_show[['日期', '大戶持股(%)', '大戶增減', '大戶人數', '大戶人數增減', '散戶持股(%)', '散戶增減']].style.map(color_diff, subset=['大戶增減', '散戶增減', '大戶人數增減']).format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']),
                         use_container_width=True,
                         height=400
                     )
-                    
-                    # 2. 繪製圖表
-                    # 合併股價 (Left join holder_df)
+
+                    # 2. 圖表 (雙軸 + 股價)
+                    # 合併股價
                     chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
-                    # 如果該週五沒開盤(假日)，可能沒股價，向前補
+                    # 補股價 (週五沒開盤的情況)
                     chart_df['Close'] = chart_df['Close'].ffill()
                     
                     l_data, r_data, p_data = [], [], []
@@ -1230,24 +1113,21 @@ if stock_input:
                         if not pd.isna(row['大戶持股(%)']): l_data.append({"time": row['DateStr'], "value": row['大戶持股(%)']})
                         if not pd.isna(row['散戶持股(%)']): r_data.append({"time": row['DateStr'], "value": row['散戶持股(%)']})
                         if not pd.isna(row['Close']): p_data.append({"time": row['DateStr'], "value": row['Close']})
-                        
+                    
+                    # 這裡將 大戶/散戶/股價 合併在一個 chart_payload
                     holder_payload = []
                     holder_series = [
-                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{large_th})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
-                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{retail_th})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
-                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} # 虛線股價
+                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{st.session_state.large_lot})%", "color": "red", "lineWidth": 2, "priceScaleId": "left"}},
+                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{st.session_state.retail_lot})%", "color": "green", "lineWidth": 2, "priceScaleId": "left"}},
+                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2}} 
                     ]
                     
-                    # 雙軸設定
-                    holder_opts = make_opts(400, "大戶 vs 散戶 vs 股價", True)
-                    # 左軸 (比例)
+                    holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
                     holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
-                    # 右軸 (股價)
                     holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
                     
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
-                    
-                    renderLightweightCharts(holder_payload, key="tab5_holder")
+                    renderLightweightCharts(holder_payload, key="tab5_holder_chart")
 
     else:
         # ✅ 新增：明確告訴使用者為什麼沒圖 (當資料完全抓不到時)
