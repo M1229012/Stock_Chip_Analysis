@@ -351,7 +351,7 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ [FIX] 將 get_real_data_matrix 移到最上方
+# ✅ [FIX] 將此函式移至最外層，解決 NameError
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
@@ -520,13 +520,15 @@ def get_shareholding_data(stock_id: str) -> dict:
             cols = " ".join(map(str, df.columns))
             return all(k in cols for k in keywords)
 
+        # 1. 明細表 (含 資料日期, 總股東人數, 收盤價)
         summary = next((df for df in norm_dfs if has_any_col(df, ["資料日期", "總股東人數"]) and ("收盤價" in " ".join(df.columns))), None)
-        ratio = next((df for df in norm_dfs if ("資料日期" in df.columns) and any("1000張以上" in c or ("1000" in c and "以上" in c) for c in df.columns)), None)
-        compare = next((df for df in norm_dfs if any("持股張數分級" in str(c) for c in df.columns) or (df.shape[1] > 0 and "持股張數分級" in str(df.columns[0]))), None)
 
-        return {"summary": summary, "ratio": ratio, "compare": compare}
+        # 2. 分級比例表 (含 資料日期, 1000張以上)
+        ratio = next((df for df in norm_dfs if ("資料日期" in df.columns) and any("1000張以上" in c or ("1000" in c and "以上" in c) for c in df.columns)), None)
+
+        return {"summary": summary, "ratio": ratio}
     except Exception:
-        return {"summary": None, "ratio": None, "compare": None}
+        return {"summary": None, "ratio": None}
 
 # ✅ [FIX] 欄位導向的精確解析邏輯
 def _upper_lots_from_label(label: str) -> int | None:
@@ -542,69 +544,90 @@ def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_t
     df = raw_df.copy()
     if df.empty: return None
 
+    # Norway 的表頭通常是多層的，或者第一列是日期
+    # 我們嘗試正規化
+    # 假設 Row 0 是日期 (20260102, 20251226...)
+    # Row 1 是欄位 (人數, 張數, 百分比...)
+    # Col 0 是分級 (1-999股, 1-5張...)
+    
+    # 1. 找出日期列
     date_row_idx = -1
     for i in range(min(5, len(df))):
         row_str = df.iloc[i].astype(str).str.cat()
-        if re.search(r"20\d{6}", row_str):
+        if re.search(r"20\d{6}", row_str): # 找 YYYYMMDD
             date_row_idx = i
             break
+    
     if date_row_idx == -1: return None
 
-    dates, date_cols = [], []
+    # 2. 提取日期與其對應的欄位索引
+    dates = []
+    date_cols = []
+    
     row_vals = df.iloc[date_row_idx].values
     for i, val in enumerate(row_vals):
         d_str = str(val).replace(".0", "")
         if re.match(r"^20\d{6}$", d_str):
+            # 轉換為 YYYY-MM-DD
             d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
             dates.append(d_fmt)
             date_cols.append(i)
+    
     if not dates: return None
 
+    # 3. 找出分級資料的起始列 (通常在日期列後面 1-2 列)
     data_start_idx = date_row_idx + 1
+    # 往後找直到看到 "1-999" 或 "1-5"
     for i in range(data_start_idx, len(df)):
         val = str(df.iloc[i, 0])
         if "1-999" in val or "1-5" in val:
             data_start_idx = i
             break
             
-    rows_map = []
+    # 4. 解析每一列的分級上界
+    rows_map = [] # (upper_limit, row_index)
     for i in range(data_start_idx, len(df)):
         label = str(df.iloc[i, 0])
         upper = _upper_lots_from_label(label)
-        if upper: rows_map.append((upper, i))
+        if upper:
+            rows_map.append((upper, i))
 
+    # 5. 彙整數據
     out = []
     for idx, date_str in enumerate(dates):
+        # 這裡的 "分級比例表" 結構其實是：
+        # 日期欄位下，整列都是比例 (Float)
+        # 不像 "前期比較" 表有 人數/張數/比例 三欄
+        # 所以直接取 ratio
+        
         base_col = date_cols[idx]
-        ratio_col = base_col + 2
-        people_col = base_col
-        if ratio_col >= df.shape[1]: continue
-
-        large_ratio, large_people = 0.0, 0
-        retail_ratio, retail_people = 0.0, 0
+        
+        large_ratio = 0.0
+        retail_ratio = 0.0
 
         for upper, row_idx in rows_map:
             try:
-                r_val = df.iloc[row_idx, ratio_col]
-                p_val = df.iloc[row_idx, people_col]
+                r_val = df.iloc[row_idx, base_col] # 直接取該日期對應的值
+                
+                # 清洗數據
                 r = float(str(r_val).replace("%", "").replace(",", "")) if pd.notna(r_val) and str(r_val) != 'nan' else 0.0
-                p = int(str(p_val).replace(",", "")) if pd.notna(p_val) and str(p_val).replace(",","").isdigit() else 0
                 
                 if upper >= large_threshold:
                     large_ratio += r
-                    large_people += p
+                
                 if upper < retail_threshold:
                     retail_ratio += r
-                    retail_people += p
-            except: continue
+                elif upper == retail_threshold and "以上" not in str(df.iloc[row_idx, 0]):
+                     pass
+
+            except:
+                continue
 
         out.append({
             "日期": date_str,
             "DateStr": date_str,
             "大戶持股(%)": round(large_ratio, 2),
-            "大戶人數": large_people,
             "散戶持股(%)": round(retail_ratio, 2),
-            "散戶人數": retail_people
         })
 
     if not out: return None
@@ -1021,10 +1044,10 @@ if stock_input:
             with c1: st.selectbox("大戶持股標準 (>= 張)", LOT_CHOICES, key="large_lot", on_change=clamp_large)
             with c2: st.selectbox("散戶持股標準 (< 張)", LOT_CHOICES, key="retail_lot", on_change=clamp_retail)
 
-            # ✅ [FIX] 加入原始數據預覽
+            # ✅ [FIX] 呼叫正確的函式名稱，並處理原始明細預覽
             raw_holder_df = get_shareholding_data(stock_input)
             
-            if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('compare') is None):
+            if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
                 st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
             else:
                 # 顯示明細表供驗證
@@ -1032,14 +1055,15 @@ if stock_input:
                     if isinstance(raw_holder_df, dict) and raw_holder_df.get("summary") is not None:
                         st.dataframe(raw_holder_df["summary"].head(), use_container_width=True)
                 
-                df_compare = raw_holder_df.get("compare") if isinstance(raw_holder_df, dict) else raw_holder_df
-                holder_df = process_shareholding_df(df_compare, st.session_state.large_lot, st.session_state.retail_lot)
+                # 使用 分級比例表 進行計算
+                df_ratio = raw_holder_df.get("ratio")
+                holder_df = process_shareholding_df(df_ratio, st.session_state.large_lot, st.session_state.retail_lot)
                 
                 if holder_df is not None and not holder_df.empty:
                     display_df = holder_df.copy()
                     display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
                     display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
-                    display_df['大戶人數增減'] = display_df['大戶人數'].diff()
+                    
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
                     def color_diff(val):
@@ -1049,7 +1073,7 @@ if stock_input:
                         return ''
 
                     st.markdown("#### 集保戶股權分散表")
-                    st.dataframe(display_df_show[['日期', '大戶持股(%)', '大戶增減', '大戶人數', '大戶人數增減', '散戶持股(%)', '散戶增減']].style.map(color_diff, subset=['大戶增減', '散戶增減', '大戶人數增減']).format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), use_container_width=True, height=400)
+                    st.dataframe(display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']].style.map(color_diff, subset=['大戶增減', '散戶增減']).format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), use_container_width=True, height=400)
                     
                     chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
                     chart_df['Close'] = chart_df['Close'].ffill()
