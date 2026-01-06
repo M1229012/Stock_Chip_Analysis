@@ -926,37 +926,6 @@ if stock_input:
                 if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
                 if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
 
-            # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
-            margin_long_bal_data = []
-            margin_short_bal_data = []
-            margin_long_diff_data = []
-            margin_short_diff_data = []
-            
-            if show_margin and '融資餘額' in plot_df.columns:
-                for i, row in plot_df.iterrows():
-                    # 融資餘額 (Line)
-                    val_mb = row.get('融資餘額')
-                    if not pd.isna(val_mb):
-                        margin_long_bal_data.append({"time": row['DateStr'], "value": float(val_mb)})
-                    # 融券餘額 (Line)
-                    val_sb = row.get('融券餘額')
-                    if not pd.isna(val_sb):
-                        margin_short_bal_data.append({"time": row['DateStr'], "value": float(val_sb)})
-                        
-                    # 融資增減 (Histogram) - 使用帶透明度的紅/綠
-                    val_md = row.get('融資增減')
-                    if not pd.isna(val_md):
-                        # 紅(增)/綠(減) + 透明度
-                        color = 'rgba(239, 83, 80, 0.7)' if val_md > 0 else ('rgba(38, 166, 154, 0.7)' if val_md < 0 else "gray")
-                        margin_long_diff_data.append({"time": row['DateStr'], "value": float(val_md), "color": color})
-                        
-                    # 融券增減 (Histogram) - 使用帶透明度的黃/藍
-                    val_sd = row.get('融券增減')
-                    if not pd.isna(val_sd):
-                        # 黃(增)/藍(減) + 透明度
-                        color = 'rgba(255, 215, 0, 0.7)' if val_sd > 0 else ('rgba(0, 191, 255, 0.7)' if val_sd < 0 else "gray")
-                        margin_short_diff_data.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
-
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
             # ✅ 修正：新增 time_visible 參數 和 title (浮水印)
@@ -1109,10 +1078,10 @@ if stock_input:
                 margin_long_series = []
                 # 融資增減 (Histogram)
                 if margin_long_diff_data:
-                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
                 # 融資餘額 (Line)
                 if margin_long_bal_data:
-                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
                 
                 charts_payload.append({"chart": make_opts(150, "融資", False), "series": margin_long_series})
 
@@ -1121,10 +1090,10 @@ if stock_input:
                 margin_short_series = []
                 # 融券增減 (Histogram)
                 if margin_short_diff_data:
-                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
                 # 融券餘額 (Line)
                 if margin_short_bal_data:
-                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}) # ✅ [FIX]
+                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": True}})
                 
                 charts_payload.append({"chart": make_opts(150, "融券", False), "series": margin_short_series})
 
