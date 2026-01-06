@@ -960,12 +960,12 @@ if stock_input:
                 f_hist, f_line = [], []
                 t_hist, t_line = [], []
                 d_hist, d_line = [], []
-                total_line = [] # ✅ [NEW] 合計累積線
+                total_line, total_hist = [], [] # ✅ [NEW] 合計累積線與合計買賣柱
                 for i, row in plot_df.iterrows():
                     f_val, f_cum = row['外資買賣超'], row['cum_foreign']
                     t_val, t_cum = row['投信買賣超'], row['cum_trust']
                     d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
-                    total_cum = row['cum_total'] # ✅ [NEW]
+                    total_val, total_cum = row['total_inst'], row['cum_total'] # ✅ [NEW]
                     
                     f_hist.append({"time": row['DateStr'], "value": float(f_val), "color": COLOR_UP if f_val>0 else COLOR_DOWN})
                     f_line.append({"time": row['DateStr'], "value": float(f_cum)})
@@ -973,17 +973,18 @@ if stock_input:
                     t_line.append({"time": row['DateStr'], "value": float(t_cum)})
                     d_hist.append({"time": row['DateStr'], "value": float(d_val), "color": COLOR_UP if d_val>0 else COLOR_DOWN})
                     d_line.append({"time": row['DateStr'], "value": float(d_cum)})
-                    total_line.append({"time": row['DateStr'], "value": float(total_cum)}) # ✅ [NEW]
+                    
+                    # ✅ [NEW]
+                    total_hist.append({"time": row['DateStr'], "value": float(total_val), "color": COLOR_UP if total_val>0 else COLOR_DOWN})
+                    total_line.append({"time": row['DateStr'], "value": float(total_cum)})
 
+                # ✅ [FIX] 移除個別法人資料，只保留合計
                 charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
-                    {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}}, # ✅ [NEW] 新增白色合計線
-                    {"type": "Histogram", "data": f_hist, "options": {"title": "外資", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
-                    {"type": "Line", "data": f_line, "options": {"title": "外資累", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
-                    {"type": "Histogram", "data": t_hist, "options": {"title": "投信", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
-                    {"type": "Line", "data": t_line, "options": {"title": "投信累", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
-                    {"type": "Histogram", "data": d_hist, "options": {"title": "自營", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
-                    {"type": "Line", "data": d_line, "options": {"title": "自營累", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
+                    {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
+                    {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}}
                 ]})
+                
+                # 下方維持不變，顯示個別法人詳情
                 charts_payload_inst.append({"chart": make_opts(150, "外資", False), "series": [
                     {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
                     {"type": "Line", "data": f_line, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}}
