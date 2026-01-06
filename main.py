@@ -11,6 +11,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from io import StringIO
 import time
 import re
+import math
 from datetime import datetime, timedelta
 import pytz
 from urllib.parse import urlparse, parse_qs
@@ -342,174 +343,114 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取集保戶股權分散表 (大戶/散戶)
+# ✅ [FIX] 穩健版集保戶股權分散表爬蟲
 @st.cache_data(persist="disk", ttl=604800)
 def get_shareholding_data(stock_id):
     driver = get_driver()
-    # 使用富邦的集保分佈頁面 (通常是 zcj 或 zck)
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcj/zcj.djhtm?a={stock_id}"
     try:
         driver.get(url)
-        # 等待表格出現
-        try:
-            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table[2]/tbody/tr[3]/td")))
-        except:
-            pass # 可能是空表或結構不同
-            
+        # 等待更穩定的方式 (時間延遲)
+        time.sleep(1.2)
+        
         html = driver.page_source
         tables = pd.read_html(StringIO(html))
         
-        target_df = None
-        for df in tables:
-            # 尋找包含 "各持股等級" 或等級範圍的表格
-            s = df.astype(str).to_string()
-            if "持股分級" in s or "1-999" in s:
-                target_df = df
-                break
-        
-        if target_df is not None:
-            # 富邦 ZCJ 頁面的結構：
-            # 第一欄是持股分級 (1-999, 1000-5000...)
-            # 後續欄位是日期 (e.g. 20240105, 20231229...)
-            # 每一個日期下有 "人數", "股數", "比例" 三個子欄位 (HTML table rowspan/colspan 結構複雜)
-            # pd.read_html 有時會展平，我們需要清理
+        # [FIX] 識別邏輯：不依賴 "持股分級" 標題，而是找第一欄像分級數據的表格
+        def looks_like_holder_table(df: pd.DataFrame) -> bool:
+            if df.shape[1] < 2: return False
+            col0 = df.iloc[:, 0].astype(str).str.replace(",", "", regex=False)
+            # 檢查第一欄是否含有 "數字-數字" 或 "以上"
+            hit = col0.str.contains(r"(\d+\s*[-~～]\s*\d+)|以上", regex=True, na=False).mean()
+            return hit > 0.25 # 25% 以上符合格式
+
+        cand = [t for t in tables if looks_like_holder_table(t)]
+        if cand:
+            cand.sort(key=lambda d: d.shape[0], reverse=True) # 取最大張的
+            return cand[0]
             
-            # 簡單處理：假設第一列是日期
-            # 由於這個表格結構非常動態，我們嘗試擷取左邊的 "分級" 和內容
-            # 這裡簡化：只取表格，後續處理
-            return target_df
-            
-    except:
+    except Exception:
         pass
     finally:
         driver.quit()
     return None
 
-def process_shareholding_df(raw_df, large_threshold, retail_threshold):
-    # 這是一個通用的清理邏輯，針對富邦 zcj 頁面常見結構
-    try:
-        # 移除前幾列非數據列
-        df = raw_df.copy()
-        
-        # 找出包含日期的列
-        date_row_idx = -1
-        for i, row in df.iterrows():
-            # 檢查是否含有類似日期的字串 (YYYYMMDD 或 YYYY/MM/DD)
-            row_str = row.astype(str).str.cat()
-            if re.search(r'\d{8}', row_str) or re.search(r'\d{4}/\d{2}/\d{2}', row_str):
-                date_row_idx = i
-                break
-        
-        if date_row_idx == -1: return None
-
-        # 提取日期
-        dates = []
-        date_cols = [] # 記錄每個日期對應的起始欄位索引
-        
-        # 假設第一欄是標題，從第二欄開始
-        row_vals = df.iloc[date_row_idx].values
-        for i, val in enumerate(row_vals):
-            d_str = str(val).replace('/', '').replace('-', '')
-            if re.match(r'^\d{8}$', d_str): # 20240105
-                dates.append(f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}")
-                date_cols.append(i)
-        
-        if not dates: return None
-        
-        # 提取 "比例" (%) 欄位。通常日期後面的欄位順序是 人數, 股數, 比例
-        # 我們假設每個日期佔用 3 或 4 個欄位。富邦通常是：人數、張數、比例
-        # 我們需要找到 "比例" 在哪。
-        
-        # 建立結構化數據
-        structured_data = []
-        
-        # 定義持股分級對應的列 (根據富邦常見順序)
-        # 0: 1-999
-        # 1: 1000-5000
-        # ...
-        # 我們需要遍歷每一列，判斷它是哪個分級
-        
-        range_map = {
-            "1-999": 1, "1,000-5,000": 5, "5,001-10,000": 10, "10,001-15,000": 15,
-            "15,001-20,000": 20, "20,001-30,000": 30, "30,001-40,000": 40,
-            "40,001-50,000": 50, "50,001-100,000": 100, "100,001-200,000": 200,
-            "200,001-400,000": 400, "400,001-600,000": 600, "600,001-800,000": 800,
-            "800,001-1,000,000": 1000, "1,000,001以上": 1001
-        }
-        
-        # 掃描列，找到等級數據
-        data_rows = []
-        for i, row in df.iterrows():
-            label = str(row[0]).replace(' ', '').replace(',', '')
-            # 簡單匹配
-            current_range = 0
-            if "1-999" in label: current_range = 1
-            elif "1000-5000" in label: current_range = 5
-            elif "5001-10000" in label: current_range = 10
-            elif "10001-15000" in label: current_range = 15
-            elif "15001-20000" in label: current_range = 20
-            elif "20001-30000" in label: current_range = 30
-            elif "30001-40000" in label: current_range = 40
-            elif "40001-50000" in label: current_range = 50
-            elif "50001-100000" in label: current_range = 100
-            elif "100001-200000" in label: current_range = 200
-            elif "200001-400000" in label: current_range = 400
-            elif "400001-600000" in label: current_range = 600
-            elif "600001-800000" in label: current_range = 800
-            elif "800001-1000000" in label: current_range = 1000
-            elif "1000001" in label or "以上" in label: current_range = 1001
-            
-            if current_range > 0:
-                data_rows.append((current_range, i))
-
-        # 彙整每個日期的數據
-        result_list = []
-        
-        for idx, date_str in enumerate(dates):
-            col_base = date_cols[idx]
-            # 假設 人數(0), 股數(1), 比例(2)。如果只有兩個欄位可能不同。
-            # 檢查標題列 (header_row+1)
-            # 這裡用 heuristic: 比例通常由小數點
-            
-            # 尋找比例欄位 (通常是 col_base + 2)
-            ratio_col = col_base + 2 
-            people_col = col_base
-            
-            large_ratio_sum = 0.0
-            retail_ratio_sum = 0.0
-            large_people_sum = 0
-            retail_people_sum = 0
-            
-            for range_val, row_idx in data_rows:
-                try:
-                    r_val = str(df.iloc[row_idx, ratio_col]).replace('%', '')
-                    p_val = str(df.iloc[row_idx, people_col]).replace(',', '')
-                    r = float(r_val) if r_val != 'nan' else 0.0
-                    p = int(p_val) if p_val != 'nan' and p_val.isdigit() else 0
-                    
-                    if range_val >= large_threshold:
-                        large_ratio_sum += r
-                        large_people_sum += p
-                    if range_val < retail_threshold: # 小於
-                        retail_ratio_sum += r
-                        retail_people_sum += p
-                except:
-                    continue
-            
-            result_list.append({
-                "日期": date_str,
-                "DateStr": date_str, # For chart mapping
-                "大戶持股(%)": round(large_ratio_sum, 2),
-                "大戶人數": large_people_sum,
-                "散戶持股(%)": round(retail_ratio_sum, 2),
-                "散戶人數": retail_people_sum
-            })
-            
-        res_df = pd.DataFrame(result_list).sort_values("日期", ascending=True)
-        return res_df
-
-    except Exception:
+# ✅ [FIX] 欄位導向的精確解析邏輯
+def _upper_lots_from_label(label: str) -> int | None:
+    s = str(label).replace(" ", "").replace(",", "").replace("股", "")
+    if "以上" in s:
+        return 10**9
+    m = re.search(r"(\d+)\s*[-~～]\s*(\d+)", s)
+    if not m:
         return None
+    upper_shares = int(m.group(2))
+    return int(math.ceil(upper_shares / 1000.0))
+
+def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
+    df = raw_df.copy()
+    if df.empty or df.shape[1] < 2:
+        return None
+
+    # 1. 欄位攤平
+    if isinstance(df.columns, pd.MultiIndex):
+        flat_cols = []
+        for a, b in df.columns.tolist():
+            a = "" if a is None else str(a)
+            b = "" if b is None else str(b)
+            flat_cols.append(f"{a}|{b}".strip("|"))
+        df.columns = flat_cols
+    else:
+        df.columns = [str(c) for c in df.columns]
+
+    # 2. 定義分級欄
+    range_col = df.columns[0]
+    df[range_col] = df[range_col].astype(str)
+
+    # 3. 找日期與比例欄
+    ratio_cols = []
+    for c in df.columns[1:]:
+        # 富邦常見格式：包含 "比例" 且有年份數字
+        if ("比例" in c) and re.search(r"\d{4}", c):
+            ratio_cols.append(c)
+
+    if not ratio_cols: return None
+
+    def col_to_datestr(c: str) -> str | None:
+        part = c.split("|")[0]
+        d = part.replace("/", "").replace("-", "")
+        m = re.search(r"(\d{8})", d)
+        if not m: return None
+        d8 = m.group(1)
+        return f"{d8[:4]}-{d8[4:6]}-{d8[6:8]}"
+
+    # 4. 解析張數上界
+    df["_upper_lots"] = df[range_col].apply(_upper_lots_from_label)
+    data_rows = df.dropna(subset=["_upper_lots"]).copy()
+    if data_rows.empty: return None
+
+    # 5. 加總
+    out = []
+    for rc in ratio_cols:
+        date_str = col_to_datestr(rc)
+        if not date_str: continue
+
+        s_ratio = data_rows[rc].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False)
+        ratio = pd.to_numeric(s_ratio, errors="coerce").fillna(0.0)
+        upper = data_rows["_upper_lots"].astype(int)
+
+        large_ratio = ratio[upper >= large_threshold].sum()
+        retail_ratio = ratio[upper < retail_threshold].sum() # 注意：題目要求 <, 這裡用 <
+
+        out.append({
+            "日期": date_str,
+            "DateStr": date_str,
+            "大戶持股(%)": round(float(large_ratio), 2),
+            "散戶持股(%)": round(float(retail_ratio), 2),
+        })
+
+    if not out: return None
+    res = pd.DataFrame(out).sort_values("DateStr")
+    return res
 
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
@@ -851,7 +792,7 @@ if stock_input:
             if df_price is not None and not df_price.empty:
                 charts_payload = []
                 plot_df = df_price.copy()
-                plot_df.index.name = None
+                plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
                 plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
                 plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
@@ -1163,15 +1104,40 @@ if stock_input:
 
         # ==================== Tab 5: 大戶 (集保分佈) ====================
         with tab_holder:
+            # 確保大戶選項過濾防呆
+            c1, c2 = st.columns(2)
+            large_opts_all = [100, 200, 400, 600, 800, 1000]
+            retail_opts_all = [10, 50, 100, 200, 400, 600]
+
+            with c2:
+                # 先選散戶 (通常散戶門檻較低)
+                retail_th = st.select_slider(
+                    "散戶持股標準 (< 張)", 
+                    options=retail_opts_all, 
+                    value=50,
+                    key="retail_th_slider"
+                )
+
+            with c1:
+                # 大戶選項必須 >= 散戶，避免邏輯矛盾
+                valid_large_opts = [x for x in large_opts_all if x >= retail_th]
+                # 預設值防呆
+                default_large = 400
+                if default_large < retail_th: default_large = retail_th
+                if default_large not in valid_large_opts and valid_large_opts: default_large = valid_large_opts[0]
+                
+                large_th = st.select_slider(
+                    "大戶持股標準 (>= 張)", 
+                    options=valid_large_opts if valid_large_opts else [retail_th], 
+                    value=default_large,
+                    key="large_th_slider"
+                )
+
             raw_holder_df = get_shareholding_data(stock_input)
             
-            if raw_holder_df is not None:
-                c1, c2 = st.columns(2)
-                with c1:
-                    large_th = st.select_slider("大戶持股標準 (> 張)", options=[100, 200, 400, 600, 800, 1000], value=400)
-                with c2:
-                    retail_th = st.select_slider("散戶持股標準 (< 張)", options=[10, 50, 100, 200, 400, 600], value=50)
-
+            if raw_holder_df is None or raw_holder_df.empty:
+                st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
+            else:
                 holder_df = process_shareholding_df(raw_holder_df, large_th, retail_th)
                 
                 if holder_df is not None and not holder_df.empty:
@@ -1206,7 +1172,7 @@ if stock_input:
                     # 合併股價 (Left join holder_df)
                     chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
                     # 如果該週五沒開盤(假日)，可能沒股價，向前補
-                    # 但這裡簡單起見，如果沒股價就斷掉或不顯示
+                    chart_df['Close'] = chart_df['Close'].ffill()
                     
                     l_data, r_data, p_data = [], [], []
                     for i, row in chart_df.iterrows():
@@ -1216,9 +1182,9 @@ if stock_input:
                         
                     holder_payload = []
                     holder_series = [
-                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{large_th})%", "color": "red", "lineWidth": 2, "priceScaleId": "left"}},
-                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{retail_th})%", "color": "green", "lineWidth": 2, "priceScaleId": "left"}},
-                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2}} # 虛線股價
+                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{large_th})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
+                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{retail_th})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
+                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} # 虛線股價
                     ]
                     
                     # 雙軸設定
@@ -1231,10 +1197,6 @@ if stock_input:
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
                     
                     renderLightweightCharts(holder_payload, key="tab5_holder")
-
-            else:
-                st.warning("查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
-
 
     else:
         # ✅ 新增：明確告訴使用者為什麼沒圖 (當資料完全抓不到時)
