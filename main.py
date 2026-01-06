@@ -1,25 +1,21 @@
-import streamlit as st
+import re
+import time
+import shutil
+from datetime import datetime, timedelta
+from io import StringIO
+from urllib.parse import urlparse, parse_qs
 import pandas as pd
+import pytz
+import streamlit as st
+import twstock
 import yfinance as yf
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-from io import StringIO
-import time
-import re
-from datetime import datetime, timedelta
-import pytz
-from urllib.parse import urlparse, parse_qs
-import shutil
-import twstock
-import copy
-import numpy as np
-
-# ✅ TradingView 圖表套件
 from streamlit_lightweight_charts import renderLightweightCharts
 
 # ================= 1. 系統設定 =================
@@ -92,6 +88,20 @@ COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
+
+# ✅ [Refactor] 共用日期解析函式
+def is_roc_date(s: str) -> bool:
+    return re.match(r"\d{2,3}/\d{1,2}/\d{1,2}", str(s).strip()) is not None
+
+def roc_to_datestr(d_str: str) -> str | None:
+    parts = re.split(r"[/-]", str(d_str).strip())
+    if len(parts) < 2:
+        return None
+    y = int(parts[0])
+    y = y + 1911 if y < 1911 else y
+    m = int(parts[1])
+    d = int(parts[2]) if len(parts) > 2 else 1
+    return f"{y:04d}-{m:02d}-{d:02d}"
 
 # ✅ 獲取所有股票選單 (代號 + 名稱)
 @st.cache_data
@@ -269,24 +279,15 @@ def get_institutional_data(stock_id, start_date, end_date):
                 clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
                 clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
                 
-                def is_date(s):
-                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
-                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                # ✅ [Refactor] 使用共用函式
+                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
                 
                 for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
                     clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
                     clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
 
-                def parse_date(d_str):
-                    parts = re.split(r'[/-]', str(d_str))
-                    if len(parts) >= 2:
-                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                        m = int(parts[1])
-                        d = int(parts[2]) if len(parts) > 2 else 1
-                        return f"{y:04d}-{m:02d}-{d:02d}"
-                    return None
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                # ✅ [Refactor] 使用共用函式
+                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
                 return clean_df.dropna(subset=['DateStr'])
     except:
         pass
@@ -316,24 +317,15 @@ def get_margin_data(stock_id, start_date, end_date):
                 clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
                 clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
                 
-                def is_date(s):
-                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
-                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                # ✅ [Refactor] 使用共用函式
+                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
                 
                 for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
                     clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
                     clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
                 
-                def parse_date(d_str):
-                    parts = re.split(r'[/-]', str(d_str))
-                    if len(parts) >= 2:
-                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                        m = int(parts[1])
-                        d = int(parts[2]) if len(parts) > 2 else 1
-                        return f"{y:04d}-{m:02d}-{d:02d}"
-                    return None
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                # ✅ [Refactor] 使用共用函式
+                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
                 return clean_df.dropna(subset=['DateStr'])
     except:
         pass
@@ -511,22 +503,9 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
 
         df['買賣超_Calc'] = df['買進'] - df['賣出']
 
-        def parse_date(d_str):
-            s = str(d_str).strip()
-            parts = re.split(r'[/-]', s)
-            if len(parts) == 3:
-                y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
-                if y < 1911: y += 1911
-                return f"{y:04d}-{m:02d}-{d:02d}"
-            elif len(parts) == 2:
-                m, d = int(parts[0]), int(parts[1])
-                now = datetime.now()
-                y = now.year
-                if m > now.month + 2: y -= 1
-                return f"{y:04d}-{m:02d}-{d:02d}"
-            return None
-
-        df['DateStr'] = df['日期'].apply(parse_date)
+        # ✅ [Refactor] 使用共用函式 (這裡原本就有一段 parse_date 邏輯)
+        df['DateStr'] = df['日期'].apply(roc_to_datestr)
+        
         df = df.dropna(subset=['DateStr'])
         df = df.sort_values('DateStr', ascending=True)
         
@@ -794,7 +773,6 @@ if stock_input:
                     plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
             
             # ✅ [FIX] 累積型數據 Forward Fill (處理當日數據未發布情況)
-            # 這會讓累積數據線圖在沒有資料的日期也能延續，而不是斷掉或歸零
             cols_to_ffill = ['cum_foreign', 'cum_trust', 'cum_dealer', 'cumulative_chip', '融資餘額', '融券餘額']
             for col in cols_to_ffill:
                 if col in plot_df.columns:
@@ -827,7 +805,7 @@ if stock_input:
                     "height": height,
                 }
                 
-                # ✅ 浮水印設定 (左上角標題) - 改為靜態標題，作為背景
+                # ✅ 浮水印設定 (左上角標題) - 保留靜態標題作為背景
                 if title:
                     opts["watermark"] = {
                         "visible": True,
@@ -841,19 +819,6 @@ if stock_input:
 
             # ✅ [FIX START] 修正變數作用域：將 charts_payload 的初始化移到最上層
             charts_payload = [] 
-            
-            # ✅ [FIX START] 預先初始化所有數據變數，防止 NameError
-            vol_data = []
-            k_data, d_data = [], []
-            dif_data, dea_data, hist_data = [], [], []
-            chip_data, chip_cumulative_data = [], []
-            f_hist, f_line = [], []
-            t_hist, t_line = [], []
-            d_hist, d_line = [], []
-            margin_long_bal_data, margin_long_diff_data = [], []
-            margin_short_bal_data, margin_short_diff_data = [], []
-            margin_long_series = [] # ✅ 初始化
-            margin_short_series = [] # ✅ 初始化
 
             # 1. K線資料
             candlestick_data = []
@@ -869,9 +834,9 @@ if stock_input:
 
             # 2. 均線資料
             ma_base_options = {
-                "lastValueVisible": False, # ✅ 隱藏右側標籤
+                "lastValueVisible": False,  # ✅ [FIX] 隱藏右側軸標籤，讓數值顯示在左上角 Legend
                 "priceLineVisible": False, 
-                "crosshairMarkerVisible": True, # ✅ 開啟點點
+                "crosshairMarkerVisible": True, 
                 "lineWidth": 1
             }
             
@@ -917,6 +882,8 @@ if stock_input:
 
             # 2. 副圖：成交量 (✅ time_visible=False)
             if show_vol:
+                # ✅ [FIX] 預先宣告列表，防止 NameError
+                vol_data = [] 
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Volume']):
                         color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
@@ -935,7 +902,7 @@ if stock_input:
                         "title": "成交量", # ✅ 有 Title 才會顯示 Legend
                         "priceLineVisible": False,
                         "crosshairMarkerVisible": True,
-                        "lastValueVisible": False # ✅ 隱藏右側標籤
+                        "lastValueVisible": False # ✅ 隱藏右側軸標籤
                     }
                 }]
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
@@ -955,6 +922,7 @@ if stock_input:
             if show_macd and 'DIF' in plot_df.columns:
                 dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
                 dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
+                hist_data = [] # ✅ 預先初始化
                 for i, row in plot_df.iterrows():
                     val = row['MACD_Hist']
                     if not pd.isna(val):
@@ -970,6 +938,8 @@ if stock_input:
 
             # 5. 副圖：分點買賣超 (雙軸) (✅ time_visible=False)
             if show_chip and '買賣超_Final' in plot_df.columns:
+                chip_data = [] # ✅ 預先初始化
+                chip_cumulative_data = [] # ✅ 預先初始化
                 for i, row in plot_df.iterrows():
                     val = row.get('買賣超_Final')
                     if not pd.isna(val):
@@ -1004,6 +974,9 @@ if stock_input:
             # 6. [NEW] 副圖：三大法人 - 外資獨立 (✅ time_visible=False)
             # [FIX START] 拆分三大法人數據
             combined_inst_series = [] # 合併圖表用的
+            f_hist, f_line = [], []
+            t_hist, t_line = [], []
+            d_hist, d_line = [], []
 
             # 只要有勾選任一法人相關選項，就準備所有資料
             if (show_inst_foreign or show_inst_trust or show_inst_dealer or show_inst_total) and '外資買賣超' in plot_df.columns:
@@ -1073,7 +1046,11 @@ if stock_input:
                     charts_payload.append({"chart": make_opts(200, "三大法人(合)", False), "series": combined_inst_series})
 
             # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
-            
+            margin_long_bal_data, margin_long_diff_data = [], []
+            margin_short_bal_data, margin_short_diff_data = [], []
+            margin_long_series = []
+            margin_short_series = []
+
             if show_margin and '融資餘額' in plot_df.columns:
                 for i, row in plot_df.iterrows():
                     # 融資餘額 (Line)
