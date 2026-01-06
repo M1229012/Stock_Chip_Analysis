@@ -834,6 +834,17 @@ if stock_input:
 
             # ✅ [FIX START] 修正變數作用域：將 charts_payload 的初始化移到最上層
             charts_payload = [] 
+            
+            # ✅ [FIX START] 預先初始化所有數據變數，防止 NameError
+            vol_data = []
+            k_data, d_data = [], []
+            dif_data, dea_data, hist_data = [], [], []
+            chip_data, chip_cumulative_data = [], []
+            f_hist, f_line = [], []
+            t_hist, t_line = [], []
+            d_hist, d_line = [], []
+            margin_long_bal_data, margin_long_diff_data = [], []
+            margin_short_bal_data, margin_short_diff_data = [], []
 
             # 1. K線資料
             candlestick_data = []
@@ -897,6 +908,15 @@ if stock_input:
 
             # 2. 副圖：成交量 (✅ time_visible=False)
             if show_vol:
+                for i, row in plot_df.iterrows():
+                    if not pd.isna(row['Volume']):
+                        color = COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN
+                        vol_data.append({
+                            "time": row['DateStr'],
+                            "value": float(row['Volume']), 
+                            "color": color
+                        })
+                        
                 vol_series = [{
                     "type": "Histogram",
                     "data": vol_data,
@@ -912,7 +932,10 @@ if stock_input:
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
 
             # 3. 副圖：KD (✅ time_visible=False)
-            if show_kd and k_data:
+            if show_kd and 'K' in plot_df.columns:
+                k_data = [{"time": row['DateStr'], "value": float(row['K'])} for i, row in plot_df.iterrows() if not pd.isna(row['K'])]
+                d_data = [{"time": row['DateStr'], "value": float(row['D'])} for i, row in plot_df.iterrows() if not pd.isna(row['D'])]
+                
                 kd_series = [
                     {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K值", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
                     {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D值", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
@@ -920,7 +943,15 @@ if stock_input:
                 charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
 
             # 4. 副圖：MACD (✅ time_visible=False)
-            if show_macd and dif_data:
+            if show_macd and 'DIF' in plot_df.columns:
+                dif_data = [{"time": row['DateStr'], "value": float(row['DIF'])} for i, row in plot_df.iterrows() if not pd.isna(row['DIF'])]
+                dea_data = [{"time": row['DateStr'], "value": float(row['DEA'])} for i, row in plot_df.iterrows() if not pd.isna(row['DEA'])]
+                for i, row in plot_df.iterrows():
+                    val = row['MACD_Hist']
+                    if not pd.isna(val):
+                        color = COLOR_UP if val >= 0 else COLOR_DOWN
+                        hist_data.append({"time": row['DateStr'], "value": float(val), "color": color})
+                        
                 macd_series = [
                     {"type": "Histogram", "data": hist_data, "options": {"title": "MACD柱狀", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
                     {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}, # ✅ [FIX]
@@ -929,7 +960,24 @@ if stock_input:
                 charts_payload.append({"chart": make_opts(150, "MACD", False), "series": macd_series})
 
             # 5. 副圖：分點買賣超 (雙軸) (✅ time_visible=False)
-            if show_chip and chip_data:
+            if show_chip and '買賣超_Final' in plot_df.columns:
+                for i, row in plot_df.iterrows():
+                    val = row.get('買賣超_Final')
+                    if not pd.isna(val):
+                        color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
+                        chip_data.append({
+                            "time": row['DateStr'],
+                            "value": float(val), 
+                            "color": color
+                        })
+                    
+                    cum_val = row.get('cumulative_chip')
+                    if not pd.isna(cum_val):
+                        chip_cumulative_data.append({
+                            "time": row['DateStr'],
+                            "value": float(cum_val)
+                        })
+                        
                 chip_series = [
                     {
                         "type": "Histogram",
@@ -946,9 +994,6 @@ if stock_input:
 
             # 6. [NEW] 副圖：三大法人 - 外資獨立 (✅ time_visible=False)
             # [FIX START] 拆分三大法人數據
-            f_hist, f_line = [], []
-            t_hist, t_line = [], []
-            d_hist, d_line = [], []
             combined_inst_series = [] # 合併圖表用的
 
             # 只要有勾選任一法人相關選項，就準備所有資料
@@ -1019,15 +1064,10 @@ if stock_input:
                     charts_payload.append({"chart": make_opts(200, "三大法人(合)", False), "series": combined_inst_series})
 
             # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
-            margin_long_bal_data = []
-            margin_short_bal_data = []
-            margin_long_diff_data = []
-            margin_short_diff_data = []
-            
-            # ✅ [FIX] 顯式初始化 margin_series，避免 NameError
+            # [FIX START] 顯式初始化 margin_series，避免 NameError
             margin_long_series = []
             margin_short_series = []
-
+            
             if show_margin and '融資餘額' in plot_df.columns:
                 for i, row in plot_df.iterrows():
                     # 融資餘額 (Line)
