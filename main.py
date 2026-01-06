@@ -93,6 +93,20 @@ COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
 
+# ✅ [Refactor] 共用日期解析函式
+def is_roc_date(s: str) -> bool:
+    return re.match(r"\d{2,3}/\d{1,2}/\d{1,2}", str(s).strip()) is not None
+
+def roc_to_datestr(d_str: str) -> str | None:
+    parts = re.split(r"[/-]", str(d_str).strip())
+    if len(parts) < 2:
+        return None
+    y = int(parts[0])
+    y = y + 1911 if y < 1911 else y
+    m = int(parts[1])
+    d = int(parts[2]) if len(parts) > 2 else 1
+    return f"{y:04d}-{m:02d}-{d:02d}"
+
 # ✅ 獲取所有股票選單 (代號 + 名稱)
 @st.cache_data
 def get_all_stock_options():
@@ -278,24 +292,13 @@ def get_institutional_data(stock_id, start_date, end_date):
                 clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
                 clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
                 
-                def is_date(s):
-                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
-                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
                 
                 for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
                     clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
                     clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
 
-                def parse_date(d_str):
-                    parts = re.split(r'[/-]', str(d_str))
-                    if len(parts) >= 2:
-                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                        m = int(parts[1])
-                        d = int(parts[2]) if len(parts) > 2 else 1
-                        return f"{y:04d}-{m:02d}-{d:02d}"
-                    return None
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
                 return clean_df.dropna(subset=['DateStr'])
     except:
         pass
@@ -325,24 +328,13 @@ def get_margin_data(stock_id, start_date, end_date):
                 clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
                 clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
                 
-                def is_date(s):
-                    return re.match(r'\d{2,3}/\d{1,2}/\d{1,2}', str(s)) is not None
-                clean_df = clean_df[clean_df['日期'].apply(is_date)]
+                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
                 
                 for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
                     clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
                     clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
                 
-                def parse_date(d_str):
-                    parts = re.split(r'[/-]', str(d_str))
-                    if len(parts) >= 2:
-                        y = int(parts[0]) + 1911 if int(parts[0]) < 1911 else int(parts[0])
-                        m = int(parts[1])
-                        d = int(parts[2]) if len(parts) > 2 else 1
-                        return f"{y:04d}-{m:02d}-{d:02d}"
-                    return None
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(parse_date)
+                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
                 return clean_df.dropna(subset=['DateStr'])
     except:
         pass
@@ -520,22 +512,7 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
 
         df['買賣超_Calc'] = df['買進'] - df['賣出']
 
-        def parse_date(d_str):
-            s = str(d_str).strip()
-            parts = re.split(r'[/-]', s)
-            if len(parts) == 3:
-                y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
-                if y < 1911: y += 1911
-                return f"{y:04d}-{m:02d}-{d:02d}"
-            elif len(parts) == 2:
-                m, d = int(parts[0]), int(parts[1])
-                now = datetime.now()
-                y = now.year
-                if m > now.month + 2: y -= 1
-                return f"{y:04d}-{m:02d}-{d:02d}"
-            return None
-
-        df['DateStr'] = df['日期'].apply(parse_date)
+        df['DateStr'] = df['日期'].apply(roc_to_datestr)
         df = df.dropna(subset=['DateStr'])
         df = df.sort_values('DateStr', ascending=True)
         
@@ -713,7 +690,7 @@ if stock_input:
                     "外資", "投信", "自營商"
                 ]
                 all_options = [
-                    "成交量", "KD", "MACD", "RSI", "分點買賣超", # ✅ 新增 RSI 選項
+                    "成交量", "KD", "MACD", "RSI", "分點買賣超", # ✅ 新增 RSI
                     "布林通道", "融資融券", 
                     "外資", "投信", "自營商", "三大法人"
                 ]
@@ -812,7 +789,7 @@ if stock_input:
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
             # ✅ 修正：新增 time_visible 參數 和 title (浮水印)
-            def make_opts(height, title=None, time_visible=True):
+            def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
                 opts = {
                     "layout": {
                         "textColor": "white",
@@ -835,6 +812,16 @@ if stock_input:
                     "crosshair": {"mode": 1},
                     "height": height,
                 }
+                
+                # [NEW] 針對 RSI 固定 Y 軸範圍
+                if scale_mode == "rsi":
+                     opts["rightPriceScale"] = {
+                        "visible": False, # 依然隱藏標籤
+                        "autoScale": False,
+                        "mode": 0, # Normal
+                        "maxValue": 100,
+                        "minValue": 0,
+                    }
                 
                 # ✅ 浮水印設定 (左上角標題) - 保留靜態標題作為背景
                 if title:
@@ -879,7 +866,7 @@ if stock_input:
 
             # 2. 均線資料
             ma_base_options = {
-                "lastValueVisible": False,  # ✅ [FIX] 隱藏右側軸標籤
+                "lastValueVisible": False,  # ✅ [FIX] 隱藏右側軸標籤，讓數值顯示在左上角 Legend
                 "priceLineVisible": False, 
                 "crosshairMarkerVisible": True, 
                 "lineWidth": 1
@@ -982,10 +969,16 @@ if stock_input:
             if show_rsi and 'RSI' in plot_df.columns:
                 rsi_data = [{"time": row['DateStr'], "value": float(row['RSI'])} for i, row in plot_df.iterrows() if not pd.isna(row['RSI'])]
                 
+                # [NEW] 80/20 參考線
+                rsi_80 = [{"time": row['DateStr'], "value": 80} for i, row in plot_df.iterrows()]
+                rsi_20 = [{"time": row['DateStr'], "value": 20} for i, row in plot_df.iterrows()]
+                
                 rsi_series = [
                     {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
+                    {"type": "Line", "data": rsi_20, "options": {"color": "green", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
                 ]
-                charts_payload.append({"chart": make_opts(150, "RSI", False), "series": rsi_series})
+                charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": rsi_series})
 
             # 6. 副圖：分點買賣超 (雙軸) (✅ time_visible=False)
             if show_chip and '買賣超_Final' in plot_df.columns:
@@ -1150,5 +1143,4 @@ if stock_input:
         st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
         st.info("可能有以下原因：\n"
                 "1. 此股票為「興櫃股票」或 Yahoo Finance 無資料。\n"
-                "2. 股票代號輸入錯誤。\n"
-                "3. Yahoo API 暫時連線失敗，請稍後再試。")
+                "2. Yahoo API 暫時連線失敗，請稍後再試。")
