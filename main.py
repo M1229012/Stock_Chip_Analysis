@@ -1105,24 +1105,29 @@ if stock_input:
                     })
                 charts_payload.append({"chart": make_opts(200, "三大法人", False), "series": final_inst_series})
 
-            # 7. 副圖：融資融券 (雙軸：增減量 + 累積餘額)
-            if show_margin and (margin_long_bal_data or margin_short_bal_data):
-                # ✅ [FIX] 顯式初始化 margin_series，避免 NameError
-                margin_series = []
-                
-                # 增減量 (柱狀圖，右軸)
+            # 7. 副圖：融資 (雙軸：增減量 + 累積餘額)
+            if show_margin and (margin_long_bal_data or margin_long_diff_data):
+                margin_long_series = []
+                # 融資增減 (Histogram)
                 if margin_long_diff_data:
-                    margin_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-                if margin_short_diff_data:
-                    margin_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-                
-                # 累積餘額 (折線圖，左軸)
+                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                # 融資餘額 (Line)
                 if margin_long_bal_data:
-                    margin_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
-                if margin_short_bal_data:
-                    margin_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
                 
-                charts_payload.append({"chart": make_opts(200, "融資融券", False), "series": margin_series})
+                charts_payload.append({"chart": make_opts(150, "融資", False), "series": margin_long_series})
+
+            # 8. 副圖：融券 (雙軸：增減量 + 累積餘額)
+            if show_margin and (margin_short_bal_data or margin_short_diff_data):
+                margin_short_series = []
+                # 融券增減 (Histogram)
+                if margin_short_diff_data:
+                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                # 融券餘額 (Line)
+                if margin_short_bal_data:
+                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+                
+                charts_payload.append({"chart": make_opts(150, "融券", False), "series": margin_short_series})
 
             # ✅ 一次 render：多張 chart 會依序往下排
             # ✅ 新增 key 值：包含指標選擇字串，強制讓圖表在結構改變時重繪，解決 K 線圖消失問題
