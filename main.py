@@ -589,20 +589,6 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 val_str = str(row.iloc[col_idx]).replace("%", "").replace(",", "")
                 val = float(val_str) if val_str != 'nan' else 0.0
                 
-                # 大戶：大於等於門檻 (注意：1000張以上是 >= 1000)
-                # 這裡的 upper 是區間的上界。
-                # 例如 "400-600"，upper=600。如果大戶門檻是400，這個區間算不算？
-                # 通常 "400-600" 代表持有 400~599 股 (包含下界)。
-                # 所以我們需要知道每個區間的下界。
-                
-                # 重新定義區間 (下界, 上界)
-                # 3: (0, 1), 4: (1, 5), 5: (5, 10)...
-                # 簡化邏輯：
-                # 散戶定義：持股 < 門檻。如果區間上界 <= 門檻，則該區間全算散戶。
-                # (例如門檻 10，則 <1, 1-5, 5-10 都算) -> 5-10 的上界是10，所以 <= 
-                
-                # 大戶定義：持股 >= 門檻。
-                
                 # 修正判斷邏輯：使用區間下界來判斷比較準確
                 lower = 0
                 if col_idx == 3: lower = 0
@@ -769,6 +755,8 @@ if stock_input:
                 "height": height,
             }
             if scale_mode == "rsi":
+                # [FIX] autoScale: True 讓 RSI 也自動縮放 (如果需要的話，但RSI通常固定0-100)
+                # 這裡保持固定以利比較
                 opts["rightPriceScale"] = {"visible": False, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0}
             if title:
                 opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
@@ -806,7 +794,7 @@ if stock_input:
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
 
                 ma_opts = {"lastValueVisible": True, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}}]
+                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": True}}]
                 if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
                 if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                 if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
@@ -1051,14 +1039,38 @@ if stock_input:
             if "retail_lot" not in st.session_state: st.session_state.retail_lot = 50
             if "large_lot" not in st.session_state: st.session_state.large_lot = 400
 
-            def clamp_retail():
-                if st.session_state.retail_lot > st.session_state.large_lot: st.session_state.retail_lot = st.session_state.large_lot
-            def clamp_large():
-                if st.session_state.large_lot < st.session_state.retail_lot: st.session_state.large_lot = st.session_state.retail_lot
+            # ✅ [FIX] 動態過濾選項 (UI 防呆)
+            # 大戶選項：必須 > 散戶
+            valid_large_opts = [x for x in LOT_CHOICES if x > st.session_state.retail_lot]
+            if not valid_large_opts: valid_large_opts = [1000] # Fallback
+            
+            # 散戶選項：必須 < 大戶
+            valid_retail_opts = [x for x in LOT_CHOICES if x < st.session_state.large_lot]
+            if not valid_retail_opts: valid_retail_opts = [10] # Fallback
 
             c1, c2 = st.columns(2)
-            with c1: st.selectbox("大戶持股標準 (>= 張)", LOT_CHOICES, key="large_lot", on_change=clamp_large)
-            with c2: st.selectbox("散戶持股標準 (< 張)", LOT_CHOICES, key="retail_lot", on_change=clamp_retail)
+            with c1:
+                # 若當前值不在有效列表內，重置為列表第一個
+                current_large = st.session_state.large_lot
+                if current_large not in valid_large_opts: current_large = valid_large_opts[0]
+                
+                st.session_state.large_lot = st.selectbox(
+                    "大戶持股標準 (>= 張)", 
+                    options=valid_large_opts, 
+                    index=valid_large_opts.index(current_large),
+                    key="sb_large"
+                )
+
+            with c2:
+                current_retail = st.session_state.retail_lot
+                if current_retail not in valid_retail_opts: current_retail = valid_retail_opts[0]
+                
+                st.session_state.retail_lot = st.selectbox(
+                    "散戶持股標準 (< 張)", 
+                    options=valid_retail_opts, 
+                    index=valid_retail_opts.index(current_retail),
+                    key="sb_retail"
+                )
 
             # ✅ [FIX] 呼叫正確的函式名稱
             raw_holder_df = get_shareholding_data(stock_input)
@@ -1066,11 +1078,8 @@ if stock_input:
             if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
                 st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
             else:
-                # [DELETED] 移除使用者覺得困惑的折頁 (Expander)
-                
                 # 使用 分級比例表 進行計算
                 df_ratio = raw_holder_df.get("ratio")
-                # [NOTE] 這裡使用 st.session_state.large_lot/retail_lot，當選單改變時會自動重新計算
                 holder_df = process_shareholding_df(df_ratio, st.session_state.large_lot, st.session_state.retail_lot)
                 
                 if holder_df is not None and not holder_df.empty:
@@ -1079,38 +1088,25 @@ if stock_input:
                     display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
                     display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
                     
-                    # 倒序顯示 (最新的在上面)，這會顯示所有抓取到的資料(通常約半年)
+                    # 倒序顯示 (最新的在上面)
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
-                    # ✅ [NEW] 新的樣式函數：根據「增減」欄位來決定「持股(%)」與「增減」欄位的顏色
-                    def style_holdings(row):
-                        large_color = ''
-                        retail_color = ''
-                        # 判斷大戶增減
-                        if pd.notna(row['大戶增減']):
-                            if row['大戶增減'] > 0: large_color = 'color: #ff4b4b; font-weight: bold' # 紅
-                            elif row['大戶增減'] < 0: large_color = 'color: #26a69a; font-weight: bold' # 綠
-                        # 判斷散戶增減
-                        if pd.notna(row['散戶增減']):
-                            if row['散戶增減'] > 0: retail_color = 'color: #ff4b4b; font-weight: bold' # 紅
-                            elif row['散戶增減'] < 0: retail_color = 'color: #26a69a; font-weight: bold' # 綠
-
-                        # 回傳該列對應欄位的樣式
-                        return pd.Series({
-                            '日期': '',
-                            '大戶持股(%)': large_color,
-                            '大戶增減': large_color,
-                            '散戶持股(%)': retail_color,
-                            '散戶增減': retail_color
-                        })
+                    def color_diff(val):
+                        if pd.isna(val): return ''
+                        if val > 0: return 'color: #ff4b4b' 
+                        if val < 0: return 'color: #26a69a'
+                        return ''
 
                     st.markdown("#### 集保戶股權分散表")
-                    # 應用新的 row-wise 樣式
-                    styled_df = display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']].style\
-                        .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減'])\
-                        .apply(style_holdings, axis=1)
-                        
-                    st.dataframe(styled_df, use_container_width=True, height=400)
+                    # ✅ [FIX] hide_index=True 隱藏左側索引
+                    st.dataframe(
+                        display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']]
+                        .style.map(color_diff, subset=['大戶增減', '散戶增減'])
+                        .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
+                        use_container_width=True, 
+                        height=400,
+                        hide_index=True
+                    )
                     
                     chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
                     chart_df['Close'] = chart_df['Close'].ffill()
@@ -1128,9 +1124,10 @@ if stock_input:
                         {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": True, "priceLineVisible": False}} 
                     ]
                     
+                    # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
                     holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
-                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
-                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
+                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
+                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
                     renderLightweightCharts(holder_payload, key="tab5_holder")
