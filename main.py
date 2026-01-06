@@ -126,7 +126,7 @@ def get_stock_name(stock_id):
         return ""
 
 def render_broker_table(df, sum_data, color_hex, title):
-    st.markdown(f"#### {title}")
+    # st.markdown(f"#### {title}") # 移到 tab 內顯示
     
     if "買超" in title:
         label_total = "🔴 合計買超張數"
@@ -672,7 +672,11 @@ if stock_input:
                         "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
                         "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
                         "timeScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": time_visible, "timeVisible": False},
-                        "crosshair": {"mode": 1},
+                        "crosshair": {
+                            "mode": 1,
+                            "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
+                            "horzLine": {"visible": True, "labelVisible": True}
+                        },
                         "height": height,
                     }
                     if scale_mode == "rsi":
@@ -764,15 +768,7 @@ if stock_input:
 
         # ==================== Tab 2: 分點 (前15大 + 單一分點) ====================
         with tab_broker:
-            col1, col2 = st.columns(2)
-            with col1:
-                render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
-            with col2:
-                render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
-            
-            st.markdown("---")
-            
-            # 選擇券商
+            # 選擇券商 (移到最上方)
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
@@ -818,7 +814,6 @@ if stock_input:
             charts_payload_broker = []
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
-            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
             if '買賣超_Final' in plot_df.columns:
@@ -850,6 +845,16 @@ if stock_input:
             
             renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
+            st.markdown("---")
+            
+            # [FIX] 使用 Expander + Tabs 收納排行表格，節省手機空間
+            with st.expander("📊 查看區間前 15 大買賣超排行 (點擊展開)"):
+                t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
+                with t1:
+                    render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
+                with t2:
+                    render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
+
 
         # ==================== Tab 3: 法人 (外資/投信/自營) ====================
         with tab_inst:
@@ -858,8 +863,6 @@ if stock_input:
             inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
-            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
-
             if inst_df is not None:
                 plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
                 cols_to_ffill = ['外資買賣超', '投信買賣超', '自營商買賣超']
@@ -929,8 +932,6 @@ if stock_input:
             margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
-            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
-
             if margin_df is not None:
                 plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
                 plot_df['融資餘額'] = plot_df['融資餘額'].ffill()
