@@ -129,8 +129,6 @@ def get_stock_name(stock_id):
 
 # ✅ [FIX] 確保 render_broker_table 定義在主邏輯之前
 def render_broker_table(df, sum_data, color_hex, title):
-    # st.markdown(f"#### {title}") # 標題已由 Tab 取代
-    
     if "買超" in title:
         label_total = "🔴 合計買超張數"
         label_avg = "🔴 平均買超成本"
@@ -353,7 +351,7 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ [FIX] 將此函式移至最外層，解決 NameError
+# ✅ [FIX] 將 get_real_data_matrix 移到最上方
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
@@ -500,8 +498,9 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
 def _norm_col(x: str) -> str:
     return re.sub(r"\s+", "", str(x)).replace("\u3000", "")
 
+# ✅ [FIX] 函式正名：get_shareholding_data
 @st.cache_data(ttl=60*60*6)
-def get_norway_stockholders_tables(stock_id: str) -> dict:
+def get_shareholding_data(stock_id: str) -> dict:
     url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
@@ -1022,11 +1021,17 @@ if stock_input:
             with c1: st.selectbox("大戶持股標準 (>= 張)", LOT_CHOICES, key="large_lot", on_change=clamp_large)
             with c2: st.selectbox("散戶持股標準 (< 張)", LOT_CHOICES, key="retail_lot", on_change=clamp_retail)
 
+            # ✅ [FIX] 加入原始數據預覽
             raw_holder_df = get_shareholding_data(stock_input)
             
             if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('compare') is None):
                 st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
             else:
+                # 顯示明細表供驗證
+                with st.expander("📄 原始明細表預覽 (點擊展開)"):
+                    if isinstance(raw_holder_df, dict) and raw_holder_df.get("summary") is not None:
+                        st.dataframe(raw_holder_df["summary"].head(), use_container_width=True)
+                
                 df_compare = raw_holder_df.get("compare") if isinstance(raw_holder_df, dict) else raw_holder_df
                 holder_df = process_shareholding_df(df_compare, st.session_state.large_lot, st.session_state.retail_lot)
                 
