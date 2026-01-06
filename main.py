@@ -126,7 +126,7 @@ def get_stock_name(stock_id):
         return ""
 
 def render_broker_table(df, sum_data, color_hex, title):
-    # st.markdown(f"#### {title}") # 移到 tab 內顯示
+    # st.markdown(f"#### {title}") # 標題已由 Tab 取代
     
     if "買超" in title:
         label_total = "🔴 合計買超張數"
@@ -654,6 +654,27 @@ if stock_input:
         # ✅ [Refactor] 使用 Tab 分頁
         tab_kline, tab_broker, tab_inst, tab_margin = st.tabs(["K線", "分點", "法人", "融資券"])
 
+        # 共用 opts (無 title, 右側隱藏)
+        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
+            opts = {
+                "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
+                "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
+                "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
+                "timeScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": time_visible, "timeVisible": False},
+                # ✅ [FIX] Crosshair 樣式：Vertical Line 設為實線，且 visible=True 以貫穿上下
+                "crosshair": {
+                    "mode": 1,
+                    "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
+                    "horzLine": {"visible": True, "labelVisible": True}
+                },
+                "height": height,
+            }
+            if scale_mode == "rsi":
+                opts["rightPriceScale"] = {"visible": False, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0}
+            if title:
+                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
+            return opts
+
         # ==================== Tab 1: K線 (基本技術指標) ====================
         with tab_kline:
             show_bb = st.checkbox("顯示布林通道", value=False)
@@ -664,26 +685,6 @@ if stock_input:
                 plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
                 plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
                 plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-
-                # 共用 opts (無 title, 右側隱藏)
-                def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
-                    opts = {
-                        "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
-                        "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
-                        "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
-                        "timeScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": time_visible, "timeVisible": False},
-                        "crosshair": {
-                            "mode": 1,
-                            "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
-                            "horzLine": {"visible": True, "labelVisible": True}
-                        },
-                        "height": height,
-                    }
-                    if scale_mode == "rsi":
-                        opts["rightPriceScale"] = {"visible": False, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0}
-                    if title:
-                        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
-                    return opts
 
                 # 1. K線 + MA + BB
                 candlestick_data = []
@@ -768,10 +769,20 @@ if stock_input:
 
         # ==================== Tab 2: 分點 (前15大 + 單一分點) ====================
         with tab_broker:
-            # 選擇券商 (移到最上方)
+            # 選擇券商 (移到最上方，避免切換導致重置跳轉)
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
+            
+            # [FIX] 使用 Tabs 取代 Expander，節省空間且直接可見
+            st.markdown("##### 區間前 15 大買賣超排行")
+            t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
+            with t1:
+                render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
+            with t2:
+                render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
+
+            st.markdown("---")
             
             # 準備該券商資料
             merged_df = None
@@ -814,12 +825,14 @@ if stock_input:
             charts_payload_broker = []
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
+            plot_df.index.name = None
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
             if '買賣超_Final' in plot_df.columns:
                 plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
-            # 重複使用 K 線邏輯 (簡化版)
+            # [FIX] 合併 K 線與分點副圖到同一個 charts_payload，確保 Crosshair 貫穿
+            # 1. K線 (主圖)
             candlestick_data = []
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']):
@@ -827,6 +840,7 @@ if stock_input:
             
             charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}}]})
             
+            # 2. 分點買賣超 (副圖)
             if '買賣超_Final' in plot_df.columns:
                 chip_data, chip_cumulative_data = [], []
                 for i, row in plot_df.iterrows():
@@ -843,17 +857,7 @@ if stock_input:
                      {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
             
-            renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
-
-            st.markdown("---")
-            
-            # [FIX] 使用 Expander + Tabs 收納排行表格，節省手機空間
-            with st.expander("📊 查看區間前 15 大買賣超排行 (點擊展開)"):
-                t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
-                with t1:
-                    render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
-                with t2:
-                    render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
+            renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}") # Unique Key based on broker name
 
 
         # ==================== Tab 3: 法人 (外資/投信/自營) ====================
@@ -863,12 +867,14 @@ if stock_input:
             inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
+            plot_df.index.name = None 
+
             if inst_df is not None:
                 plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
                 cols_to_ffill = ['外資買賣超', '投信買賣超', '自營商買賣超']
                 for col in cols_to_ffill:
                     if col in plot_df.columns:
-                        plot_df[col] = plot_df[col].fillna(0) # 單日無數據補0
+                        plot_df[col] = plot_df[col].fillna(0) 
                 # 計算累積
                 plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
                 plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
@@ -932,6 +938,8 @@ if stock_input:
             margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
+            plot_df.index.name = None 
+
             if margin_df is not None:
                 plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
                 plot_df['融資餘額'] = plot_df['融資餘額'].ffill()
