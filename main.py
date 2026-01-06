@@ -1109,17 +1109,31 @@ if stock_input:
                     # 倒序顯示 (最新的在上面)
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
-                    def color_diff(val):
-                        if pd.isna(val): return ''
-                        if val > 0: return 'color: #ff4b4b' 
-                        if val < 0: return 'color: #26a69a'
-                        return ''
+                    # ✅ [FIX] 修正樣式邏輯：根據增減欄位來決定持股欄位的顏色
+                    def highlight_changes(df):
+                        attr = pd.DataFrame('', index=df.index, columns=df.columns)
+                        c_up = f'color: {COLOR_UP}'   # 紅
+                        c_down = f'color: {COLOR_DOWN}' # 綠
+                        
+                        # 大戶邏輯
+                        mask_up = df['大戶增減'] > 0
+                        mask_down = df['大戶增減'] < 0
+                        attr.loc[mask_up, ['大戶持股(%)', '大戶增減']] = c_up
+                        attr.loc[mask_down, ['大戶持股(%)', '大戶增減']] = c_down
+                        
+                        # 散戶邏輯
+                        mask_up_r = df['散戶增減'] > 0
+                        mask_down_r = df['散戶增減'] < 0
+                        attr.loc[mask_up_r, ['散戶持股(%)', '散戶增減']] = c_up
+                        attr.loc[mask_down_r, ['散戶持股(%)', '散戶增減']] = c_down
+                        
+                        return attr
 
                     st.markdown("#### 集保戶股權分散表")
                     # ✅ [FIX] hide_index=True 隱藏左側索引
                     st.dataframe(
                         display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']]
-                        .style.map(color_diff, subset=['大戶增減', '散戶增減'])
+                        .style.apply(highlight_changes, axis=None) # 全表套用樣式函式
                         .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
                         use_container_width=True, 
                         height=400,
