@@ -343,30 +343,30 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ [FIX] 穩健版集保戶股權分散表爬蟲
+# ✅ [FIX] 改用 Norway 網站的集保分級表
 @st.cache_data(persist="disk", ttl=604800)
 def get_shareholding_data(stock_id):
     driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcj/zcj.djhtm?a={stock_id}"
+    # 目標改為 StockHoldersLevel.aspx
+    url = f"https://norway.twsthr.info/StockHoldersLevel.aspx?STOCK={stock_id}"
     try:
         driver.get(url)
-        # 等待表格出現，或直接sleep等載入
         time.sleep(1.5)
         
         html = driver.page_source
         tables = pd.read_html(StringIO(html))
         
-        # [FIX] 識別邏輯：不依賴 "持股分級" 標題，而是找第一欄像分級數據的表格
-        def looks_like_holder_table(df: pd.DataFrame) -> bool:
+        def looks_like_level_table(df: pd.DataFrame) -> bool:
             if df.shape[1] < 2: return False
-            col0 = df.iloc[:, 0].astype(str).str.replace(",", "", regex=False)
-            # 檢查第一欄是否含有 "數字-數字" 或 "以上"
-            hit = col0.str.contains(r"(\d+\s*[-~～]\s*\d+)|以上", regex=True, na=False).mean()
-            return hit > 0.25 # 25% 以上符合格式
+            # 檢查第一欄是否有分級文字 (股/張/以上)
+            col0 = df.iloc[:, 0].astype(str)
+            hit = col0.str.contains(r"股|張|以上", regex=True, na=False).sum()
+            return hit > 5 # 至少要有幾列是分級
 
-        cand = [t for t in tables if looks_like_holder_table(t)]
+        cand = [t for t in tables if looks_like_level_table(t)]
         if cand:
-            cand.sort(key=lambda d: d.shape[0], reverse=True) # 取最大張的
+            # 通常最大的那張表就是
+            cand.sort(key=lambda d: d.shape[0] * d.shape[1], reverse=True)
             return cand[0]
             
     except Exception:
@@ -375,98 +375,133 @@ def get_shareholding_data(stock_id):
         driver.quit()
     return None
 
-# ✅ [FIX] 欄位導向的精確解析邏輯
+# ✅ [FIX] 解析 Norway 分級表結構
 def _upper_lots_from_label(label: str) -> int | None:
     s = str(label).replace(" ", "").replace(",", "").replace("股", "")
-    if "以上" in s:
-        return 10**9
-    m = re.search(r"(\d+)\s*[-~～]\s*(\d+)", s)
-    if not m:
-        return None
-    upper_shares = int(m.group(2))
-    return int(math.ceil(upper_shares / 1000.0))
+    if "以上" in s: return 10**9
+    m = re.search(r"(\d+)[-~～](\d+)", s)
+    if not m: return None
+    # 如果單位是股 (1-999)，上界是 999 股 ~= 1 張
+    # 如果單位是張 (1-5)，上界是 5
+    # 這裡簡化：如果是 "股"，回傳 1；如果是張，回傳數字
+    if "股" in str(label):
+        return 1
+    
+    upper = int(m.group(2))
+    return upper
 
 def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
     df = raw_df.copy()
-    if df.empty or df.shape[1] < 2:
-        return None
+    if df.empty: return None
 
-    # 1. 欄位攤平
-    if isinstance(df.columns, pd.MultiIndex):
-        flat_cols = []
-        for a, b in df.columns.tolist():
-            a = "" if a is None else str(a)
-            b = "" if b is None else str(b)
-            flat_cols.append(f"{a}|{b}".strip("|"))
-        df.columns = flat_cols
-    else:
-        df.columns = [str(c) for c in df.columns]
-
-    # 2. 定義分級欄
-    range_col = df.columns[0]
-    df[range_col] = df[range_col].astype(str)
-
-    # 3. 找日期與比例欄
-    ratio_cols = []
-    people_cols = []
+    # Norway 的表頭通常是多層的，或者第一列是日期
+    # 我們嘗試正規化
+    # 假設 Row 0 是日期 (20260102, 20251226...)
+    # Row 1 是欄位 (人數, 張數, 百分比...)
+    # Col 0 是分級 (1-999股, 1-5張...)
     
-    # 掃描欄位，富邦的結構通常是 日期|人數, 日期|股數, 日期|比例
-    # 我們找比例欄位
-    for i, c in enumerate(df.columns):
-        if ("比例" in c) and re.search(r"\d{4}", c):
-            ratio_cols.append((i, c))
+    # 1. 找出日期列
+    date_row_idx = -1
+    for i in range(min(5, len(df))):
+        row_str = df.iloc[i].astype(str).str.cat()
+        if re.search(r"20\d{6}", row_str): # 找 YYYYMMDD
+            date_row_idx = i
+            break
+    
+    if date_row_idx == -1: return None
+
+    # 2. 提取日期與其對應的欄位索引
+    dates = []
+    date_cols = []
+    
+    row_vals = df.iloc[date_row_idx].values
+    for i, val in enumerate(row_vals):
+        d_str = str(val).replace(".0", "")
+        if re.match(r"^20\d{6}$", d_str):
+            # 轉換為 YYYY-MM-DD
+            d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+            dates.append(d_fmt)
+            date_cols.append(i)
+    
+    if not dates: return None
+
+    # 3. 找出分級資料的起始列 (通常在日期列後面 1-2 列)
+    data_start_idx = date_row_idx + 1
+    # 往後找直到看到 "1-999" 或 "1-5"
+    for i in range(data_start_idx, len(df)):
+        val = str(df.iloc[i, 0])
+        if "1-999" in val or "1-5" in val:
+            data_start_idx = i
+            break
             
-    if not ratio_cols: return None
+    # 4. 解析每一列的分級上界
+    rows_map = [] # (upper_limit, row_index)
+    for i in range(data_start_idx, len(df)):
+        label = str(df.iloc[i, 0])
+        upper = _upper_lots_from_label(label)
+        if upper:
+            rows_map.append((upper, i))
 
-    def col_to_datestr(c: str) -> str | None:
-        part = c.split("|")[0]
-        d = part.replace("/", "").replace("-", "")
-        m = re.search(r"(\d{8})", d)
-        if not m: return None
-        d8 = m.group(1)
-        return f"{d8[:4]}-{d8[4:6]}-{d8[6:8]}"
-
-    # 4. 解析張數上界
-    df["_upper_lots"] = df[range_col].apply(_upper_lots_from_label)
-    data_rows = df.dropna(subset=["_upper_lots"]).copy()
-    if data_rows.empty: return None
-
-    # 5. 加總
+    # 5. 彙整數據
     out = []
-    for col_idx, rc in ratio_cols:
-        date_str = col_to_datestr(rc)
-        if not date_str: continue
+    for idx, date_str in enumerate(dates):
+        base_col = date_cols[idx]
+        # Norway 結構：日期下分三欄：人數, 張數, 百分比
+        # 所以 百分比 在 base_col + 2, 人數 在 base_col
+        # 有時候 pd.read_html 會合併儲存格，需要小心
+        # 我們假設相對位置：
+        # Col 0: 人數
+        # Col 1: 張數
+        # Col 2: 百分比
         
-        # 假設人數欄位是比例欄位的前兩欄 (人數, 股數, 比例)
-        people_col_idx = col_idx - 2
+        ratio_col = base_col + 2
+        people_col = base_col
         
-        # 安全取值
-        s_ratio = data_rows.iloc[:, col_idx].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False)
-        s_people = data_rows.iloc[:, people_col_idx].astype(str).str.replace(",", "", regex=False)
+        if ratio_col >= df.shape[1]: continue
 
-        ratio = pd.to_numeric(s_ratio, errors="coerce").fillna(0.0)
-        people = pd.to_numeric(s_people, errors="coerce").fillna(0)
-        
-        upper = data_rows["_upper_lots"].astype(int)
+        large_ratio = 0.0
+        large_people = 0
+        retail_ratio = 0.0
+        retail_people = 0
 
-        large_ratio = ratio[upper >= large_threshold].sum()
-        large_people = people[upper >= large_threshold].sum()
-        
-        retail_ratio = ratio[upper < retail_threshold].sum()
-        retail_people = people[upper < retail_threshold].sum()
+        for upper, row_idx in rows_map:
+            try:
+                r_val = df.iloc[row_idx, ratio_col]
+                p_val = df.iloc[row_idx, people_col]
+                
+                # 清洗數據
+                r = float(str(r_val).replace("%", "").replace(",", "")) if pd.notna(r_val) and str(r_val) != 'nan' else 0.0
+                p = int(str(p_val).replace(",", "")) if pd.notna(p_val) and str(p_val).replace(",","").isdigit() else 0
+                
+                if upper >= large_threshold:
+                    large_ratio += r
+                    large_people += p
+                
+                # 散戶定義：小於門檻 (注意：如果是 1-5張，upper=5，若門檻=5，則不包含)
+                # 題目要求：散戶持股 < 50
+                # 若 upper=5, 5 < 50 (True)
+                # 若 upper=50, 50 < 50 (False) -> 符合
+                if upper < retail_threshold:
+                    retail_ratio += r
+                    retail_people += p
+                elif upper == retail_threshold and "以上" not in str(df.iloc[row_idx, 0]):
+                     # 邊界處理：通常區間是包含上界的，所以 < 門檻 應該不包含等於門檻的區間
+                     pass
+
+            except:
+                continue
 
         out.append({
             "日期": date_str,
             "DateStr": date_str,
-            "大戶持股(%)": round(float(large_ratio), 2),
-            "大戶人數": int(large_people),
-            "散戶持股(%)": round(float(retail_ratio), 2),
-            "散戶人數": int(retail_people)
+            "大戶持股(%)": round(large_ratio, 2),
+            "大戶人數": large_people,
+            "散戶持股(%)": round(retail_ratio, 2),
+            "散戶人數": retail_people
         })
 
     if not out: return None
-    res = pd.DataFrame(out).sort_values("DateStr")
-    return res
+    return pd.DataFrame(out).sort_values("DateStr")
 
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
@@ -895,7 +930,7 @@ if stock_input:
 
         # ==================== Tab 2: 分點 (前15大 + 單一分點) ====================
         with tab_broker:
-            # 選擇券商 (移到最上方，避免切換導致重置跳轉)
+            # ✅ [FIX] 選擇券商置頂，改善跳轉問題
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
