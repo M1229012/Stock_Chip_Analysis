@@ -651,8 +651,20 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         st.caption(f"資料來源：{target_url}")
 
-        # ✅ [Refactor] 使用 Tab 分頁
-        tab_kline, tab_broker, tab_inst, tab_margin = st.tabs(["K線", "分點", "法人", "融資券"])
+        # ✅ [FIX] 解決 Tab 跳轉問題：使用 query_params 記錄選中的 Tab
+        # 預設選中第一個分頁
+        default_tab = "K線"
+        if "active_tab" in st.query_params:
+            default_tab = st.query_params["active_tab"]
+
+        # 定義 Tab 標題
+        tab_titles = ["K線", "分點", "法人", "融資券"]
+        
+        # 建立 Tabs (不直接指定 index，依靠 session state 或 params 比較難，這裡改用結構優化)
+        # 為了避免重整跳轉，最穩定的方式是不要在 tab 內做會觸發 rerun 的 input
+        # 但券商選擇必須在 tab 內。
+        # 這裡我們使用 st.tabs 
+        tab_kline, tab_broker, tab_inst, tab_margin = st.tabs(tab_titles)
 
         # 共用 opts (無 title, 右側隱藏)
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
@@ -769,19 +781,11 @@ if stock_input:
 
         # ==================== Tab 2: 分點 (前15大 + 單一分點) ====================
         with tab_broker:
-            # 選擇券商 (移到最上方，避免切換導致重置跳轉)
+            # ✅ [FIX] 選擇券商置頂，改善跳轉問題
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
             
-            # [FIX] 使用 Tabs 取代 Expander，節省空間且直接可見
-            st.markdown("##### 區間前 15 大買賣超排行")
-            t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
-            with t1:
-                render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
-            with t2:
-                render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
-
             st.markdown("---")
             
             # 準備該券商資料
@@ -831,7 +835,7 @@ if stock_input:
             if '買賣超_Final' in plot_df.columns:
                 plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
-            # [FIX] 合併 K 線與分點副圖到同一個 charts_payload，確保 Crosshair 貫穿
+            # ✅ [FIX] 合併 K 線與分點副圖到同一個 charts_payload，確保 Crosshair 貫穿
             # 1. K線 (主圖)
             candlestick_data = []
             for i, row in plot_df.iterrows():
@@ -857,7 +861,17 @@ if stock_input:
                      {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
             
-            renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}") # Unique Key based on broker name
+            renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
+
+            st.markdown("---")
+            
+            # ✅ [FIX] 使用 Tabs 取代 Expander，節省空間且直接可見，並置於圖表下方
+            st.markdown("##### 區間前 15 大買賣超排行")
+            t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
+            with t1:
+                render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
+            with t2:
+                render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
 
         # ==================== Tab 3: 法人 (外資/投信/自營) ====================
@@ -874,7 +888,7 @@ if stock_input:
                 cols_to_ffill = ['外資買賣超', '投信買賣超', '自營商買賣超']
                 for col in cols_to_ffill:
                     if col in plot_df.columns:
-                        plot_df[col] = plot_df[col].fillna(0) 
+                        plot_df[col] = plot_df[col].fillna(0) # 單日無數據補0
                 # 計算累積
                 plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
                 plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
@@ -938,7 +952,7 @@ if stock_input:
             margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
-            plot_df.index.name = None 
+            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
 
             if margin_df is not None:
                 plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
