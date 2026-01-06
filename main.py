@@ -737,18 +737,20 @@ if stock_input:
 
         # ==================== Tab 1: K線 ====================
         with tab_kline:
-            # ✅ [FIX] 使用折疊選單收納均線按鈕
-            with st.expander("🛠️ 技術指標設定 (MA / BB)", expanded=False):
-                c_ma1, c_ma2, c_ma3, c_ma4 = st.columns(4)
-                c_ma5, c_ma6, c_bb, c_empty = st.columns(4)
-                
-                show_ma5 = c_ma1.checkbox("MA5", value=True)
-                show_ma10 = c_ma2.checkbox("MA10", value=True)
-                show_ma20 = c_ma3.checkbox("MA20", value=True)
-                show_ma60 = c_ma4.checkbox("MA60", value=True)
-                show_ma120 = c_ma5.checkbox("MA120", value=False)
-                show_ma240 = c_ma6.checkbox("MA240", value=False)
-                show_bb = c_bb.checkbox("BB", value=False)
+            # ✅ [FIX] 使用 multiselect 收納均線按鈕
+            selected_mas = st.multiselect(
+                "技術指標選擇 (均線 / 布林)",
+                options=["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"],
+                default=["MA5", "MA10", "MA20", "MA60"]
+            )
+            
+            show_ma5 = "MA5" in selected_mas
+            show_ma10 = "MA10" in selected_mas
+            show_ma20 = "MA20" in selected_mas
+            show_ma60 = "MA60" in selected_mas
+            show_ma120 = "MA120" in selected_mas
+            show_ma240 = "MA240" in selected_mas
+            show_bb = "BB" in selected_mas
             
             if df_price is not None and not df_price.empty:
                 charts_payload = []
