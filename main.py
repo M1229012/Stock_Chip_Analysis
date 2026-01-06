@@ -845,6 +845,8 @@ if stock_input:
             d_hist, d_line = [], []
             margin_long_bal_data, margin_long_diff_data = [], []
             margin_short_bal_data, margin_short_diff_data = [], []
+            margin_long_series = [] # ✅ 初始化
+            margin_short_series = [] # ✅ 初始化
 
             # 1. K線資料
             candlestick_data = []
@@ -1064,9 +1066,6 @@ if stock_input:
                     charts_payload.append({"chart": make_opts(200, "三大法人(合)", False), "series": combined_inst_series})
 
             # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
-            # [FIX START] 顯式初始化 margin_series，避免 NameError
-            margin_long_series = []
-            margin_short_series = []
             
             if show_margin and '融資餘額' in plot_df.columns:
                 for i, row in plot_df.iterrows():
