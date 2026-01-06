@@ -494,119 +494,144 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
     finally:
         driver.quit()
 
-# ✅ [FIX] 使用 requests 爬取 Norway 神秘金字塔 StockHolders.aspx
-def _norm_col(x: str) -> str:
-    return re.sub(r"\s+", "", str(x)).replace("\u3000", "")
-
-# ✅ [FIX] 函式正名：get_shareholding_data
-@st.cache_data(ttl=60*60*6)
-def get_shareholding_data(stock_id: str) -> dict:
+# ✅ [FIX] 使用 Selenium + XPATH 爬取 Norway 神秘金字塔 StockHolders.aspx
+@st.cache_data(persist="disk", ttl=604800)
+def get_shareholding_data(stock_id: str):
+    driver = get_driver()
     url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-
+    
     try:
-        r = requests.get(url, headers=headers, timeout=20)
-        r.raise_for_status()
-        r.encoding = "utf-8"
-
-        dfs = pd.read_html(StringIO(r.text))
-        norm_dfs = []
-        for df in dfs:
-            df = df.copy()
-            df.columns = [_norm_col(c) for c in df.columns]
-            norm_dfs.append(df)
-
-        def has_any_col(df, keywords):
-            cols = " ".join(map(str, df.columns))
-            return all(k in cols for k in keywords)
-
-        summary = next((df for df in norm_dfs if has_any_col(df, ["資料日期", "總股東人數"]) and ("收盤價" in " ".join(df.columns))), None)
-        ratio = next((df for df in norm_dfs if ("資料日期" in df.columns) and any("1000張以上" in c or ("1000" in c and "以上" in c) for c in df.columns)), None)
-        compare = next((df for df in norm_dfs if any("持股張數分級" in str(c) for c in df.columns) or (df.shape[1] > 0 and "持股張數分級" in str(df.columns[0]))), None)
-
-        return {"summary": summary, "ratio": ratio, "compare": compare}
-    except Exception:
-        return {"summary": None, "ratio": None, "compare": None}
-
-# ✅ [FIX] 欄位導向的精確解析邏輯
-def _upper_lots_from_label(label: str) -> int | None:
-    s = str(label).replace(" ", "").replace(",", "").replace("股", "")
-    if "以上" in s: return 10**9
-    m = re.search(r"(\d+)[-~～](\d+)", s)
-    if not m: return None
-    if "股" in str(label): return 1
-    return int(m.group(2))
-
-# ✅ [FIX] 確保此函式在被呼叫前已定義，修復 NameError
-def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
-    df = raw_df.copy()
-    if df.empty: return None
-
-    date_row_idx = -1
-    for i in range(min(5, len(df))):
-        row_str = df.iloc[i].astype(str).str.cat()
-        if re.search(r"20\d{6}", row_str):
-            date_row_idx = i
-            break
-    if date_row_idx == -1: return None
-
-    dates, date_cols = [], []
-    row_vals = df.iloc[date_row_idx].values
-    for i, val in enumerate(row_vals):
-        d_str = str(val).replace(".0", "")
-        if re.match(r"^20\d{6}$", d_str):
-            d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
-            dates.append(d_fmt)
-            date_cols.append(i)
-    if not dates: return None
-
-    data_start_idx = date_row_idx + 1
-    for i in range(data_start_idx, len(df)):
-        val = str(df.iloc[i, 0])
-        if "1-999" in val or "1-5" in val:
-            data_start_idx = i
-            break
+        driver.get(url)
+        # 等待頁面載入
+        time.sleep(2)
+        
+        # 1. 抓取【明細】表格 (Summary Table)
+        # 使用使用者提供的 XPath (明細表格容器)
+        # 目標: .../div[1]/table
+        summary_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[1]/table"
+        summary_df = None
+        try:
+            tbl_summary = driver.find_element(By.XPATH, summary_xpath)
+            summary_df = pd.read_html(StringIO(tbl_summary.get_attribute("outerHTML")))[0]
+        except Exception:
+            pass
             
-    rows_map = []
-    for i in range(data_start_idx, len(df)):
-        label = str(df.iloc[i, 0])
-        upper = _upper_lots_from_label(label)
-        if upper: rows_map.append((upper, i))
+        # 2. 抓取【分級比例】表格 (Ratio Table)
+        # 先點擊【分級比例】頁籤 (li[3])
+        # XPath: .../ul/li[3]/a/span
+        ratio_df = None
+        try:
+            tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
+            driver.execute_script("arguments[0].click();", tab_ratio)
+            time.sleep(1) # 等待切換
+            
+            # 抓取分級比例表格
+            # 目標: .../div[3]/table
+            ratio_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[3]/table"
+            tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
+            ratio_df = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))[0]
+        except Exception:
+            pass
 
+        return {"summary": summary_df, "ratio": ratio_df}
+
+    except Exception:
+        return {"summary": None, "ratio": None}
+    finally:
+        driver.quit()
+
+# ✅ [FIX] 處理分級比例數據
+def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
+    if ratio_df is None or ratio_df.empty: return None
+    
+    df = ratio_df.copy()
+    
+    # 根據用戶提供的資訊，分級比例表的欄位順序固定
+    # Col 2: 資料日期
+    # Col 3: 小於1張
+    # Col 4: 1-5張
+    # ...
+    # Col 17: 1000張以上
+    
+    # 檢查是否至少有這麼多欄
+    if df.shape[1] < 18: return None
+    
+    # 欄位映射 (Index -> 上界張數)
+    # Col 3 (<1) -> 1
+    # Col 4 (1-5) -> 5
+    # Col 5 (5-10) -> 10
+    # ...
+    col_map = {
+        3: 1, 4: 5, 5: 10, 6: 15, 7: 20, 8: 30, 9: 40, 10: 50,
+        11: 100, 12: 200, 13: 400, 14: 600, 15: 800, 16: 1000, 17: 99999999 # 1000以上
+    }
+    
+    # 找出日期欄位索引 (通常是 Col 2，索引為 2)
+    # 我們遍歷每一列，嘗試解析日期
     out = []
-    for idx, date_str in enumerate(dates):
-        base_col = date_cols[idx]
-        ratio_col = base_col + 2
-        people_col = base_col
-        if ratio_col >= df.shape[1]: continue
-
-        large_ratio, large_people = 0.0, 0
-        retail_ratio, retail_people = 0.0, 0
-
-        for upper, row_idx in rows_map:
-            try:
-                r_val = df.iloc[row_idx, ratio_col]
-                p_val = df.iloc[row_idx, people_col]
-                r = float(str(r_val).replace("%", "").replace(",", "")) if pd.notna(r_val) and str(r_val) != 'nan' else 0.0
-                p = int(str(p_val).replace(",", "")) if pd.notna(p_val) and str(p_val).replace(",","").isdigit() else 0
+    
+    # 從資料列開始 (跳過標題，如果 read_html 沒抓對標題)
+    # 假設前幾列可能是標題，找符合 YYYY-MM-DD 或 YYYYMMDD 的
+    for i, row in df.iterrows():
+        try:
+            d_val = str(row.iloc[2]) # 假設日期在第 3 欄
+            d_str = d_val.replace("/", "").replace("-", "")
+            
+            # 簡單驗證日期格式
+            if not re.match(r"^\d{8}$", d_str): continue
+            
+            date_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+            
+            large_ratio = 0.0
+            retail_ratio = 0.0
+            
+            for col_idx, upper in col_map.items():
+                val_str = str(row.iloc[col_idx]).replace("%", "").replace(",", "")
+                val = float(val_str) if val_str != 'nan' else 0.0
                 
-                if upper >= large_threshold:
-                    large_ratio += r
-                    large_people += p
-                if upper < retail_threshold:
-                    retail_ratio += r
-                    retail_people += p
-            except: continue
-
-        out.append({
-            "日期": date_str,
-            "DateStr": date_str,
-            "大戶持股(%)": round(large_ratio, 2),
-            "大戶人數": large_people,
-            "散戶持股(%)": round(retail_ratio, 2),
-            "散戶人數": retail_people
-        })
-
+                # 修正判斷邏輯：使用區間下界來判斷比較準確
+                lower = 0
+                if col_idx == 3: lower = 0
+                elif col_idx == 4: lower = 1
+                elif col_idx == 5: lower = 5
+                elif col_idx == 6: lower = 10
+                elif col_idx == 7: lower = 15
+                elif col_idx == 8: lower = 20
+                elif col_idx == 9: lower = 30
+                elif col_idx == 10: lower = 40
+                elif col_idx == 11: lower = 50
+                elif col_idx == 12: lower = 100
+                elif col_idx == 13: lower = 200
+                elif col_idx == 14: lower = 400
+                elif col_idx == 15: lower = 600
+                elif col_idx == 16: lower = 800
+                elif col_idx == 17: lower = 1000
+                
+                # 散戶條件：持股 < 散戶門檻
+                # 只有當整個區間都在門檻之下才算 (即 上界 <= 門檻)
+                # 但 upper 是 1, 5, 10... 
+                # 例如散戶門檻 10。 <1 (upper 1<=10 ok), 1-5 (upper 5<=10 ok), 5-10 (upper 10<=10 ok)
+                if upper <= retail_threshold:
+                    retail_ratio += val
+                
+                # 大戶條件：持股 >= 大戶門檻
+                # 只有當整個區間都在門檻之上才算 (即 下界 >= 門檻)
+                if lower >= large_threshold:
+                    large_ratio += val
+            
+            out.append({
+                "DateStr": date_fmt,
+                "日期": date_fmt,
+                "大戶持股(%)": round(large_ratio, 2),
+                "散戶持股(%)": round(retail_ratio, 2),
+                # 分級比例表沒有人數，設為 0
+                "大戶人數": 0,
+                "散戶人數": 0
+            })
+            
+        except:
+            continue
+            
     if not out: return None
     return pd.DataFrame(out).sort_values("DateStr")
 
@@ -707,26 +732,8 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         st.caption(f"資料來源：{target_url}")
 
-        # ✅ [FIX] 改用 st.radio 模擬分頁，避免跳回首頁
-        tabs = ["K線", "分點", "法人", "融資券", "大戶"]
-        
-        # 使用 session_state 保存當前分頁
-        if "active_tab" not in st.session_state:
-            st.session_state.active_tab = "K線"
-            
-        # 建立水平 radio
-        selected_tab = st.radio(
-            "請選擇分頁", 
-            tabs, 
-            horizontal=True, 
-            index=tabs.index(st.session_state.active_tab) if st.session_state.active_tab in tabs else 0,
-            key="tab_selector"
-        )
-        
-        # 更新 session_state
-        if selected_tab != st.session_state.active_tab:
-            st.session_state.active_tab = selected_tab
-            # st.rerun() # 可選，通常 radio 本身就會觸發 rerun
+        if "active_tab" in st.query_params: default_tab = st.query_params["active_tab"]
+        tab_kline, tab_broker, tab_inst, tab_margin, tab_holder = st.tabs(["K線", "分點", "法人", "融資券", "大戶"])
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
@@ -748,13 +755,15 @@ if stock_input:
                 "height": height,
             }
             if scale_mode == "rsi":
+                # [FIX] autoScale: True 讓 RSI 也自動縮放 (如果需要的話，但RSI通常固定0-100)
+                # 這裡保持固定以利比較
                 opts["rightPriceScale"] = {"visible": False, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0}
             if title:
                 opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
             return opts
 
-        # ==================== K線 ====================
-        if selected_tab == "K線":
+        # ==================== Tab 1: K線 ====================
+        with tab_kline:
             c_ma1, c_ma2, c_ma3, c_ma4, c_ma5, c_ma6, c_bb = st.columns(7)
             show_ma5 = c_ma1.checkbox("MA5", value=True)
             show_ma10 = c_ma2.checkbox("MA10", value=True)
@@ -785,7 +794,7 @@ if stock_input:
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
 
                 ma_opts = {"lastValueVisible": True, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}}]
+                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": True}}]
                 if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
                 if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                 if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
@@ -840,8 +849,8 @@ if stock_input:
                 
                 renderLightweightCharts(charts_payload, key="tab1_kline")
 
-        # ==================== 分點 ====================
-        elif selected_tab == "分點":
+        # ==================== Tab 2: 分點 ====================
+        with tab_broker:
             brokers_list = list(dict.fromkeys(df_buy['broker'].tolist() + df_sell['broker'].tolist()))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
             st.markdown("---")
@@ -915,8 +924,8 @@ if stock_input:
             with t1: render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
             with t2: render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
-        # ==================== 法人 ====================
-        elif selected_tab == "法人":
+        # ==================== Tab 3: 法人 ====================
+        with tab_inst:
             long_start_date = df_price['DateStr'].iloc[0] 
             long_end_date = df_price['DateStr'].iloc[-1] 
             inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
@@ -973,8 +982,8 @@ if stock_input:
                 ]})
             renderLightweightCharts(charts_payload_inst, key="tab3_inst")
 
-        # ==================== 融資券 ====================
-        elif selected_tab == "融資券":
+        # ==================== Tab 4: 融資券 ====================
+        with tab_margin:
             long_start_date = df_price['DateStr'].iloc[0] 
             long_end_date = df_price['DateStr'].iloc[-1] 
             margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
@@ -1024,22 +1033,46 @@ if stock_input:
                 st.markdown("#### 近 10 日融資融券詳細數據")
                 st.dataframe(margin_df.tail(10).iloc[::-1].reset_index(drop=True), use_container_width=True)
 
-        # ==================== 大戶 (集保分佈) ====================
-        elif selected_tab == "大戶":
+        # ==================== Tab 5: 大戶 (集保分佈) ====================
+        with tab_holder:
             LOT_CHOICES = [10, 50, 100, 200, 400, 600, 800, 1000]
             if "retail_lot" not in st.session_state: st.session_state.retail_lot = 50
             if "large_lot" not in st.session_state: st.session_state.large_lot = 400
 
-            def clamp_retail():
-                if st.session_state.retail_lot > st.session_state.large_lot: st.session_state.retail_lot = st.session_state.large_lot
-            def clamp_large():
-                if st.session_state.large_lot < st.session_state.retail_lot: st.session_state.large_lot = st.session_state.retail_lot
+            # ✅ [FIX] 動態過濾選項 (UI 防呆)
+            # 大戶選項：必須 > 散戶
+            valid_large_opts = [x for x in LOT_CHOICES if x > st.session_state.retail_lot]
+            if not valid_large_opts: valid_large_opts = [1000] # Fallback
+            
+            # 散戶選項：必須 < 大戶
+            valid_retail_opts = [x for x in LOT_CHOICES if x < st.session_state.large_lot]
+            if not valid_retail_opts: valid_retail_opts = [10] # Fallback
 
             c1, c2 = st.columns(2)
-            with c1: st.selectbox("大戶持股標準 (>= 張)", LOT_CHOICES, key="large_lot", on_change=clamp_large)
-            with c2: st.selectbox("散戶持股標準 (< 張)", LOT_CHOICES, key="retail_lot", on_change=clamp_retail)
+            with c1:
+                # 若當前值不在有效列表內，重置為列表第一個
+                current_large = st.session_state.large_lot
+                if current_large not in valid_large_opts: current_large = valid_large_opts[0]
+                
+                st.session_state.large_lot = st.selectbox(
+                    "大戶持股標準 (>= 張)", 
+                    options=valid_large_opts, 
+                    index=valid_large_opts.index(current_large),
+                    key="sb_large"
+                )
 
-            # ✅ [FIX] 呼叫正確的函式名稱，並處理原始明細預覽
+            with c2:
+                current_retail = st.session_state.retail_lot
+                if current_retail not in valid_retail_opts: current_retail = valid_retail_opts[0]
+                
+                st.session_state.retail_lot = st.selectbox(
+                    "散戶持股標準 (< 張)", 
+                    options=valid_retail_opts, 
+                    index=valid_retail_opts.index(current_retail),
+                    key="sb_retail"
+                )
+
+            # ✅ [FIX] 呼叫正確的函式名稱
             raw_holder_df = get_shareholding_data(stock_input)
             
             if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
@@ -1051,9 +1084,11 @@ if stock_input:
                 
                 if holder_df is not None and not holder_df.empty:
                     display_df = holder_df.copy()
+                    # 計算增減 (與前一週比較)
                     display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
                     display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
                     
+                    # 倒序顯示 (最新的在上面)
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
                     def color_diff(val):
@@ -1063,7 +1098,15 @@ if stock_input:
                         return ''
 
                     st.markdown("#### 集保戶股權分散表")
-                    st.dataframe(display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']].style.map(color_diff, subset=['大戶增減', '散戶增減']).format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), use_container_width=True, height=400)
+                    # ✅ [FIX] hide_index=True 隱藏左側索引
+                    st.dataframe(
+                        display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']]
+                        .style.map(color_diff, subset=['大戶增減', '散戶增減'])
+                        .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
+                        use_container_width=True, 
+                        height=400,
+                        hide_index=True
+                    )
                     
                     chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
                     chart_df['Close'] = chart_df['Close'].ffill()
@@ -1081,9 +1124,10 @@ if stock_input:
                         {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": True, "priceLineVisible": False}} 
                     ]
                     
+                    # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
                     holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
-                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
-                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
+                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
+                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
                     renderLightweightCharts(holder_payload, key="tab5_holder")
