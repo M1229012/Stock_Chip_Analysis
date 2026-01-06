@@ -674,6 +674,7 @@ def get_stock_name(stock_id):
 
 # ================= 4. 介面邏輯 =================
 
+# ✅ [FIX] 移除標題中的 (TradingView 風格)
 st.title(f"📊 籌碼K線")
 
 tz = pytz.timezone('Asia/Taipei')
@@ -945,6 +946,9 @@ if stock_input:
                 plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
                 plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
                 plot_df['cum_dealer'] = plot_df['自營商買賣超'].cumsum()
+                # ✅ [NEW] 計算三大法人合計買賣超 與 累積
+                plot_df['total_inst'] = plot_df['外資買賣超'] + plot_df['投信買賣超'] + plot_df['自營商買賣超']
+                plot_df['cum_total'] = plot_df['total_inst'].cumsum()
 
             charts_payload_inst = []
             candlestick_data = []
@@ -956,18 +960,23 @@ if stock_input:
                 f_hist, f_line = [], []
                 t_hist, t_line = [], []
                 d_hist, d_line = [], []
+                total_line = [] # ✅ [NEW] 合計累積線
                 for i, row in plot_df.iterrows():
                     f_val, f_cum = row['外資買賣超'], row['cum_foreign']
                     t_val, t_cum = row['投信買賣超'], row['cum_trust']
                     d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
+                    total_cum = row['cum_total'] # ✅ [NEW]
+                    
                     f_hist.append({"time": row['DateStr'], "value": float(f_val), "color": COLOR_UP if f_val>0 else COLOR_DOWN})
                     f_line.append({"time": row['DateStr'], "value": float(f_cum)})
                     t_hist.append({"time": row['DateStr'], "value": float(t_val), "color": COLOR_UP if t_val>0 else COLOR_DOWN})
                     t_line.append({"time": row['DateStr'], "value": float(t_cum)})
                     d_hist.append({"time": row['DateStr'], "value": float(d_val), "color": COLOR_UP if d_val>0 else COLOR_DOWN})
                     d_line.append({"time": row['DateStr'], "value": float(d_cum)})
+                    total_line.append({"time": row['DateStr'], "value": float(total_cum)}) # ✅ [NEW]
 
                 charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
+                    {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}}, # ✅ [NEW] 新增白色合計線
                     {"type": "Histogram", "data": f_hist, "options": {"title": "外資", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
                     {"type": "Line", "data": f_line, "options": {"title": "外資累", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
                     {"type": "Histogram", "data": t_hist, "options": {"title": "投信", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": True}},
