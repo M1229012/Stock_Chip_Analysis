@@ -945,171 +945,19 @@ if stock_input:
                     if not pd.isna(val_sb):
                         margin_short_bal_data.append({"time": row['DateStr'], "value": float(val_sb)})
                         
-                    # 融資增減 (Histogram)
+                    # 融資增減 (Histogram) - 使用帶透明度的紅/綠
                     val_md = row.get('融資增減')
                     if not pd.isna(val_md):
-                        color = COLOR_UP if val_md > 0 else (COLOR_DOWN if val_md < 0 else "gray")
+                        # 紅(增)/綠(減) + 透明度
+                        color = 'rgba(239, 83, 80, 0.7)' if val_md > 0 else ('rgba(38, 166, 154, 0.7)' if val_md < 0 else "gray")
                         margin_long_diff_data.append({"time": row['DateStr'], "value": float(val_md), "color": color})
                         
-                    # 融券增減 (Histogram)
+                    # 融券增減 (Histogram) - 使用帶透明度的黃/藍
                     val_sd = row.get('融券增減')
                     if not pd.isna(val_sd):
-                        color = COLOR_UP if val_sd > 0 else (COLOR_DOWN if val_sd < 0 else "gray")
+                        # 黃(增)/藍(減) + 透明度
+                        color = 'rgba(255, 215, 0, 0.7)' if val_sd > 0 else ('rgba(0, 191, 255, 0.7)' if val_sd < 0 else "gray")
                         margin_short_diff_data.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
-
-            # ========= 🚀 改用多 chart 堆疊模式 =========
-            
-            # ✅ 修正：新增 time_visible 參數 和 title (浮水印)
-            def make_opts(height, title=None, time_visible=True):
-                opts = {
-                    "layout": {
-                        "textColor": "white",
-                        "background": {"type": "solid", "color": "#131722"},
-                    },
-                    # ✅ 新增：設定日期格式為台灣慣用 (yyyy年MM月dd日)
-                    "localization": {
-                        "locale": "zh-TW",
-                        "dateFormat": "yyyy年MM月dd日",
-                    },
-                    "grid": {
-                        "vertLines": {"color": "rgba(42, 46, 57, 0.5)"},
-                        "horzLines": {"color": "rgba(42, 46, 57, 0.5)"},
-                    },
-                    "timeScale": {
-                        "borderColor": "rgba(197, 203, 206, 0.8)",
-                        "visible": time_visible, # ✅ 控制時間軸顯示
-                        "timeVisible": False     # ✅ 隱藏十字線標籤中的時間部分 (00:00:00)
-                    },
-                    "crosshair": {"mode": 1},
-                    "height": height,
-                }
-                
-                # ✅ 浮水印設定 (左上角標題)
-                if title:
-                    opts["watermark"] = {
-                        "visible": True,
-                        "fontSize": 18,
-                        "horzAlign": 'left',
-                        "vertAlign": 'top',
-                        "color": 'rgba(255, 255, 255, 0.7)',
-                        "text": title,
-                    }
-                return opts
-
-            charts_payload = []
-
-            # 1. 主圖：K線 + MA + BB (✅ time_visible=True)
-            main_series = [
-                {
-                    "type": "Candlestick",
-                    "data": candlestick_data,
-                    "options": {
-                        "upColor": COLOR_UP,
-                        "downColor": COLOR_DOWN,
-                        "borderUpColor": COLOR_UP,
-                        "borderDownColor": COLOR_DOWN,
-                        "wickUpColor": COLOR_UP,
-                        "wickDownColor": COLOR_DOWN,
-                    },
-                },
-                {"type": "Line", "data": ma5_data,  "options": {**ma_base_options, "color": "orange", "title": "MA5"}},
-                {"type": "Line", "data": ma10_data, "options": {**ma_base_options, "color": "cyan",   "title": "MA10"}},
-                {"type": "Line", "data": ma20_data, "options": {**ma_base_options, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}},
-                {"type": "Line", "data": ma60_data, "options": {**ma_base_options, "color": "lime",   "lineWidth": 2, "title": "MA60"}},
-            ]
-            
-            # 加入布林通道
-            if show_bb:
-                main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_base_options, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB Upper"}})
-                main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_base_options, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB Lower"}})
-
-            charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
-
-            # 2. 副圖：成交量 (✅ time_visible=False)
-            if show_vol:
-                vol_series = [{
-                    "type": "Histogram",
-                    "data": vol_data,
-                    "options": {
-                        "priceFormat": {"type": "volume"},
-                        "priceScaleId": "right",
-                        "title": "Volume",
-                        "priceLineVisible": False,  # ✅ 隱藏水平線
-                        "lastValueVisible": False   # ✅ 隱藏數值標籤
-                    }
-                }]
-                charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
-
-            # 3. 副圖：KD (✅ time_visible=False)
-            if show_kd and k_data:
-                kd_series = [
-                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",         "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                ]
-                charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
-
-            # 4. 副圖：MACD (✅ time_visible=False)
-            if show_macd and dif_data:
-                macd_series = [
-                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                ]
-                charts_payload.append({"chart": make_opts(150, "MACD", False), "series": macd_series})
-
-            # 5. 副圖：分點買賣超 (雙軸) (✅ time_visible=False)
-            if show_chip and chip_data:
-                chip_series = [
-                    {
-                        "type": "Histogram",
-                        "data": chip_data,
-                        "options": {"title": f"{target_broker} 每日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}
-                    },
-                    {
-                        "type": "Line",
-                        "data": chip_cumulative_data,
-                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}
-                    }
-                ]
-                charts_payload.append({"chart": make_opts(200, "分點買賣超", False), "series": chip_series})
-
-            # 6. 副圖：三大法人 (雙軸：單日+累積)
-            if inst_series_data:
-                final_inst_series = []
-                for item in inst_series_data:
-                    # 轉換為 lightweight charts 格式
-                    s_type = item["type"]
-                    s_data = item["data"]
-                    s_title = item["title"]
-                    s_scale = item["scale"]
-                    s_color = item.get("color")
-                    
-                    # ✅ 隱藏水平線
-                    opts = {
-                        "title": s_title, 
-                        "priceScaleId": s_scale,
-                        "priceLineVisible": False,
-                        "lastValueVisible": False
-                    }
-                    if s_color: opts["color"] = s_color
-                    if s_type == "Line": opts["lineWidth"] = 2
-                    
-                    final_inst_series.append({
-                        "type": s_type,
-                        "data": s_data,
-                        "options": opts
-                    })
-                charts_payload.append({"chart": make_opts(200, "三大法人", False), "series": final_inst_series})
-
-            # 7. 副圖：融資融券 (雙軸：增減量 + 累積餘額)
-            if show_margin and (margin_long_bal_data or margin_short_bal_data):
-                margin_series = []
-                
-                # 增減量 (柱狀圖，右軸)
-                if margin_long_diff_data:
-                    margin_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-                if margin_short_diff_data:
-                    margin_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
                 
                 # 累積餘額 (折線圖，左軸)
                 if margin_long_bal_data:
