@@ -1060,36 +1060,57 @@ if stock_input:
             with c1: st.selectbox("大戶持股標準 (>= 張)", LOT_CHOICES, key="large_lot", on_change=clamp_large)
             with c2: st.selectbox("散戶持股標準 (< 張)", LOT_CHOICES, key="retail_lot", on_change=clamp_retail)
 
-            # ✅ [FIX] 呼叫正確的函式名稱，並處理原始明細預覽
+            # ✅ [FIX] 呼叫正確的函式名稱
             raw_holder_df = get_shareholding_data(stock_input)
             
             if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
                 st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
             else:
-                # 顯示明細表供驗證
-                with st.expander("📄 原始明細表預覽 (點擊展開)"):
-                    if isinstance(raw_holder_df, dict) and raw_holder_df.get("summary") is not None:
-                        st.dataframe(raw_holder_df["summary"].head(), use_container_width=True)
+                # [DELETED] 移除使用者覺得困惑的折頁 (Expander)
                 
                 # 使用 分級比例表 進行計算
                 df_ratio = raw_holder_df.get("ratio")
+                # [NOTE] 這裡使用 st.session_state.large_lot/retail_lot，當選單改變時會自動重新計算
                 holder_df = process_shareholding_df(df_ratio, st.session_state.large_lot, st.session_state.retail_lot)
                 
                 if holder_df is not None and not holder_df.empty:
                     display_df = holder_df.copy()
+                    # 計算增減 (與前一週比較)
                     display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
                     display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
                     
+                    # 倒序顯示 (最新的在上面)，這會顯示所有抓取到的資料(通常約半年)
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
-                    def color_diff(val):
-                        if pd.isna(val): return ''
-                        if val > 0: return 'color: #ff4b4b' 
-                        if val < 0: return 'color: #26a69a'
-                        return ''
+                    # ✅ [NEW] 新的樣式函數：根據「增減」欄位來決定「持股(%)」與「增減」欄位的顏色
+                    def style_holdings(row):
+                        large_color = ''
+                        retail_color = ''
+                        # 判斷大戶增減
+                        if pd.notna(row['大戶增減']):
+                            if row['大戶增減'] > 0: large_color = 'color: #ff4b4b; font-weight: bold' # 紅
+                            elif row['大戶增減'] < 0: large_color = 'color: #26a69a; font-weight: bold' # 綠
+                        # 判斷散戶增減
+                        if pd.notna(row['散戶增減']):
+                            if row['散戶增減'] > 0: retail_color = 'color: #ff4b4b; font-weight: bold' # 紅
+                            elif row['散戶增減'] < 0: retail_color = 'color: #26a69a; font-weight: bold' # 綠
+
+                        # 回傳該列對應欄位的樣式
+                        return pd.Series({
+                            '日期': '',
+                            '大戶持股(%)': large_color,
+                            '大戶增減': large_color,
+                            '散戶持股(%)': retail_color,
+                            '散戶增減': retail_color
+                        })
 
                     st.markdown("#### 集保戶股權分散表")
-                    st.dataframe(display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']].style.map(color_diff, subset=['大戶增減', '散戶增減']).format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), use_container_width=True, height=400)
+                    # 應用新的 row-wise 樣式
+                    styled_df = display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']].style\
+                        .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減'])\
+                        .apply(style_holdings, axis=1)
+                        
+                    st.dataframe(styled_df, use_container_width=True, height=400)
                     
                     chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
                     chart_df['Close'] = chart_df['Close'].ffill()
