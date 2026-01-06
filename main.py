@@ -350,8 +350,8 @@ def get_shareholding_data(stock_id):
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcj/zcj.djhtm?a={stock_id}"
     try:
         driver.get(url)
-        # 等待更穩定的方式 (時間延遲)
-        time.sleep(1.2)
+        # 等待表格出現，或直接sleep等載入
+        time.sleep(1.5)
         
         html = driver.page_source
         tables = pd.read_html(StringIO(html))
@@ -408,11 +408,14 @@ def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_t
 
     # 3. 找日期與比例欄
     ratio_cols = []
-    for c in df.columns[1:]:
-        # 富邦常見格式：包含 "比例" 且有年份數字
+    people_cols = []
+    
+    # 掃描欄位，富邦的結構通常是 日期|人數, 日期|股數, 日期|比例
+    # 我們找比例欄位
+    for i, c in enumerate(df.columns):
         if ("比例" in c) and re.search(r"\d{4}", c):
-            ratio_cols.append(c)
-
+            ratio_cols.append((i, c))
+            
     if not ratio_cols: return None
 
     def col_to_datestr(c: str) -> str | None:
@@ -430,22 +433,35 @@ def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_t
 
     # 5. 加總
     out = []
-    for rc in ratio_cols:
+    for col_idx, rc in ratio_cols:
         date_str = col_to_datestr(rc)
         if not date_str: continue
+        
+        # 假設人數欄位是比例欄位的前兩欄 (人數, 股數, 比例)
+        people_col_idx = col_idx - 2
+        
+        # 安全取值
+        s_ratio = data_rows.iloc[:, col_idx].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False)
+        s_people = data_rows.iloc[:, people_col_idx].astype(str).str.replace(",", "", regex=False)
 
-        s_ratio = data_rows[rc].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False)
         ratio = pd.to_numeric(s_ratio, errors="coerce").fillna(0.0)
+        people = pd.to_numeric(s_people, errors="coerce").fillna(0)
+        
         upper = data_rows["_upper_lots"].astype(int)
 
         large_ratio = ratio[upper >= large_threshold].sum()
-        retail_ratio = ratio[upper < retail_threshold].sum() # 注意：題目要求 <, 這裡用 <
+        large_people = people[upper >= large_threshold].sum()
+        
+        retail_ratio = ratio[upper < retail_threshold].sum()
+        retail_people = people[upper < retail_threshold].sum()
 
         out.append({
             "日期": date_str,
             "DateStr": date_str,
             "大戶持股(%)": round(float(large_ratio), 2),
+            "大戶人數": int(large_people),
             "散戶持股(%)": round(float(retail_ratio), 2),
+            "散戶人數": int(retail_people)
         })
 
     if not out: return None
