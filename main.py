@@ -661,6 +661,7 @@ if stock_input:
             if df_price is not None and not df_price.empty:
                 charts_payload = []
                 plot_df = df_price.copy()
+                plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
                 plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
                 plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
@@ -817,6 +818,7 @@ if stock_input:
             charts_payload_broker = []
             plot_df = merged_df if merged_df is not None else df_price
             plot_df = plot_df.copy()
+            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
             plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
             plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
             if '買賣超_Final' in plot_df.columns:
@@ -856,6 +858,8 @@ if stock_input:
             inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
+            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
+
             if inst_df is not None:
                 plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
                 cols_to_ffill = ['外資買賣超', '投信買賣超', '自營商買賣超']
@@ -925,6 +929,8 @@ if stock_input:
             margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
             
             plot_df = df_price.copy()
+            plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
+
             if margin_df is not None:
                 plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
                 plot_df['融資餘額'] = plot_df['融資餘額'].ffill()
