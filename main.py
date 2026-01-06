@@ -498,37 +498,67 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
 def _norm_col(x: str) -> str:
     return re.sub(r"\s+", "", str(x)).replace("\u3000", "")
 
-# ✅ [FIX] 函式正名：get_shareholding_data
-@st.cache_data(ttl=60*60*6)
+# ✅ [FIX] 改用 Selenium 爬取 Norway 神秘金字塔，並加入分頁點擊邏輯
+@st.cache_data(ttl=21600)
 def get_shareholding_data(stock_id: str) -> dict:
+    driver = get_driver()
     url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-
+    
+    # 定義分級比例分頁的 XPATH
+    xpath_ratio_tab = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span"
+    
     try:
-        r = requests.get(url, headers=headers, timeout=20)
-        r.raise_for_status()
-        r.encoding = "utf-8"
+        driver.get(url)
+        
+        # 1. 等待頁面載入並抓取「明細」分頁 (預設顯示，含總股東人數、大戶數等)
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, "//table"))
+            )
+        except:
+            time.sleep(2)
 
-        dfs = pd.read_html(StringIO(r.text))
-        norm_dfs = []
-        for df in dfs:
-            df = df.copy()
-            df.columns = [_norm_col(c) for c in df.columns]
-            norm_dfs.append(df)
+        html_summary = driver.page_source
+        dfs_summary = pd.read_html(StringIO(html_summary))
+        
+        # 篩選出含有 "總股東人數" 或 "資料日期" 的表格
+        summary_df = None
+        for df in dfs_summary:
+            # 清洗欄位名稱以利比對
+            clean_cols = "".join([str(c) for c in df.columns])
+            if "總股東人數" in clean_cols or "資料日期" in clean_cols:
+                df.columns = [_norm_col(c) for c in df.columns]
+                summary_df = df
+                break
+        
+        # 2. 模擬點擊「分級比例」分頁 (抓取 1-999, 1-5張...等分佈)
+        try:
+            tab_btn = driver.find_element(By.XPATH, xpath_ratio_tab)
+            driver.execute_script("arguments[0].click();", tab_btn) # 使用 JS 點擊較穩定
+            time.sleep(2) # 等待 AJAX 表格切換
+        except Exception as e:
+            print(f"分級比例分頁點擊失敗: {e}")
 
-        def has_any_col(df, keywords):
-            cols = " ".join(map(str, df.columns))
-            return all(k in cols for k in keywords)
+        # 3. 抓取切換後的頁面 (包含分級比例表)
+        html_ratio = driver.page_source
+        dfs_ratio = pd.read_html(StringIO(html_ratio))
+        
+        ratio_df = None
+        for df in dfs_ratio:
+            clean_cols = "".join([str(c) for c in df.columns])
+            # 辨識分級表的特徵
+            if "1-999" in clean_cols or "1000張以上" in clean_cols:
+                df.columns = [_norm_col(c) for c in df.columns]
+                ratio_df = df
+                break
+        
+        return {"summary": summary_df, "ratio": ratio_df}
 
-        # 1. 明細表 (含 資料日期, 總股東人數, 收盤價)
-        summary = next((df for df in norm_dfs if has_any_col(df, ["資料日期", "總股東人數"]) and ("收盤價" in " ".join(df.columns))), None)
-
-        # 2. 分級比例表 (含 資料日期, 1000張以上)
-        ratio = next((df for df in norm_dfs if ("資料日期" in df.columns) and any("1000張以上" in c or ("1000" in c and "以上" in c) for c in df.columns)), None)
-
-        return {"summary": summary, "ratio": ratio}
-    except Exception:
+    except Exception as e:
+        print(f"Norway scraping error: {e}")
         return {"summary": None, "ratio": None}
+    finally:
+        driver.quit()
 
 # ✅ [FIX] 欄位導向的精確解析邏輯
 def _upper_lots_from_label(label: str) -> int | None:
@@ -946,6 +976,7 @@ if stock_input:
                 t_hist, t_line = [], []
                 d_hist, d_line = [], []
                 for i, row in plot_df.iterrows():
+                    val = row['外資買賣超']
                     f_val, f_cum = row['外資買賣超'], row['cum_foreign']
                     t_val, t_cum = row['投信買賣超'], row['cum_trust']
                     d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
