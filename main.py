@@ -93,13 +93,13 @@ COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
 
-# ✅ 優化：建立完整的股票清單 (代號 + 名稱)
+# ✅ 獲取所有股票選單 (代號 + 名稱)
 @st.cache_data
 def get_all_stock_options():
     stock_options = []
-    # 使用 twstock 內建的代碼表，不需要連接外部 Excel
+    # 使用 twstock 內建代碼表
     for code, info in twstock.codes.items():
-        if info.type == "股票": # 只包含股票，排除 ETF 或其他
+        if info.type == "股票": 
             stock_options.append(f"{code} {info.name}")
     return stock_options
 
@@ -341,7 +341,202 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 修改：加入 refresh_nonce 參數並優化邏輯
+@st.cache_data(persist="disk", ttl=604800)
+def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
+    driver = get_driver()
+    base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
+    url = f"{base_url}?a={stock_id}&e={start_date}&f={end_date}"
+
+    try:
+        driver.get(url)
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '買超券商')]"))
+            )
+        except:
+            return None, None, None, None, None, url
+
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html), match="買超券商")
+        if not tables:
+            return None, None, None, None, None, url
+        df = tables[0]
+        
+        header_row = -1
+        for i, row in df.iterrows():
+            row_str = row.astype(str).values
+            if "買超券商" in row_str and "賣超券商" in row_str:
+                header_row = i
+                break
+        if header_row == -1:
+            return None, None, None, None, None, url
+
+        broker_info = {}
+        try:
+            links = driver.find_elements(By.XPATH, "//table//a[contains(@href, 'zco0/zco0.djhtm')]")
+            for link in links:
+                name = normalize_name(link.text)
+                href = link.get_attribute('href')
+                if name and href:
+                    parsed = urlparse(href)
+                    params = parse_qs(parsed.query)
+                    if 'b' in params and 'BHID' in params:
+                        broker_info[name] = {
+                            'b': params['b'][0],
+                            'BHID': params['BHID'][0]
+                        }
+        except:
+            pass
+
+        sum_buy = {"total": "0", "avg": "0"}
+        sum_sell = {"total": "0", "avg": "0"}
+        
+        try:
+            total_buy_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[22]/td[2]")
+            sum_buy['total'] = total_buy_elem.text.strip()
+            
+            avg_buy_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[23]/td[2]")
+            sum_buy['avg'] = avg_buy_elem.text.strip()
+
+            total_sell_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[22]/td[4]")
+            sum_sell['total'] = total_sell_elem.text.strip()
+            
+            avg_sell_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[23]/td[4]")
+            sum_sell['avg'] = avg_sell_elem.text.strip()
+        except Exception:
+            pass
+
+        df_clean = df.iloc[header_row+1:].copy()
+        df_buy = df_clean.iloc[:, [0, 1, 2, 3, 4]].copy()
+        df_buy.columns = ['broker', 'buy', 'sell', 'net', 'pct']
+        df_sell = df_clean.iloc[:, [5, 6, 7, 8, 9]].copy()
+        df_sell.columns = ['broker', 'buy', 'sell', 'net', 'pct']
+
+        def clean_sub_df(d):
+            d = d.dropna(subset=['broker'])
+            mask = d['broker'].astype(str).str.contains("合計|平均|買超券商|賣超券商", na=False)
+            d = d[~mask]
+            for col in ['buy', 'sell', 'net']:
+                d[col] = d[col].astype(str).str.replace(',', '', regex=False).str.replace('+', '', regex=False).str.replace('nan', '', regex=False)
+                d[col] = pd.to_numeric(d[col], errors='coerce').fillna(0).astype(int)
+            return d
+
+        df_buy = clean_sub_df(df_buy)
+        df_sell = clean_sub_df(df_sell)
+        df_buy = df_buy[df_buy['net'] > 0].sort_values('net', ascending=False).head(15).reset_index(drop=True)
+        df_sell['abs_net'] = df_sell['net'].abs()
+        df_sell = df_sell.sort_values('abs_net', ascending=False).head(15).drop(columns=['abs_net']).reset_index(drop=True)
+
+        return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
+    except:
+        return None, None, None, None, None, url
+    finally:
+        driver.quit()
+
+@st.cache_data(persist="disk", ttl=604800)
+def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
+    BHID, b, c_val = broker_key
+    driver = get_driver()
+    base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
+    target_url = (f"{base_url}?A={stock_id}"
+                  f"&BHID={BHID}"
+                  f"&b={b}"
+                  f"&C={c_val}"
+                  f"&D={start_date}"
+                  f"&E={end_date}"
+                  f"&ver=V3")
+
+    table_xpath = "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[6]/td/table"
+
+    try:
+        driver.get(target_url)
+        all_dfs = []
+        page_count = 0
+        max_pages = 60
+        
+        while page_count < max_pages:
+            try:
+                WebDriverWait(driver, 3).until(
+                    EC.presence_of_element_located((By.XPATH, table_xpath))
+                )
+            except:
+                break
+
+            try:
+                target_table = driver.find_element(By.XPATH, table_xpath)
+                table_html = target_table.get_attribute('outerHTML')
+                tables = pd.read_html(StringIO(table_html))
+                current_df = tables[0] if tables else None
+            except:
+                html = driver.page_source
+                tables = pd.read_html(StringIO(html), match="日期")
+                current_df = tables[0] if tables else None
+
+            if current_df is not None:
+                all_dfs.append(current_df)
+            
+            try:
+                next_links = driver.find_elements(By.XPATH, "//a[contains(text(), '下一頁')]")
+                if next_links and next_links[0].is_enabled():
+                    next_links[0].click()
+                    time.sleep(0.5) 
+                    page_count += 1
+                else:
+                    break 
+            except:
+                break
+
+        if not all_dfs:
+            return None, target_url
+
+        df = pd.concat(all_dfs, ignore_index=True)
+        df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
+        
+        if '買賣超' not in df.columns and len(df.columns) >= 4:
+            df = df.iloc[:, :4]
+            df.columns = ['日期', '買進', '賣出', '買賣超']
+            
+        required = ['日期', '買進', '賣出', '買賣超']
+        if not all(c in df.columns for c in required):
+            return None, target_url
+
+        df = df[df['日期'] != '日期']
+        
+        for col in ['買進', '賣出', '買賣超']:
+             df[col] = (df[col].astype(str)
+                        .str.replace(',', '', regex=False)
+                        .str.replace('+', '', regex=False)
+                        .str.replace('nan', '', regex=False))
+             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+        df['買賣超_Calc'] = df['買進'] - df['賣出']
+
+        def parse_date(d_str):
+            s = str(d_str).strip()
+            parts = re.split(r'[/-]', s)
+            if len(parts) == 3:
+                y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+                if y < 1911: y += 1911
+                return f"{y:04d}-{m:02d}-{d:02d}"
+            elif len(parts) == 2:
+                m, d = int(parts[0]), int(parts[1])
+                now = datetime.now()
+                y = now.year
+                if m > now.month + 2: y -= 1
+                return f"{y:04d}-{m:02d}-{d:02d}"
+            return None
+
+        df['DateStr'] = df['日期'].apply(parse_date)
+        df = df.dropna(subset=['DateStr'])
+        df = df.sort_values('DateStr', ascending=True)
+        
+        return df, target_url
+        
+    except Exception:
+        return None, target_url
+    finally:
+        driver.quit()
+
 @st.cache_data(ttl=21600)
 def get_stock_price(stock_id, refresh_nonce=0):
     # 定義要嘗試的後綴順序
