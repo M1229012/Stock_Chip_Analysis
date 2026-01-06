@@ -90,12 +90,12 @@ st.markdown("""
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ================= 2. 輔助函式與爬蟲 (全部移到最上方以防 NameError) =================
+# ================= 2. 輔助函式 =================
 
 def normalize_name(name):
     return str(name).strip().replace(" ", "").replace("　", "")
 
-# 共用日期解析函式
+# ✅ [Refactor] 共用日期解析函式
 def is_roc_date(s: str) -> bool:
     return re.match(r"\d{2,3}/\d{1,2}/\d{1,2}", str(s).strip()) is not None
 
@@ -108,6 +108,125 @@ def roc_to_datestr(d_str: str) -> str | None:
     m = int(parts[1])
     d = int(parts[2]) if len(parts) > 2 else 1
     return f"{y:04d}-{m:02d}-{d:02d}"
+
+# ✅ 獲取所有股票選單 (代號 + 名稱)
+@st.cache_data
+def get_all_stock_options():
+    stock_options = []
+    # 使用 twstock 內建代碼表
+    for code, info in twstock.codes.items():
+        if info.type == "股票": 
+            stock_options.append(f"{code} {info.name}")
+    return stock_options
+
+def get_stock_name(stock_id):
+    try:
+        if stock_id in twstock.codes:
+            return twstock.codes[stock_id].name
+        return ""
+    except:
+        return ""
+
+# ✅ [FIX] 確保 render_broker_table 定義在主邏輯之前
+def render_broker_table(df, sum_data, color_hex, title):
+    # st.markdown(f"#### {title}") # 標題已由 Tab 取代
+    
+    if "買超" in title:
+        label_total = "🔴 合計買超張數"
+        label_avg = "🔴 平均買超成本"
+    else:
+        label_total = "🟢 合計賣超張數"
+        label_avg = "🟢 平均賣超成本"
+
+    full_config = {
+        "broker": "券商分點",
+        "buy": st.column_config.NumberColumn("買進", format="%d"),
+        "sell": st.column_config.NumberColumn("賣出", format="%d"),
+        "net": st.column_config.NumberColumn("買賣超", format="%d"),
+        "pct": "佔比"
+    }
+    
+    st.dataframe(
+        df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
+        use_container_width=True, height=500, hide_index=True, column_config=full_config
+    )
+    
+    st.markdown(f"""
+    <div class="metric-container" style="border-left: 5px solid {color_hex};">
+        <div class="metric-item">
+            <div class="metric-label">{label_total}</div>
+            <div class="metric-value" style="color: {color_hex};">{sum_data['total']}</div>
+        </div>
+        <div class="metric-item">
+            <div class="metric-label">{label_avg}</div>
+            <div class="metric-value">{sum_data['avg']}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ✅ 輔助函式：計算 KD, MACD, BB, RSI, MA
+def calculate_technical_indicators(df):
+    df = df.copy()
+    
+    # 1. 布林通道
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
+    df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
+
+    # 2. 計算 KD (9, 3, 3)
+    rsv_period = 9
+    df['9_High'] = df['High'].rolling(window=rsv_period).max()
+    df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
+    df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
+    df['RSV'] = df['RSV'].fillna(50)
+    
+    k_list = []
+    d_list = []
+    k_prev = 50
+    d_prev = 50
+    for rsv in df['RSV']:
+        if pd.isna(rsv):
+            k_now = k_prev
+            d_now = d_prev
+        else:
+            k_now = (2/3) * k_prev + (1/3) * rsv
+            d_now = (2/3) * d_prev + (1/3) * k_now
+        k_list.append(k_now)
+        d_list.append(d_now)
+        k_prev = k_now
+        d_prev = d_now
+        
+    df['K'] = k_list
+    df['D'] = d_list
+
+    # 3. 計算 MACD (12, 26, 9)
+    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['DIF'] = exp12 - exp26
+    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = 2 * (df['DIF'] - df['DEA'])
+
+    # 4. [NEW] 計算 RSI (6日)
+    delta = df['Close'].diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ema_up = up.ewm(com=5, adjust=False).mean() # com=5 means span=6
+    ema_down = down.ewm(com=5, adjust=False).mean()
+    rs = ema_up / ema_down
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # 5. [NEW] 計算更多均線
+    df['MA5'] = df['Close'].rolling(window=5).mean()
+    df['MA10'] = df['Close'].rolling(window=10).mean()
+    df['MA20'] = df['Close'].rolling(window=20).mean()
+    df['MA60'] = df['Close'].rolling(window=60).mean()
+    df['MA120'] = df['Close'].rolling(window=120).mean()
+    df['MA240'] = df['Close'].rolling(window=240).mean()
+    
+    return df
+
+# ================= 3. 爬蟲核心 =================
 
 @st.cache_resource
 def get_driver_path():
@@ -135,77 +254,24 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ 計算指標
-def calculate_technical_indicators(df):
-    df = df.copy()
-    
-    # 布林通道
-    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
-    df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
-
-    # KD
-    rsv_period = 9
-    df['9_High'] = df['High'].rolling(window=rsv_period).max()
-    df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
-    df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
-    df['RSV'] = df['RSV'].fillna(50)
-    
-    k_list, d_list = [], []
-    k_prev, d_prev = 50, 50
-    for rsv in df['RSV']:
-        if pd.isna(rsv):
-            k_now, d_now = k_prev, d_prev
-        else:
-            k_now = (2/3) * k_prev + (1/3) * rsv
-            d_now = (2/3) * d_prev + (1/3) * k_now
-        k_list.append(k_now)
-        d_list.append(d_now)
-        k_prev, d_prev = k_now, d_now
-        
-    df['K'] = k_list
-    df['D'] = d_list
-
-    # MACD
-    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['DIF'] = exp12 - exp26
-    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = 2 * (df['DIF'] - df['DEA'])
-
-    # RSI (6日)
-    delta = df['Close'].diff()
-    up = delta.clip(lower=0)
-    down = -1 * delta.clip(upper=0)
-    ema_up = up.ewm(com=5, adjust=False).mean()
-    ema_down = down.ewm(com=5, adjust=False).mean()
-    rs = ema_up / ema_down
-    df['RSI'] = 100 - (100 / (1 + rs))
-
-    # MA
-    df['MA5'] = df['Close'].rolling(window=5).mean()
-    df['MA10'] = df['Close'].rolling(window=10).mean()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['MA120'] = df['Close'].rolling(window=120).mean()
-    df['MA240'] = df['Close'].rolling(window=240).mean()
-    
-    return df
-
 def calculate_date_range(stock_id, days):
     try:
         adj_days = days
-        if days >= 120: adj_days = days - 1
+        if days >= 120:
+            adj_days = days - 1
+            
         ticker = f"{stock_id}.TW"
         df = yf.Ticker(ticker).history(period=f"{max(adj_days + 60, 200)}d")
+        
         if df.empty:
             ticker = f"{stock_id}.TWO"
             df = yf.Ticker(ticker).history(period=f"{max(adj_days + 60, 200)}d")
+            
         if df.empty:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=adj_days * 1.5)
             return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+            
         df_target = df.tail(adj_days)
         start_date = df_target.index[0].strftime('%Y-%m-%d')
         end_date = df_target.index[-1].strftime('%Y-%m-%d')
@@ -214,6 +280,78 @@ def calculate_date_range(stock_id, days):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+# ✅ 爬取三大法人資料
+@st.cache_data(persist="disk", ttl=21600)
+def get_institutional_data(stock_id, start_date, end_date):
+    driver = get_driver()
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html))
+        
+        target_df = None
+        for df in tables:
+            if df.astype(str).apply(lambda x: x.str.contains('外資買賣超', na=False)).any().any():
+                target_df = df
+                break
+        
+        if target_df is not None:
+            if len(target_df.columns) >= 4:
+                clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
+                clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
+                
+                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
+                
+                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
+                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+
+                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
+                return clean_df.dropna(subset=['DateStr'])
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
+
+# ✅ 爬取融資融券資料
+@st.cache_data(persist="disk", ttl=21600)
+def get_margin_data(stock_id, start_date, end_date):
+    driver = get_driver()
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html))
+        
+        target_df = None
+        for df in tables:
+            if df.astype(str).apply(lambda x: x.str.contains('融資餘額', na=False)).any().any():
+                target_df = df
+                break
+        
+        if target_df is not None:
+            if len(target_df.columns) >= 13:
+                clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
+                clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
+                
+                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
+                
+                for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
+                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
+                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+                
+                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
+                return clean_df.dropna(subset=['DateStr'])
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
 
 # ✅ [FIX] 將此函式移至最外層，解決 NameError
 @st.cache_data(persist="disk", ttl=604800)
@@ -358,64 +496,6 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
     finally:
         driver.quit()
 
-@st.cache_data(persist="disk", ttl=21600)
-def get_institutional_data(stock_id, start_date, end_date):
-    driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        target_df = None
-        for df in tables:
-            if df.astype(str).apply(lambda x: x.str.contains('外資買賣超', na=False)).any().any():
-                target_df = df
-                break
-        
-        if target_df is not None:
-            if len(target_df.columns) >= 4:
-                clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
-                clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
-                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
-                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
-                    clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0'), errors='coerce').fillna(0)
-                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
-                return clean_df.dropna(subset=['DateStr'])
-    except: pass
-    finally: driver.quit()
-    return None
-
-@st.cache_data(persist="disk", ttl=21600)
-def get_margin_data(stock_id, start_date, end_date):
-    driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        target_df = None
-        for df in tables:
-            if df.astype(str).apply(lambda x: x.str.contains('融資餘額', na=False)).any().any():
-                target_df = df
-                break
-        
-        if target_df is not None:
-            if len(target_df.columns) >= 13:
-                clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
-                clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
-                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
-                for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
-                    clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0'), errors='coerce').fillna(0)
-                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
-                return clean_df.dropna(subset=['DateStr'])
-    except: pass
-    finally: driver.quit()
-    return None
-
 # ✅ [FIX] 使用 requests 爬取 Norway 神秘金字塔 StockHolders.aspx
 def _norm_col(x: str) -> str:
     return re.sub(r"\s+", "", str(x)).replace("\u3000", "")
@@ -458,6 +538,7 @@ def _upper_lots_from_label(label: str) -> int | None:
     if "股" in str(label): return 1
     return int(m.group(2))
 
+# ✅ [FIX] 確保此函式在被呼叫前已定義，修復 NameError
 def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
     df = raw_df.copy()
     if df.empty: return None
@@ -631,6 +712,7 @@ if stock_input:
         tab_kline, tab_broker, tab_inst, tab_margin, tab_holder = st.tabs(["K線", "分點", "法人", "融資券", "大戶"])
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
+        # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             opts = {
                 "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
@@ -640,7 +722,11 @@ if stock_input:
                 "crosshair": {
                     "mode": 1,
                     "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
-                    "horzLine": {"visible": True, "labelVisible": True} # ✅ 右側顯示價格
+                    "horzLine": {
+                        "visible": True, 
+                        "labelVisible": True,
+                        "labelBackgroundColor": '#4c525e' # ✅ 更明顯的標籤背景色
+                    }
                 },
                 "height": height,
             }
@@ -808,6 +894,7 @@ if stock_input:
             st.markdown("---")
             st.markdown("##### 區間前 15 大買賣超排行")
             t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
+            # ✅ [FIX] 恢復分點前15大表格
             with t1: render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
             with t2: render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
