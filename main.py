@@ -127,7 +127,7 @@ def get_stock_name(stock_id):
     except:
         return ""
 
-# ✅ [FIX] 確保 render_broker_table 定義在主邏輯之前
+# ✅ 確保 render_broker_table 定義在主邏輯之前
 def render_broker_table(df, sum_data, color_hex, title):
     if "買超" in title:
         label_total = "🔴 合計買超張數"
@@ -351,7 +351,7 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ [FIX] 將此函式移至最外層，解決 NameError
+# ✅ [FIX] 將 get_real_data_matrix 移到最上方
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
@@ -494,172 +494,158 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
     finally:
         driver.quit()
 
-# ✅ [FIX] 使用 requests 爬取 Norway 神秘金字塔 StockHolders.aspx
-def _norm_col(x: str) -> str:
-    return re.sub(r"\s+", "", str(x)).replace("\u3000", "")
-
-# ✅ [FIX] 改用 Selenium 爬取 Norway 神秘金字塔，並加入分頁點擊邏輯
-@st.cache_data(ttl=21600)
-def get_shareholding_data(stock_id: str) -> dict:
+# ✅ [FIX] 使用 Selenium + XPATH 爬取 Norway 神秘金字塔 StockHolders.aspx
+@st.cache_data(persist="disk", ttl=604800)
+def get_shareholding_data(stock_id: str):
     driver = get_driver()
     url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
     
-    # 定義分級比例分頁的 XPATH
-    xpath_ratio_tab = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span"
-    
     try:
         driver.get(url)
+        # 等待頁面載入
+        time.sleep(2)
         
-        # 1. 等待頁面載入並抓取「明細」分頁 (預設顯示，含總股東人數、大戶數等)
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//table"))
-            )
-        except:
-            time.sleep(2)
-
-        html_summary = driver.page_source
-        dfs_summary = pd.read_html(StringIO(html_summary))
-        
-        # 篩選出含有 "總股東人數" 或 "資料日期" 的表格
+        # 1. 抓取【明細】表格 (Summary Table)
+        # 使用使用者提供的 XPath (明細表格容器)
+        # 目標: .../div[1]/table
+        summary_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[1]/table"
         summary_df = None
-        for df in dfs_summary:
-            # 清洗欄位名稱以利比對
-            clean_cols = "".join([str(c) for c in df.columns])
-            if "總股東人數" in clean_cols or "資料日期" in clean_cols:
-                df.columns = [_norm_col(c) for c in df.columns]
-                summary_df = df
-                break
-        
-        # 2. 模擬點擊「分級比例」分頁 (抓取 1-999, 1-5張...等分佈)
         try:
-            tab_btn = driver.find_element(By.XPATH, xpath_ratio_tab)
-            driver.execute_script("arguments[0].click();", tab_btn) # 使用 JS 點擊較穩定
-            time.sleep(2) # 等待 AJAX 表格切換
-        except Exception as e:
-            print(f"分級比例分頁點擊失敗: {e}")
-
-        # 3. 抓取切換後的頁面 (包含分級比例表)
-        html_ratio = driver.page_source
-        dfs_ratio = pd.read_html(StringIO(html_ratio))
-        
+            tbl_summary = driver.find_element(By.XPATH, summary_xpath)
+            summary_df = pd.read_html(StringIO(tbl_summary.get_attribute("outerHTML")))[0]
+        except Exception:
+            pass
+            
+        # 2. 抓取【分級比例】表格 (Ratio Table)
+        # 先點擊【分級比例】頁籤 (li[3])
+        # XPath: .../ul/li[3]/a/span
         ratio_df = None
-        for df in dfs_ratio:
-            clean_cols = "".join([str(c) for c in df.columns])
-            # 辨識分級表的特徵
-            if "1-999" in clean_cols or "1000張以上" in clean_cols:
-                df.columns = [_norm_col(c) for c in df.columns]
-                ratio_df = df
-                break
-        
+        try:
+            tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
+            driver.execute_script("arguments[0].click();", tab_ratio)
+            time.sleep(1) # 等待切換
+            
+            # 抓取分級比例表格
+            # 目標: .../div[3]/table
+            ratio_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[3]/table"
+            tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
+            ratio_df = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))[0]
+        except Exception:
+            pass
+
         return {"summary": summary_df, "ratio": ratio_df}
 
-    except Exception as e:
-        print(f"Norway scraping error: {e}")
+    except Exception:
         return {"summary": None, "ratio": None}
     finally:
         driver.quit()
 
-# ✅ [FIX] 欄位導向的精確解析邏輯
-def _upper_lots_from_label(label: str) -> int | None:
-    s = str(label).replace(" ", "").replace(",", "").replace("股", "")
-    if "以上" in s: return 10**9
-    m = re.search(r"(\d+)[-~～](\d+)", s)
-    if not m: return None
-    if "股" in str(label): return 1
-    return int(m.group(2))
-
-# ✅ [FIX] 確保此函式在被呼叫前已定義，修復 NameError
-def process_shareholding_df(raw_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
-    df = raw_df.copy()
-    if df.empty: return None
-
-    # Norway 的表頭通常是多層的，或者第一列是日期
-    # 我們嘗試正規化
-    # 假設 Row 0 是日期 (20260102, 20251226...)
-    # Row 1 是欄位 (人數, 張數, 百分比...)
-    # Col 0 是分級 (1-999股, 1-5張...)
+# ✅ [FIX] 處理分級比例數據
+def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
+    if ratio_df is None or ratio_df.empty: return None
     
-    # 1. 找出日期列
-    date_row_idx = -1
-    for i in range(min(5, len(df))):
-        row_str = df.iloc[i].astype(str).str.cat()
-        if re.search(r"20\d{6}", row_str): # 找 YYYYMMDD
-            date_row_idx = i
-            break
+    df = ratio_df.copy()
     
-    if date_row_idx == -1: return None
-
-    # 2. 提取日期與其對應的欄位索引
-    dates = []
-    date_cols = []
+    # 根據用戶提供的資訊，分級比例表的欄位順序固定
+    # Col 2: 資料日期
+    # Col 3: 小於1張
+    # Col 4: 1-5張
+    # ...
+    # Col 17: 1000張以上
     
-    row_vals = df.iloc[date_row_idx].values
-    for i, val in enumerate(row_vals):
-        d_str = str(val).replace(".0", "")
-        if re.match(r"^20\d{6}$", d_str):
-            # 轉換為 YYYY-MM-DD
-            d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
-            dates.append(d_fmt)
-            date_cols.append(i)
+    # 檢查是否至少有這麼多欄
+    if df.shape[1] < 18: return None
     
-    if not dates: return None
-
-    # 3. 找出分級資料的起始列 (通常在日期列後面 1-2 列)
-    data_start_idx = date_row_idx + 1
-    # 往後找直到看到 "1-999" 或 "1-5"
-    for i in range(data_start_idx, len(df)):
-        val = str(df.iloc[i, 0])
-        if "1-999" in val or "1-5" in val:
-            data_start_idx = i
-            break
-            
-    # 4. 解析每一列的分級上界
-    rows_map = [] # (upper_limit, row_index)
-    for i in range(data_start_idx, len(df)):
-        label = str(df.iloc[i, 0])
-        upper = _upper_lots_from_label(label)
-        if upper:
-            rows_map.append((upper, i))
-
-    # 5. 彙整數據
+    # 欄位映射 (Index -> 上界張數)
+    # Col 3 (<1) -> 1
+    # Col 4 (1-5) -> 5
+    # Col 5 (5-10) -> 10
+    # ...
+    col_map = {
+        3: 1, 4: 5, 5: 10, 6: 15, 7: 20, 8: 30, 9: 40, 10: 50,
+        11: 100, 12: 200, 13: 400, 14: 600, 15: 800, 16: 1000, 17: 99999999 # 1000以上
+    }
+    
+    # 找出日期欄位索引 (通常是 Col 2，索引為 2)
+    # 我們遍歷每一列，嘗試解析日期
     out = []
-    for idx, date_str in enumerate(dates):
-        # 這裡的 "分級比例表" 結構其實是：
-        # 日期欄位下，整列都是比例 (Float)
-        # 不像 "前期比較" 表有 人數/張數/比例 三欄
-        # 所以直接取 ratio
-        
-        base_col = date_cols[idx]
-        
-        large_ratio = 0.0
-        retail_ratio = 0.0
-
-        for upper, row_idx in rows_map:
-            try:
-                r_val = df.iloc[row_idx, base_col] # 直接取該日期對應的值
+    
+    # 從資料列開始 (跳過標題，如果 read_html 沒抓對標題)
+    # 假設前幾列可能是標題，找符合 YYYY-MM-DD 或 YYYYMMDD 的
+    for i, row in df.iterrows():
+        try:
+            d_val = str(row.iloc[2]) # 假設日期在第 3 欄
+            d_str = d_val.replace("/", "").replace("-", "")
+            
+            # 簡單驗證日期格式
+            if not re.match(r"^\d{8}$", d_str): continue
+            
+            date_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+            
+            large_ratio = 0.0
+            retail_ratio = 0.0
+            
+            for col_idx, upper in col_map.items():
+                val_str = str(row.iloc[col_idx]).replace("%", "").replace(",", "")
+                val = float(val_str) if val_str != 'nan' else 0.0
                 
-                # 清洗數據
-                r = float(str(r_val).replace("%", "").replace(",", "")) if pd.notna(r_val) and str(r_val) != 'nan' else 0.0
+                # 大戶：大於等於門檻 (注意：1000張以上是 >= 1000)
+                # 這裡的 upper 是區間的上界。
+                # 例如 "400-600"，upper=600。如果大戶門檻是400，這個區間算不算？
+                # 通常 "400-600" 代表持有 400~599 股 (包含下界)。
+                # 所以我們需要知道每個區間的下界。
                 
-                if upper >= large_threshold:
-                    large_ratio += r
+                # 重新定義區間 (下界, 上界)
+                # 3: (0, 1), 4: (1, 5), 5: (5, 10)...
+                # 簡化邏輯：
+                # 散戶定義：持股 < 門檻。如果區間上界 <= 門檻，則該區間全算散戶。
+                # (例如門檻 10，則 <1, 1-5, 5-10 都算) -> 5-10 的上界是10，所以 <= 
                 
-                if upper < retail_threshold:
-                    retail_ratio += r
-                elif upper == retail_threshold and "以上" not in str(df.iloc[row_idx, 0]):
-                     pass
-
-            except:
-                continue
-
-        out.append({
-            "日期": date_str,
-            "DateStr": date_str,
-            "大戶持股(%)": round(large_ratio, 2),
-            "散戶持股(%)": round(retail_ratio, 2),
-        })
-
+                # 大戶定義：持股 >= 門檻。
+                
+                # 修正判斷邏輯：使用區間下界來判斷比較準確
+                lower = 0
+                if col_idx == 3: lower = 0
+                elif col_idx == 4: lower = 1
+                elif col_idx == 5: lower = 5
+                elif col_idx == 6: lower = 10
+                elif col_idx == 7: lower = 15
+                elif col_idx == 8: lower = 20
+                elif col_idx == 9: lower = 30
+                elif col_idx == 10: lower = 40
+                elif col_idx == 11: lower = 50
+                elif col_idx == 12: lower = 100
+                elif col_idx == 13: lower = 200
+                elif col_idx == 14: lower = 400
+                elif col_idx == 15: lower = 600
+                elif col_idx == 16: lower = 800
+                elif col_idx == 17: lower = 1000
+                
+                # 散戶條件：持股 < 散戶門檻
+                # 只有當整個區間都在門檻之下才算 (即 上界 <= 門檻)
+                # 但 upper 是 1, 5, 10... 
+                # 例如散戶門檻 10。 <1 (upper 1<=10 ok), 1-5 (upper 5<=10 ok), 5-10 (upper 10<=10 ok)
+                if upper <= retail_threshold:
+                    retail_ratio += val
+                
+                # 大戶條件：持股 >= 大戶門檻
+                # 只有當整個區間都在門檻之上才算 (即 下界 >= 門檻)
+                if lower >= large_threshold:
+                    large_ratio += val
+            
+            out.append({
+                "DateStr": date_fmt,
+                "日期": date_fmt,
+                "大戶持股(%)": round(large_ratio, 2),
+                "散戶持股(%)": round(retail_ratio, 2),
+                # 分級比例表沒有人數，設為 0
+                "大戶人數": 0,
+                "散戶人數": 0
+            })
+            
+        except:
+            continue
+            
     if not out: return None
     return pd.DataFrame(out).sort_values("DateStr")
 
@@ -976,7 +962,6 @@ if stock_input:
                 t_hist, t_line = [], []
                 d_hist, d_line = [], []
                 for i, row in plot_df.iterrows():
-                    val = row['外資買賣超']
                     f_val, f_cum = row['外資買賣超'], row['cum_foreign']
                     t_val, t_cum = row['投信買賣超'], row['cum_trust']
                     d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
