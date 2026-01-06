@@ -915,48 +915,6 @@ if stock_input:
                     if not pd.isna(cum):
                         d_line.append({"time": row['DateStr'], "value": float(cum)})
 
-            # 準備合併圖表的數據 (如果有勾選 "三大法人")
-            if show_inst_total:
-                if f_hist: combined_inst_series.append({"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-                if f_line: combined_inst_series.append({"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
-                
-                if t_hist: combined_inst_series.append({"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-                if t_line: combined_inst_series.append({"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
-                
-                if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-                if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
-
-            # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
-            margin_long_bal_data = []
-            margin_short_bal_data = []
-            margin_long_diff_data = []
-            margin_short_diff_data = []
-            
-            if show_margin and '融資餘額' in plot_df.columns:
-                for i, row in plot_df.iterrows():
-                    # 融資餘額 (Line)
-                    val_mb = row.get('融資餘額')
-                    if not pd.isna(val_mb):
-                        margin_long_bal_data.append({"time": row['DateStr'], "value": float(val_mb)})
-                    # 融券餘額 (Line)
-                    val_sb = row.get('融券餘額')
-                    if not pd.isna(val_sb):
-                        margin_short_bal_data.append({"time": row['DateStr'], "value": float(val_sb)})
-                        
-                    # 融資增減 (Histogram) - 使用帶透明度的紅/綠
-                    val_md = row.get('融資增減')
-                    if not pd.isna(val_md):
-                        # 紅(增)/綠(減) + 透明度
-                        color = 'rgba(239, 83, 80, 0.7)' if val_md > 0 else ('rgba(38, 166, 154, 0.7)' if val_md < 0 else "gray")
-                        margin_long_diff_data.append({"time": row['DateStr'], "value": float(val_md), "color": color})
-                        
-                    # 融券增減 (Histogram) - 使用帶透明度的黃/藍
-                    val_sd = row.get('融券增減')
-                    if not pd.isna(val_sd):
-                        # 黃(增)/藍(減) + 透明度
-                        color = 'rgba(255, 215, 0, 0.7)' if val_sd > 0 else ('rgba(0, 191, 255, 0.7)' if val_sd < 0 else "gray")
-                        margin_short_diff_data.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
-
             # ========= 🚀 改用多 chart 堆疊模式 =========
             
             # ✅ 修正：新增 time_visible 參數 和 title (浮水印)
@@ -1037,7 +995,7 @@ if stock_input:
                         "priceScaleId": "right",
                         "title": "Volume",
                         "priceLineVisible": False,  # ✅ 隱藏水平線
-                        "lastValueVisible": False   # ✅ 隱藏數值標籤
+                        # "lastValueVisible": False   # ✅ [FIX] 移除此行以顯示 Legend 數值
                     }
                 }]
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": vol_series})
@@ -1045,17 +1003,17 @@ if stock_input:
             # 3. 副圖：KD (✅ time_visible=False)
             if show_kd and k_data:
                 kd_series = [
-                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",         "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
+                    {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K(9,3,3)", "priceScaleId": "right", "priceLineVisible": False}},
+                    {"type": "Line", "data": d_data, "options": {"color": "cyan",   "lineWidth": 1, "title": "D",         "priceScaleId": "right", "priceLineVisible": False}},
                 ]
                 charts_payload.append({"chart": make_opts(150, "KD", False), "series": kd_series})
 
             # 4. 副圖：MACD (✅ time_visible=False)
             if show_macd and dif_data:
                 macd_series = [
-                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
+                    {"type": "Histogram", "data": hist_data, "options": {"title": "MACD Hist", "priceScaleId": "right", "priceLineVisible": False}},
+                    {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False}},
+                    {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False}},
                 ]
                 charts_payload.append({"chart": make_opts(150, "MACD", False), "series": macd_series})
 
@@ -1065,12 +1023,12 @@ if stock_input:
                     {
                         "type": "Histogram",
                         "data": chip_data,
-                        "options": {"title": f"{target_broker} 每日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}
+                        "options": {"title": f"{target_broker} 每日", "priceScaleId": "right", "priceLineVisible": False}
                     },
                     {
                         "type": "Line",
                         "data": chip_cumulative_data,
-                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}
+                        "options": {"title": "分點累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}
                     }
                 ]
                 charts_payload.append({"chart": make_opts(200, "分點買賣超", False), "series": chip_series})
@@ -1078,40 +1036,51 @@ if stock_input:
             # 6. [NEW] 副圖：三大法人 - 外資獨立 (✅ time_visible=False)
             if show_inst_foreign and f_hist:
                 foreign_series = [
-                    {"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False}},
+                    {"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}}
                 ]
                 charts_payload.append({"chart": make_opts(150, "外資", False), "series": foreign_series})
 
             # 7. [NEW] 副圖：三大法人 - 投信獨立 (✅ time_visible=False)
             if show_inst_trust and t_hist:
                 trust_series = [
-                    {"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False}},
+                    {"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}}
                 ]
                 charts_payload.append({"chart": make_opts(150, "投信", False), "series": trust_series})
 
             # 8. [NEW] 副圖：三大法人 - 自營商獨立 (✅ time_visible=False)
             if show_inst_dealer and d_hist:
                 dealer_series = [
-                    {"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}},
-                    {"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False}},
+                    {"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}}
                 ]
                 charts_payload.append({"chart": make_opts(150, "自營商", False), "series": dealer_series})
 
             # 9. [NEW] 副圖：三大法人 - 合併 (當勾選「三大法人」時顯示)
-            if show_inst_total and combined_inst_series:
-                charts_payload.append({"chart": make_opts(200, "三大法人(合)", False), "series": combined_inst_series})
+            if show_inst_total:
+                # [FIX] 如果有勾選三大法人，但個別數據為空(例如資料不足)，這裡會自動處理
+                if f_hist: combined_inst_series.append({"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False}})
+                if f_line: combined_inst_series.append({"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}})
+                
+                if t_hist: combined_inst_series.append({"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False}})
+                if t_line: combined_inst_series.append({"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}})
+                
+                if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False}})
+                if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}})
+
+                if combined_inst_series:
+                    charts_payload.append({"chart": make_opts(200, "三大法人(合)", False), "series": combined_inst_series})
 
             # 10. 副圖：融資 (雙軸：增減量 + 累積餘額)
             if show_margin and (margin_long_bal_data or margin_long_diff_data):
                 margin_long_series = []
                 # 融資增減 (Histogram)
                 if margin_long_diff_data:
-                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                    margin_long_series.append({"type": "Histogram", "data": margin_long_diff_data, "options": {"title": "融資增減", "priceScaleId": "right", "priceLineVisible": False}})
                 # 融資餘額 (Line)
                 if margin_long_bal_data:
-                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+                    margin_long_series.append({"type": "Line", "data": margin_long_bal_data, "options": {"title": "融資餘額", "color": "#00FF00", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}})
                 
                 charts_payload.append({"chart": make_opts(150, "融資", False), "series": margin_long_series})
 
@@ -1120,10 +1089,10 @@ if stock_input:
                 margin_short_series = []
                 # 融券增減 (Histogram)
                 if margin_short_diff_data:
-                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                    margin_short_series.append({"type": "Histogram", "data": margin_short_diff_data, "options": {"title": "融券增減", "priceScaleId": "right", "priceLineVisible": False}})
                 # 融券餘額 (Line)
                 if margin_short_bal_data:
-                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+                    margin_short_series.append({"type": "Line", "data": margin_short_bal_data, "options": {"title": "融券餘額", "color": "#FF0000", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False}})
                 
                 charts_payload.append({"chart": make_opts(150, "融券", False), "series": margin_short_series})
 
