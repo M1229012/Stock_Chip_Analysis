@@ -706,7 +706,7 @@ if stock_input:
                 all_options = [
                     "成交量", "KD", "MACD", "分點買賣超", 
                     "布林通道", "融資融券", 
-                    "外資", "投信", "自營商"
+                    "外資", "投信", "自營商", "三大法人"
                 ]
                 
                 selected_indicators = st.multiselect(
@@ -725,6 +725,7 @@ if stock_input:
                 show_inst_foreign = "外資" in selected_indicators
                 show_inst_trust = "投信" in selected_indicators
                 show_inst_dealer = "自營商" in selected_indicators
+                show_inst_total = "三大法人" in selected_indicators
 
             merged_df = None
             target_key = normalize_name(target_broker)
@@ -777,8 +778,8 @@ if stock_input:
             if '買賣超_Final' in plot_df.columns:
                 plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
-            # ✅ 新增：如果勾選了三大法人或融資融券，進行爬蟲並合併，並計算累積值
-            if show_inst_foreign or show_inst_trust or show_inst_dealer:
+            # ✅ 新增：如果勾選了三大法人(含單一或合併)或融資融券，進行爬蟲並合併，並計算累積值
+            if show_inst_foreign or show_inst_trust or show_inst_dealer or show_inst_total:
                 inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
                 if inst_df is not None:
                     plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
@@ -884,47 +885,46 @@ if stock_input:
             d_hist, d_line = [], []
             combined_inst_series = [] # 合併圖表用的
 
-            if (show_inst_foreign or show_inst_trust or show_inst_dealer) and '外資買賣超' in plot_df.columns:
+            # 只要有勾選任一法人相關選項，就準備所有資料
+            if (show_inst_foreign or show_inst_trust or show_inst_dealer or show_inst_total) and '外資買賣超' in plot_df.columns:
                 for i, row in plot_df.iterrows():
-                    # 外資
-                    if show_inst_foreign:
-                        val = row.get('外資買賣超')
-                        cum = row.get('cum_foreign')
-                        if not pd.isna(val):
-                            color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
-                            f_hist.append({"time": row['DateStr'], "value": float(val), "color": color})
-                        if not pd.isna(cum):
-                            f_line.append({"time": row['DateStr'], "value": float(cum)})
+                    # 外資資料準備
+                    val = row.get('外資買賣超')
+                    cum = row.get('cum_foreign')
+                    if not pd.isna(val):
+                        color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
+                        f_hist.append({"time": row['DateStr'], "value": float(val), "color": color})
+                    if not pd.isna(cum):
+                        f_line.append({"time": row['DateStr'], "value": float(cum)})
                     
-                    # 投信
-                    if show_inst_trust:
-                        val = row.get('投信買賣超')
-                        cum = row.get('cum_trust')
-                        if not pd.isna(val):
-                            color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
-                            t_hist.append({"time": row['DateStr'], "value": float(val), "color": color})
-                        if not pd.isna(cum):
-                            t_line.append({"time": row['DateStr'], "value": float(cum)})
+                    # 投信資料準備
+                    val = row.get('投信買賣超')
+                    cum = row.get('cum_trust')
+                    if not pd.isna(val):
+                        color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
+                        t_hist.append({"time": row['DateStr'], "value": float(val), "color": color})
+                    if not pd.isna(cum):
+                        t_line.append({"time": row['DateStr'], "value": float(cum)})
                             
-                    # 自營商
-                    if show_inst_dealer:
-                        val = row.get('自營商買賣超')
-                        cum = row.get('cum_dealer')
-                        if not pd.isna(val):
-                            color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
-                            d_hist.append({"time": row['DateStr'], "value": float(val), "color": color})
-                        if not pd.isna(cum):
-                            d_line.append({"time": row['DateStr'], "value": float(cum)})
+                    # 自營商資料準備
+                    val = row.get('自營商買賣超')
+                    cum = row.get('cum_dealer')
+                    if not pd.isna(val):
+                        color = COLOR_UP if val > 0 else (COLOR_DOWN if val < 0 else "gray")
+                        d_hist.append({"time": row['DateStr'], "value": float(val), "color": color})
+                    if not pd.isna(cum):
+                        d_line.append({"time": row['DateStr'], "value": float(cum)})
 
-            # 準備合併圖表的數據 (如果有勾選任何一個)
-            if f_hist: combined_inst_series.append({"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-            if f_line: combined_inst_series.append({"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
-            
-            if t_hist: combined_inst_series.append({"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-            if t_line: combined_inst_series.append({"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
-            
-            if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
-            if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+            # 準備合併圖表的數據 (如果有勾選 "三大法人")
+            if show_inst_total:
+                if f_hist: combined_inst_series.append({"type": "Histogram", "data": f_hist, "options": {"title": "外資單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                if f_line: combined_inst_series.append({"type": "Line", "data": f_line, "options": {"title": "外資累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+                
+                if t_hist: combined_inst_series.append({"type": "Histogram", "data": t_hist, "options": {"title": "投信單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                if t_line: combined_inst_series.append({"type": "Line", "data": t_line, "options": {"title": "投信累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
+                
+                if d_hist: combined_inst_series.append({"type": "Histogram", "data": d_hist, "options": {"title": "自營單日", "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False}})
+                if d_line: combined_inst_series.append({"type": "Line", "data": d_line, "options": {"title": "自營累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "lastValueVisible": False}})
 
             # ✅ 數據準備：融資融券 (雙軸：增減量 + 累積餘額)
             margin_long_bal_data = []
@@ -1099,8 +1099,8 @@ if stock_input:
                 ]
                 charts_payload.append({"chart": make_opts(150, "自營商", False), "series": dealer_series})
 
-            # 9. [NEW] 副圖：三大法人 - 合併 (保留舊有的疊加邏輯)
-            if combined_inst_series:
+            # 9. [NEW] 副圖：三大法人 - 合併 (當勾選「三大法人」時顯示)
+            if show_inst_total and combined_inst_series:
                 charts_payload.append({"chart": make_opts(200, "三大法人(合)", False), "series": combined_inst_series})
 
             # 10. 副圖：融資 (雙軸：增減量 + 累積餘額)
