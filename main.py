@@ -342,6 +342,175 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
+# ✅ 爬取集保戶股權分散表 (大戶/散戶)
+@st.cache_data(persist="disk", ttl=604800)
+def get_shareholding_data(stock_id):
+    driver = get_driver()
+    # 使用富邦的集保分佈頁面 (通常是 zcj 或 zck)
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcj/zcj.djhtm?a={stock_id}"
+    try:
+        driver.get(url)
+        # 等待表格出現
+        try:
+            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table[2]/tbody/tr[3]/td")))
+        except:
+            pass # 可能是空表或結構不同
+            
+        html = driver.page_source
+        tables = pd.read_html(StringIO(html))
+        
+        target_df = None
+        for df in tables:
+            # 尋找包含 "各持股等級" 或等級範圍的表格
+            s = df.astype(str).to_string()
+            if "持股分級" in s or "1-999" in s:
+                target_df = df
+                break
+        
+        if target_df is not None:
+            # 富邦 ZCJ 頁面的結構：
+            # 第一欄是持股分級 (1-999, 1000-5000...)
+            # 後續欄位是日期 (e.g. 20240105, 20231229...)
+            # 每一個日期下有 "人數", "股數", "比例" 三個子欄位 (HTML table rowspan/colspan 結構複雜)
+            # pd.read_html 有時會展平，我們需要清理
+            
+            # 簡單處理：假設第一列是日期
+            # 由於這個表格結構非常動態，我們嘗試擷取左邊的 "分級" 和內容
+            # 這裡簡化：只取表格，後續處理
+            return target_df
+            
+    except:
+        pass
+    finally:
+        driver.quit()
+    return None
+
+def process_shareholding_df(raw_df, large_threshold, retail_threshold):
+    # 這是一個通用的清理邏輯，針對富邦 zcj 頁面常見結構
+    try:
+        # 移除前幾列非數據列
+        df = raw_df.copy()
+        
+        # 找出包含日期的列
+        date_row_idx = -1
+        for i, row in df.iterrows():
+            # 檢查是否含有類似日期的字串 (YYYYMMDD 或 YYYY/MM/DD)
+            row_str = row.astype(str).str.cat()
+            if re.search(r'\d{8}', row_str) or re.search(r'\d{4}/\d{2}/\d{2}', row_str):
+                date_row_idx = i
+                break
+        
+        if date_row_idx == -1: return None
+
+        # 提取日期
+        dates = []
+        date_cols = [] # 記錄每個日期對應的起始欄位索引
+        
+        # 假設第一欄是標題，從第二欄開始
+        row_vals = df.iloc[date_row_idx].values
+        for i, val in enumerate(row_vals):
+            d_str = str(val).replace('/', '').replace('-', '')
+            if re.match(r'^\d{8}$', d_str): # 20240105
+                dates.append(f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}")
+                date_cols.append(i)
+        
+        if not dates: return None
+        
+        # 提取 "比例" (%) 欄位。通常日期後面的欄位順序是 人數, 股數, 比例
+        # 我們假設每個日期佔用 3 或 4 個欄位。富邦通常是：人數、張數、比例
+        # 我們需要找到 "比例" 在哪。
+        
+        # 建立結構化數據
+        structured_data = []
+        
+        # 定義持股分級對應的列 (根據富邦常見順序)
+        # 0: 1-999
+        # 1: 1000-5000
+        # ...
+        # 我們需要遍歷每一列，判斷它是哪個分級
+        
+        range_map = {
+            "1-999": 1, "1,000-5,000": 5, "5,001-10,000": 10, "10,001-15,000": 15,
+            "15,001-20,000": 20, "20,001-30,000": 30, "30,001-40,000": 40,
+            "40,001-50,000": 50, "50,001-100,000": 100, "100,001-200,000": 200,
+            "200,001-400,000": 400, "400,001-600,000": 600, "600,001-800,000": 800,
+            "800,001-1,000,000": 1000, "1,000,001以上": 1001
+        }
+        
+        # 掃描列，找到等級數據
+        data_rows = []
+        for i, row in df.iterrows():
+            label = str(row[0]).replace(' ', '').replace(',', '')
+            # 簡單匹配
+            current_range = 0
+            if "1-999" in label: current_range = 1
+            elif "1000-5000" in label: current_range = 5
+            elif "5001-10000" in label: current_range = 10
+            elif "10001-15000" in label: current_range = 15
+            elif "15001-20000" in label: current_range = 20
+            elif "20001-30000" in label: current_range = 30
+            elif "30001-40000" in label: current_range = 40
+            elif "40001-50000" in label: current_range = 50
+            elif "50001-100000" in label: current_range = 100
+            elif "100001-200000" in label: current_range = 200
+            elif "200001-400000" in label: current_range = 400
+            elif "400001-600000" in label: current_range = 600
+            elif "600001-800000" in label: current_range = 800
+            elif "800001-1000000" in label: current_range = 1000
+            elif "1000001" in label or "以上" in label: current_range = 1001
+            
+            if current_range > 0:
+                data_rows.append((current_range, i))
+
+        # 彙整每個日期的數據
+        result_list = []
+        
+        for idx, date_str in enumerate(dates):
+            col_base = date_cols[idx]
+            # 假設 人數(0), 股數(1), 比例(2)。如果只有兩個欄位可能不同。
+            # 檢查標題列 (header_row+1)
+            # 這裡用 heuristic: 比例通常由小數點
+            
+            # 尋找比例欄位 (通常是 col_base + 2)
+            ratio_col = col_base + 2 
+            people_col = col_base
+            
+            large_ratio_sum = 0.0
+            retail_ratio_sum = 0.0
+            large_people_sum = 0
+            retail_people_sum = 0
+            
+            for range_val, row_idx in data_rows:
+                try:
+                    r_val = str(df.iloc[row_idx, ratio_col]).replace('%', '')
+                    p_val = str(df.iloc[row_idx, people_col]).replace(',', '')
+                    r = float(r_val) if r_val != 'nan' else 0.0
+                    p = int(p_val) if p_val != 'nan' and p_val.isdigit() else 0
+                    
+                    if range_val >= large_threshold:
+                        large_ratio_sum += r
+                        large_people_sum += p
+                    if range_val < retail_threshold: # 小於
+                        retail_ratio_sum += r
+                        retail_people_sum += p
+                except:
+                    continue
+            
+            result_list.append({
+                "日期": date_str,
+                "DateStr": date_str, # For chart mapping
+                "大戶持股(%)": round(large_ratio_sum, 2),
+                "大戶人數": large_people_sum,
+                "散戶持股(%)": round(retail_ratio_sum, 2),
+                "散戶人數": retail_people_sum
+            })
+            
+        res_df = pd.DataFrame(result_list).sort_values("日期", ascending=True)
+        return res_df
+
+    except Exception:
+        return None
+
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
@@ -651,20 +820,8 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         st.caption(f"資料來源：{target_url}")
 
-        # ✅ [FIX] 解決 Tab 跳轉問題：使用 query_params 記錄選中的 Tab
-        # 預設選中第一個分頁
-        default_tab = "K線"
-        if "active_tab" in st.query_params:
-            default_tab = st.query_params["active_tab"]
-
-        # 定義 Tab 標題
-        tab_titles = ["K線", "分點", "法人", "融資券"]
-        
-        # 建立 Tabs (不直接指定 index，依靠 session state 或 params 比較難，這裡改用結構優化)
-        # 為了避免重整跳轉，最穩定的方式是不要在 tab 內做會觸發 rerun 的 input
-        # 但券商選擇必須在 tab 內。
-        # 這裡我們使用 st.tabs 
-        tab_kline, tab_broker, tab_inst, tab_margin = st.tabs(tab_titles)
+        # ✅ [Refactor] 使用 Tab 分頁 (新增 "大戶" 分頁)
+        tab_kline, tab_broker, tab_inst, tab_margin, tab_holder = st.tabs(["K線", "分點", "法人", "融資券", "大戶"])
 
         # 共用 opts (無 title, 右側隱藏)
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
@@ -694,7 +851,7 @@ if stock_input:
             if df_price is not None and not df_price.empty:
                 charts_payload = []
                 plot_df = df_price.copy()
-                plot_df.index.name = None # ✅ [FIX] 避免 Index 名稱衝突
+                plot_df.index.name = None
                 plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
                 plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
@@ -781,12 +938,10 @@ if stock_input:
 
         # ==================== Tab 2: 分點 (前15大 + 單一分點) ====================
         with tab_broker:
-            # ✅ [FIX] 選擇券商置頂，改善跳轉問題
+            # 選擇券商 (移到最上方，避免切換導致重置跳轉)
             brokers_list = df_buy['broker'].tolist() + df_sell['broker'].tolist()
             brokers_list = list(dict.fromkeys(brokers_list))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
-            
-            st.markdown("---")
             
             # 準備該券商資料
             merged_df = None
@@ -1005,6 +1160,81 @@ if stock_input:
                 last_10_margin = margin_df.tail(10).iloc[::-1].reset_index(drop=True)
                 # 簡單格式化
                 st.dataframe(last_10_margin, use_container_width=True)
+
+        # ==================== Tab 5: 大戶 (集保分佈) ====================
+        with tab_holder:
+            raw_holder_df = get_shareholding_data(stock_input)
+            
+            if raw_holder_df is not None:
+                c1, c2 = st.columns(2)
+                with c1:
+                    large_th = st.select_slider("大戶持股標準 (> 張)", options=[100, 200, 400, 600, 800, 1000], value=400)
+                with c2:
+                    retail_th = st.select_slider("散戶持股標準 (< 張)", options=[10, 50, 100, 200, 400, 600], value=50)
+
+                holder_df = process_shareholding_df(raw_holder_df, large_th, retail_th)
+                
+                if holder_df is not None and not holder_df.empty:
+                    # 準備圖表資料 (需要合併股價)
+                    # 注意：集保是週資料，股價是日資料。我們只取集保日期的股價。
+                    
+                    # 1. 處理表格變動 (增加紅字/減少綠字)
+                    # 為了顯示變動，我們需要計算 Diff
+                    display_df = holder_df.copy()
+                    display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
+                    display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
+                    display_df['大戶人數增減'] = display_df['大戶人數'].diff()
+                    
+                    # 反轉順序顯示 (最新在上面)
+                    display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
+                    
+                    # 使用 Pandas Styler 進行著色
+                    def color_diff(val):
+                        if pd.isna(val): return ''
+                        if val > 0: return 'color: #ff4b4b' # Red
+                        if val < 0: return 'color: #26a69a' # Green
+                        return ''
+
+                    st.markdown("#### 集保戶股權分散表")
+                    st.dataframe(
+                        display_df_show[['日期', '大戶持股(%)', '大戶增減', '大戶人數', '大戶人數增減', '散戶持股(%)', '散戶增減']].style.map(color_diff, subset=['大戶增減', '散戶增減', '大戶人數增減']).format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']),
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # 2. 繪製圖表
+                    # 合併股價 (Left join holder_df)
+                    chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
+                    # 如果該週五沒開盤(假日)，可能沒股價，向前補
+                    # 但這裡簡單起見，如果沒股價就斷掉或不顯示
+                    
+                    l_data, r_data, p_data = [], [], []
+                    for i, row in chart_df.iterrows():
+                        if not pd.isna(row['大戶持股(%)']): l_data.append({"time": row['DateStr'], "value": row['大戶持股(%)']})
+                        if not pd.isna(row['散戶持股(%)']): r_data.append({"time": row['DateStr'], "value": row['散戶持股(%)']})
+                        if not pd.isna(row['Close']): p_data.append({"time": row['DateStr'], "value": row['Close']})
+                        
+                    holder_payload = []
+                    holder_series = [
+                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{large_th})%", "color": "red", "lineWidth": 2, "priceScaleId": "left"}},
+                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{retail_th})%", "color": "green", "lineWidth": 2, "priceScaleId": "left"}},
+                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2}} # 虛線股價
+                    ]
+                    
+                    # 雙軸設定
+                    holder_opts = make_opts(400, "大戶 vs 散戶 vs 股價", True)
+                    # 左軸 (比例)
+                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
+                    # 右軸 (股價)
+                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)"}
+                    
+                    holder_payload.append({"chart": holder_opts, "series": holder_series})
+                    
+                    renderLightweightCharts(holder_payload, key="tab5_holder")
+
+            else:
+                st.warning("查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
+
 
     else:
         # ✅ 新增：明確告訴使用者為什麼沒圖 (當資料完全抓不到時)
