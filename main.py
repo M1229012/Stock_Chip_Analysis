@@ -899,6 +899,7 @@ if stock_input:
             st.markdown("---")
             st.markdown("##### 區間前 15 大買賣超排行")
             t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
+            # ✅ [FIX] 恢復分點前15大表格
             with t1: render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
             with t2: render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
 
