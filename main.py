@@ -724,13 +724,31 @@ with st.sidebar:
 
     sorted_stocks = sorted(all_stocks, key=get_sort_key)
     
-    default_index = 0
-    for idx, s in enumerate(sorted_stocks):
-        if s.startswith("2313"):
-            default_index = idx
-            break
-
-    stock_selection = st.selectbox("搜尋股票", options=sorted_stocks, index=default_index, placeholder="請輸入股票代號...")
+    # ✅ [FIX START] 修正股票選擇器重置問題
+    # 檢查是否有上次選過的股票紀錄
+    target_index = 0
+    current_selection = st.session_state.get("stock_selector")
+    
+    if current_selection and current_selection in sorted_stocks:
+        # 如果有上次的選擇，使用該選擇的索引
+        target_index = sorted_stocks.index(current_selection)
+    else:
+        # 第一次執行或找不到時，預設找 2313
+        for idx, s in enumerate(sorted_stocks):
+            if s.startswith("2313"):
+                target_index = idx
+                break
+                
+    # 加上 key 參數以保持狀態
+    stock_selection = st.selectbox(
+        "搜尋股票", 
+        options=sorted_stocks, 
+        index=target_index, 
+        placeholder="請輸入股票代號...",
+        key="stock_selector"
+    )
+    # ✅ [FIX END]
+    
     if stock_selection: stock_input = stock_selection.split()[0]
     else: stock_input = ""
     
