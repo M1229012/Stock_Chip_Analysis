@@ -819,6 +819,7 @@ if stock_input:
                 vol_data = []
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Volume']): vol_data.append({"time": row['DateStr'], "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 k_data, d_data = [], []
@@ -826,6 +827,7 @@ if stock_input:
                     for i, row in plot_df.iterrows():
                         if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": row['DateStr'], "value": float(row['D'])})
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -837,6 +839,7 @@ if stock_input:
                         if not pd.isna(row['DIF']): dif_data.append({"time": row['DateStr'], "value": float(row['DIF'])})
                         if not pd.isna(row['DEA']): dea_data.append({"time": row['DateStr'], "value": float(row['DEA'])})
                         if not pd.isna(row['MACD_Hist']): hist_data.append({"time": row['DateStr'], "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
@@ -850,6 +853,7 @@ if stock_input:
                             rsi_data.append({"time": row['DateStr'], "value": float(row['RSI'])})
                             rsi_80.append({"time": row['DateStr'], "value": 80})
                             rsi_20.append({"time": row['DateStr'], "value": 20})
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
@@ -909,6 +913,7 @@ if stock_input:
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
             
+            # ✅ [FIX] 禁用固定標籤
             charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
             
             if '買賣超_Final' in plot_df.columns:
@@ -919,6 +924,7 @@ if stock_input:
                     cum_val = row.get('cumulative_chip')
                     if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
                 
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣", False), "series": [
                      {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                      {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -955,6 +961,7 @@ if stock_input:
             candlestick_data = []
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+            # ✅ [FIX] 禁用固定標籤
             charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
 
             if '外資買賣超' in plot_df.columns:
@@ -979,13 +986,13 @@ if stock_input:
                     total_hist.append({"time": row['DateStr'], "value": float(total_val), "color": COLOR_UP if total_val>0 else COLOR_DOWN})
                     total_line.append({"time": row['DateStr'], "value": float(total_cum)})
 
-                # ✅ [FIX] 移除個別法人資料，只保留合計
+                # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
                 charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
                     {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 
-                # 下方維持不變，顯示個別法人詳情
+                # 下方維持不變，顯示個別法人詳情，禁用固定標籤
                 charts_payload_inst.append({"chart": make_opts(150, "外資", False), "series": [
                     {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": f_line, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1018,6 +1025,7 @@ if stock_input:
             candlestick_data = []
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+            # ✅ [FIX] 禁用固定標籤
             charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
 
             if '融資餘額' in plot_df.columns:
@@ -1038,11 +1046,13 @@ if stock_input:
                         color = COLOR_UP if val_sd > 0 else (COLOR_DOWN if val_sd < 0 else "gray")
                         ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
 
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload_margin.append({"chart": make_opts(150, "融資", False), "series": [
                     {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload_margin.append({"chart": make_opts(150, "融券", False), "series": [
                     {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
@@ -1186,6 +1196,7 @@ if stock_input:
                         
                     holder_payload = []
                     holder_series = [
+                        # ✅ [FIX] 禁用固定標籤
                         {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{st.session_state.large_lot})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
                         {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{st.session_state.retail_lot})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
                         {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} 
