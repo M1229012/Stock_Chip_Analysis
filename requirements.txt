@@ -7,6 +7,6 @@ lxml
 html5lib
 twstock
 plotly>=5.20.0
-git+https://github.com/M1229012/streamlit-lightweight-charts
+git+https://github.com/M1229012/streamlit-lightweight-charts.git@d643ac4
 pytz
 numpy
