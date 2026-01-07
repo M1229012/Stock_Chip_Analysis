@@ -1,38 +1,52 @@
-# 📊 籌碼 K 線 (Chip K-Line) - 台股主力籌碼分析工具
+# 📊 籌碼 K 線 (TradingView 風格)
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io/)
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![Selenium](https://img.shields.io/badge/Selenium-Web%20Scraping-green)
-
-這是一個基於 Python 與 Streamlit 開發的互動式網頁應用程式，專為台灣股市投資人設計。透過即時爬蟲技術，抓取富邦證券的主力進出資料，並結合 `yfinance` 股價數據，視覺化呈現特定券商分點與股價走勢的關聯。
+這是一個基於 Streamlit 開發的台股籌碼分析工具，整合了 Yahoo Finance、TWSE/TPEX 以及富邦證券與神秘金字塔的公開數據。提供類似 TradingView 的互動式 K 線圖表，並深度整合三大法人、融資融券與集保戶股權分散數據，協助投資人進行更全面的技術與籌碼面分析。
 
 ## ✨ 主要功能
 
-* **主力買賣超排行**：即時爬取指定股票在特定區間（1日 ~ 240日）的買超與賣超前 15 大券商分點。
-* **視覺化數據**：透過 Plotly 繪製互動式圖表，清楚呈現買賣超張數與平均成本。
-* **分點深度追蹤**：
-    * 選定特定券商分點，追蹤其過去 2 年的每日進出明細。
-    * 結合 K 線圖（Candlestick）與均線（MA5, MA10, MA20, MA60）。
-    * 雙軸圖表：同時觀察股價走勢與該分點的累計庫存變化。
-* **智慧快取機制**：內建快取系統（TTL=7天），避免重複爬取，提升查詢速度並降低伺服器負擔。
-* **雲端相容**：特別優化 Selenium 驅動邏輯，可直接部署於 Streamlit Cloud。
+* **📈 互動式 K 線圖 (TradingView Style)**
+    * 使用 `lightweight-charts` 打造流暢的互動圖表。
+    * **多重技術指標**：支援 MA (5/10/20/60/120/240)、布林通道 (Bollinger Bands)、KD、MACD、RSI (6日)。
+    * **自定義均線**：透過下拉選單 (Multiselect) 自由切換顯示的均線與指標。
+    * **十字查價線**：滑鼠游標懸停即顯示詳細開高低收與指標數值，右側標籤清楚標示對應價格。
 
-## 🛠️ 技術架構
+* **🏦 分點進出分析**
+    * **買賣超排行**：自動抓取並列出區間內前 15 大買超與賣超券商分點。
+    * **分點明細追蹤**：點擊特定券商，即可在 K 線圖下方疊加該分點的每日買賣超柱狀圖與累積庫存曲線，精準追蹤主力動向。
 
-* **Frontend**: [Streamlit](https://streamlit.io/)
-* **Data Source**: 
-    * [yfinance](https://pypi.org/project/yfinance/) (股價資料)
-    * Selenium Web Scraping (富邦證券主力進出表)
-* **Visualization**: [Plotly](https://plotly.com/)
-* **Browser Automation**: Selenium + Chromium (Headless)
+* **⚖️ 三大法人籌碼**
+    * **合計趨勢**：獨家提供「三大法人合計買賣超」柱狀圖與「合計累積買賣超」折線圖 (白色)，一眼看穿法人整體多空態度。
+    * **個別法人**：保留外資、投信、自營商的獨立買賣超與累積庫存圖表供深入分析。
 
-## 📂 檔案結構
+* **💰 融資融券**
+    * 提供融資、融券的餘額與單日增減柱狀圖，輔助判斷散戶情緒與軋空力道。
 
-專案目錄應包含以下檔案，以確保在雲端環境正常運作：
+* **👥 集保戶股權分散 (大戶/散戶)**
+    * **自動化爬蟲**：自動抓取每週集保股權分佈數據。
+    * **智慧篩選**：可自定義「大戶」(如 >400張) 與「散戶」(如 <50張) 的張數門檻。
+    * **持股變動警示**：表格自動根據每週增減變化標示顏色（**紅字**代表增加，**綠字**代表減少），持股比例欄位同步變色，趨勢一目了然。
+    * **股價對照**：將大戶/散戶持股比例與股價走勢疊加對照，快速識別籌碼流向對股價的影響。
 
-```text
-.
-├── main.py            # 主程式碼 (Streamlit App)
-├── requirements.txt   # Python 套件依賴清單
-├── packages.txt       # 系統級依賴 (用於安裝 Chrome/Chromium)
-└── README.md          # 專案說明檔
+## 🛠️ 安裝與執行
+
+### 1. 安裝相依套件
+
+請確保您的環境已安裝 Python 3.8+，並執行以下指令安裝所需套件：
+
+```bash
+pip install streamlit pandas yfinance selenium webdriver-manager twstock streamlit-lightweight-charts
+注意：本專案使用 Selenium 進行動態爬蟲，系統會自動下載並管理 Chrome Driver。若在雲端環境 (如 Streamlit Cloud) 部署，需配置 packages.txt 以安裝 Chromium。
+
+2. 啟動應用程式
+在終端機執行：
+
+Bash
+
+streamlit run main.py
+📂 檔案結構
+main.py: 主程式邏輯 (包含介面、爬蟲、資料處理與圖表繪製)。
+
+requirements.txt: (選用) 專案依賴套件列表。
+
+⚠️ 免責聲明
+本工具僅供程式交易研究與學術交流使用，數據來源為網路公開資訊 (Yahoo Finance, TWSE, etc.)。本程式不提供任何投資建議，使用者應自行判斷投資風險，開發者不對任何交易損失負責。
