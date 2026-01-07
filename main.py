@@ -1052,8 +1052,38 @@ if stock_input:
             
             if margin_df is not None and not margin_df.empty:
                 st.markdown("#### 近 10 日融資融券詳細數據")
-                # ✅ [FIX] hide_index=True
-                st.dataframe(margin_df.tail(10).iloc[::-1].reset_index(drop=True), use_container_width=True, hide_index=True)
+                
+                # 1. 排序並取最後 10 筆 (最新的在最後) -> 反轉 (最新的在最前)
+                display_margin = margin_df.sort_values("DateStr").tail(10).iloc[::-1]
+                
+                # 2. 移除 DateStr 欄位 (只留: 日期, 融資餘額, 融資增減, 融券餘額, 融券增減)
+                display_margin = display_margin[['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']]
+                
+                # 3. 設定樣式 (增紅減綠)
+                def highlight_margin(df):
+                    attr = pd.DataFrame('', index=df.index, columns=df.columns)
+                    c_up = f'color: {COLOR_UP}'   # 紅
+                    c_down = f'color: {COLOR_DOWN}' # 綠
+                    
+                    # 融資增減
+                    mask_m_up = df['融資增減'] > 0
+                    mask_m_down = df['融資增減'] < 0
+                    attr.loc[mask_m_up, ['融資增減']] = c_up
+                    attr.loc[mask_m_down, ['融資增減']] = c_down
+                    
+                    # 融券增減
+                    mask_s_up = df['融券增減'] > 0
+                    mask_s_down = df['融券增減'] < 0
+                    attr.loc[mask_s_up, ['融券增減']] = c_up
+                    attr.loc[mask_s_down, ['融券增減']] = c_down
+                    
+                    return attr
+
+                st.dataframe(
+                    display_margin.style.apply(highlight_margin, axis=None), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
 
         # ==================== Tab 5: 大戶 (集保分佈) ====================
         with tab_holder:
