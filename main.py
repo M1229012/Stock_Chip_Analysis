@@ -224,6 +224,32 @@ def calculate_technical_indicators(df):
     
     return df
 
+# ✅ [NEW] 週期轉換函式
+def resample_data(df, period):
+    if period == '日K':
+        return df
+    
+    df = df.copy()
+    df.index = pd.to_datetime(df['DateStr'])
+    
+    rule = 'W-MON' if period == '週K' else 'ME'
+    
+    agg_dict = {
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }
+    
+    resampled = df.resample(rule).agg(agg_dict).dropna()
+    resampled['DateStr'] = resampled.index.strftime('%Y-%m-%d')
+    resampled = resampled.reset_index(drop=True)
+    
+    # 重算指標
+    resampled = calculate_technical_indicators(resampled)
+    return resampled
+
 # ================= 3. 爬蟲核心 =================
 
 @st.cache_resource
@@ -704,6 +730,9 @@ with st.sidebar:
     if stock_selection: stock_input = stock_selection.split()[0]
     else: stock_input = ""
     
+    # ✅ [NEW] 新增 K 線週期選擇器
+    kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
+    
     days_map = {"1日": 1, "5日": 5, "10日": 10, "20日": 20, "40日": 40, "60日": 60, "120日": 120, "240日": 240}
     days_label = st.selectbox("統計天數", list(days_map.keys()), index=6) 
     selected_days = days_map[days_label]
@@ -727,7 +756,12 @@ if stock_input:
     with st.spinner(f"正在分析 {stock_display} ..."):
         df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
         
-    df_price = get_stock_price(stock_input, st.session_state.refresh_nonce)
+    df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
+    
+    # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
+    df_price = None
+    if df_price_daily is not None:
+        df_price = resample_data(df_price_daily, kline_period)
 
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
