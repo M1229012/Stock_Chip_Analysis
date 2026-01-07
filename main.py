@@ -224,16 +224,19 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ✅ [NEW] 週期轉換函式
+# ✅ [NEW] 週期轉換函式 (日 -> 週/月)
 def resample_data(df, period):
     if period == '日K':
         return df
     
     df = df.copy()
+    # 確保索引是 datetime
     df.index = pd.to_datetime(df['DateStr'])
     
+    # 設定 Resample 規則: 週K(W-MON:週一為始), 月K(ME:月底)
     rule = 'W-MON' if period == '週K' else 'ME'
     
+    # 定義聚合邏輯
     agg_dict = {
         'Open': 'first',
         'High': 'max',
@@ -242,11 +245,12 @@ def resample_data(df, period):
         'Volume': 'sum'
     }
     
+    # 執行轉換
     resampled = df.resample(rule).agg(agg_dict).dropna()
     resampled['DateStr'] = resampled.index.strftime('%Y-%m-%d')
     resampled = resampled.reset_index(drop=True)
     
-    # 重算指標
+    # 重新計算技術指標 (因為均線、KD等要在新週期下計算才正確)
     resampled = calculate_technical_indicators(resampled)
     return resampled
 
@@ -730,8 +734,7 @@ with st.sidebar:
     if stock_selection: stock_input = stock_selection.split()[0]
     else: stock_input = ""
     
-    # ✅ [NEW] 新增 K 線週期選擇器
-    kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
+    # ✅ [MOVED] K 線週期切換移至主畫面，這裡移除
     
     days_map = {"1日": 1, "5日": 5, "10日": 10, "20日": 20, "40日": 40, "60日": 60, "120日": 120, "240日": 240}
     days_label = st.selectbox("統計天數", list(days_map.keys()), index=6) 
@@ -758,11 +761,6 @@ if stock_input:
         
     df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
     
-    # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
-    df_price = None
-    if df_price_daily is not None:
-        df_price = resample_data(df_price_daily, kline_period)
-
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         st.caption(f"資料來源：{target_url}")
@@ -797,6 +795,14 @@ if stock_input:
 
         # ==================== Tab 1: K線 ====================
         with tab_kline:
+            # ✅ [NEW] 將 K 線週期選擇器移至此處 (均線選擇器的上方)
+            kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
+            
+            # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
+            df_price = None
+            if df_price_daily is not None:
+                df_price = resample_data(df_price_daily, kline_period)
+
             # ✅ [FIX] 改用 st.multiselect 取代多個 Checkbox
             ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
             ma_default = ["MA5", "MA10", "MA20", "MA60"]
