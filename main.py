@@ -551,7 +551,7 @@ def get_shareholding_data(stock_id: str):
         # XPath: .../ul/li[3]/a/span
         ratio_df = None
         try:
-            tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
+            tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
             driver.execute_script("arguments[0].click();", tab_ratio)
             time.sleep(1) # 等待切換
             
@@ -724,13 +724,38 @@ with st.sidebar:
 
     sorted_stocks = sorted(all_stocks, key=get_sort_key)
     
-    default_index = 0
-    for idx, s in enumerate(sorted_stocks):
-        if s.startswith("2313"):
-            default_index = idx
-            break
+    # ✅ [FIX] 修正：利用 session state 記住選擇的股票
+    # 1. 初始化 Session State 如果尚未設定
+    if "target_stock_str" not in st.session_state:
+        default_stock = sorted_stocks[0] if sorted_stocks else ""
+        for s in sorted_stocks:
+            if s.startswith("2313"):
+                default_stock = s
+                break
+        st.session_state.target_stock_str = default_stock
 
-    stock_selection = st.selectbox("搜尋股票", options=sorted_stocks, index=default_index, placeholder="請輸入股票代號...")
+    # 2. 找出目前 State 對應的 index (因為 sorted_stocks 順序會隨搜尋次數改變，必須動態計算)
+    try:
+        current_index = sorted_stocks.index(st.session_state.target_stock_str)
+    except ValueError:
+        current_index = 0
+        if sorted_stocks:
+            st.session_state.target_stock_str = sorted_stocks[0]
+
+    # 3. 定義 Callback 函數
+    def update_selected_stock():
+        st.session_state.target_stock_str = st.session_state.stock_selectbox_key
+
+    # 4. 建立 Selectbox 並綁定 key 與 on_change
+    stock_selection = st.selectbox(
+        "搜尋股票", 
+        options=sorted_stocks, 
+        index=current_index, 
+        placeholder="請輸入股票代號...",
+        key="stock_selectbox_key",
+        on_change=update_selected_stock
+    )
+    
     if stock_selection: stock_input = stock_selection.split()[0]
     else: stock_input = ""
     
