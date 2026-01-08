@@ -639,8 +639,6 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 
                 # 散戶條件：持股 < 散戶門檻
                 # 只有當整個區間都在門檻之下才算 (即 上界 <= 門檻)
-                # 但 upper 是 1, 5, 10... 
-                # 例如散戶門檻 10。 <1 (upper 1<=10 ok), 1-5 (upper 5<=10 ok), 5-10 (upper 10<=10 ok)
                 if upper <= retail_threshold:
                     retail_ratio += val
                 
@@ -713,6 +711,13 @@ current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 if "search_counts" not in st.session_state:
     st.session_state.search_counts = {}
 
+# ✅ 統計天數選項（移出 sidebar，改由分點頁面控制）
+days_map = {"1日": 1, "5日": 5, "10日": 10, "20日": 20, "40日": 40, "60日": 60, "120日": 120, "240日": 240}
+if "days_label" not in st.session_state:
+    st.session_state.days_label = "120日"
+if "selected_days" not in st.session_state:
+    st.session_state.selected_days = days_map.get(st.session_state.days_label, 120)
+
 with st.sidebar:
     st.header("參數設定")
     all_stocks = get_all_stock_options()
@@ -752,11 +757,7 @@ with st.sidebar:
     if stock_selection: stock_input = stock_selection.split()[0]
     else: stock_input = ""
     
-    # ✅ [MOVED] K 線週期切換移至主畫面，這裡移除
-    
-    days_map = {"1日": 1, "5日": 5, "10日": 10, "20日": 20, "40日": 40, "60日": 60, "120日": 120, "240日": 240}
-    days_label = st.selectbox("統計天數", list(days_map.keys()), index=6) 
-    selected_days = days_map[days_label]
+    # ✅ [MOVED] 統計天數已移到「分點」頁面
     
     st.markdown(f"🕒 資料抓取時間: {current_time}")
     
@@ -772,6 +773,9 @@ with st.sidebar:
 if stock_input:
     stock_name = get_stock_name(stock_input)
     stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
+
+    # ✅ 使用 session_state 的統計天數（由分點頁面控制）
+    selected_days = st.session_state.selected_days
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
     with st.spinner(f"正在分析 {stock_display} ..."):
@@ -922,6 +926,18 @@ if stock_input:
 
         # ==================== Tab 2: 分點 ====================
         with tab_broker:
+            # ✅ [MOVED] 統計天數移到分點頁面，調整就即時反映區間分點買賣超
+            days_label_ui = st.selectbox(
+                "統計天數",
+                list(days_map.keys()),
+                index=list(days_map.keys()).index(st.session_state.days_label),
+                key="broker_days_selector"
+            )
+            if days_label_ui != st.session_state.days_label:
+                st.session_state.days_label = days_label_ui
+                st.session_state.selected_days = days_map[days_label_ui]
+                st.rerun()
+
             brokers_list = list(dict.fromkeys(df_buy['broker'].tolist() + df_sell['broker'].tolist()))
             target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
             st.markdown("---")
