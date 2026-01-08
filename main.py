@@ -1003,7 +1003,10 @@ if stock_input:
                      {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                      {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-            
+            # ✅ 把統計區間起訖傳給前端，用來畫半透明遮罩
+            if charts_payload_broker:
+                charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
+
             renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
             st.markdown("---")
