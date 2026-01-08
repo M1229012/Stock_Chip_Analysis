@@ -987,8 +987,57 @@ if stock_input:
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
             
-            # ✅ [FIX] 禁用固定標籤
-            charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
+            # ================= [NEW] 遮罩邏輯 (Tab 2) =================
+            # 使用 Histogram 模擬半透明遮罩
+            mask_data = []
+            # 取得畫面中最高價作為遮罩高度的參考
+            max_price_val = plot_df['High'].max() if not plot_df.empty else 100
+            
+            # 解析日期區間
+            start_dt = pd.to_datetime(rank_start_date).date()
+            end_dt = pd.to_datetime(rank_end_date).date()
+            
+            for i, row in plot_df.iterrows():
+                curr_dt = pd.to_datetime(row['DateStr']).date()
+                if start_dt <= curr_dt <= end_dt:
+                    mask_data.append({
+                        "time": row['DateStr'],
+                        "value": max_price_val * 1.5, # 設為比最高價高，確保蓋滿
+                        "color": "rgba(255, 235, 59, 0.15)" # 半透明黃色
+                    })
+
+            # 構建序列
+            main_chart_series = []
+            
+            # 1. 遮罩層
+            main_chart_series.append({
+                "type": "Histogram",
+                "data": mask_data,
+                "options": {
+                    "priceFormat": {"type": "volume"},
+                    "priceScaleId": "right", # 與股價共用刻度
+                    "priceLineVisible": False,
+                    "lastValueVisible": False,
+                    "visible": True
+                }
+            })
+            
+            # 2. K線層
+            main_chart_series.append({
+                "type": "Candlestick",
+                "data": candlestick_data,
+                "options": {
+                    "upColor": COLOR_UP, 
+                    "downColor": COLOR_DOWN, 
+                    "borderUpColor": COLOR_UP, 
+                    "borderDownColor": COLOR_DOWN, 
+                    "wickUpColor": COLOR_UP, 
+                    "wickDownColor": COLOR_DOWN, 
+                    "lastValueVisible": False
+                }
+            })
+
+            charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": main_chart_series})
             
             if '買賣超_Final' in plot_df.columns:
                 chip_data, chip_cumulative_data = [], []
@@ -1003,10 +1052,7 @@ if stock_input:
                      {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                      {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-            # ✅ 把統計區間起訖傳給前端，用來畫半透明遮罩
-            if charts_payload_broker:
-                charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
-
+            
             renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
             st.markdown("---")
@@ -1262,8 +1308,20 @@ if stock_input:
                         hide_index=True
                     )
                     
-                    chart_df = pd.merge(holder_df, df_price[['DateStr', 'Close']], left_on='DateStr', right_on='DateStr', how='left')
-                    chart_df['Close'] = chart_df['Close'].ffill()
+                    # ✅ [FIX] 數據對齊修正 (Tab 5)
+                    # 說明：集保為週頻率。為了讓十字查價線完美對齊，我們以集保的日期為主。
+                    # 使用 merge_asof(direction='backward') 來抓取該日期（週五）的股價。
+                    # 若週五休市，會自動抓取最近一個交易日（例如週四）的收盤價，確保每個集保點都有價格，且不產生多餘的插值。
+                    
+                    df_price_sorted = df_price.sort_values("DateStr")
+                    holder_df_sorted = holder_df.sort_values("DateStr")
+                    
+                    # 轉換為 datetime 以供 merge_asof 使用
+                    df_price_sorted['_dt'] = pd.to_datetime(df_price_sorted['DateStr'])
+                    holder_df_sorted['_dt'] = pd.to_datetime(holder_df_sorted['DateStr'])
+                    
+                    # 合併：以 holder_df 為基準，找 df_price 中最接近的日期 (backward = 含當日或往前找)
+                    chart_df = pd.merge_asof(holder_df_sorted, df_price_sorted[['_dt', 'Close']], on='_dt', direction='backward')
                     
                     l_data, r_data, p_data = [], [], []
                     for i, row in chart_df.iterrows():
