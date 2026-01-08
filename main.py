@@ -559,7 +559,11 @@ def get_shareholding_data(stock_id: str):
             # 目標: .../div[3]/table
             ratio_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[3]/table"
             tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
-            ratio_df = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))[0]
+            # ✅ [FIX] 移除 [0] 索引限制，確保讀取完整表格資料（有些網站會把分頁資料放在同一個 table）
+            # 實際上 pandas read_html 會回傳 list of dataframes，我們需要確認這張表包含足夠多的行數
+            tables = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))
+            if tables:
+                ratio_df = tables[0]
         except Exception:
             pass
 
@@ -661,6 +665,7 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
             continue
             
     if not out: return None
+    # ✅ [FIX] 不限制筆數，回傳所有抓到的資料，確保能顯示歷史長資料
     return pd.DataFrame(out).sort_values("DateStr")
 
 @st.cache_data(ttl=21600)
@@ -670,7 +675,8 @@ def get_stock_price(stock_id, refresh_nonce=0):
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            temp_df = stock.history(period="2y")
+            # ✅ [FIX] 抓取更長歷史股價(2y -> 5y) 以匹配集保歷史資料
+            temp_df = stock.history(period="5y")
             if not temp_df.empty:
                 df = temp_df
                 break
