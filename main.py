@@ -1290,7 +1290,8 @@ if stock_input:
                     holder_df = holder_df.sort_values('_dt')
                     df_price_weekly = df_price_weekly.sort_values('_dt')
                     
-                    chart_df = pd.merge_asof(df_price_weekly, holder_df, on='_dt', direction='backward')
+                    # ✅ [FIX] 移除集保資料的 DateStr，避免欄位名稱衝突引發 KeyError
+                    chart_df = pd.merge_asof(df_price_weekly, holder_df.drop(columns=['DateStr'], errors='ignore'), on='_dt', direction='backward')
                     
                     l_data, r_data, p_data = [], [], []
                     for i, row in chart_df.iterrows():
