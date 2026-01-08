@@ -987,42 +987,8 @@ if stock_input:
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
             
-            # ================= [NEW] 遮罩邏輯 (Tab 2) =================
-            # 使用 Histogram 模擬半透明遮罩
-            mask_data = []
-            # 取得畫面中最高價作為遮罩高度的參考
-            max_price_val = plot_df['High'].max() if not plot_df.empty else 100
-            
-            # 解析日期區間
-            start_dt = pd.to_datetime(rank_start_date).date()
-            end_dt = pd.to_datetime(rank_end_date).date()
-            
-            for i, row in plot_df.iterrows():
-                curr_dt = pd.to_datetime(row['DateStr']).date()
-                if start_dt <= curr_dt <= end_dt:
-                    mask_data.append({
-                        "time": row['DateStr'],
-                        "value": max_price_val * 1.5, # 設為比最高價高，確保蓋滿
-                        "color": "rgba(255, 235, 59, 0.15)" # 半透明黃色
-                    })
-
-            # 構建序列
+            # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
             main_chart_series = []
-            
-            # 1. 遮罩層
-            main_chart_series.append({
-                "type": "Histogram",
-                "data": mask_data,
-                "options": {
-                    "priceFormat": {"type": "volume"},
-                    "priceScaleId": "right", # 與股價共用刻度
-                    "priceLineVisible": False,
-                    "lastValueVisible": False,
-                    "visible": True
-                }
-            })
-            
-            # 2. K線層
             main_chart_series.append({
                 "type": "Candlestick",
                 "data": candlestick_data,
@@ -1053,6 +1019,10 @@ if stock_input:
                      {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
             
+            # ✅ [修正] 恢復傳送 highlightRange 給前端，這樣全域遮罩 (Global Mask) 才能生效並蓋到下方
+            if charts_payload_broker:
+                charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
+
             renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
             st.markdown("---")
