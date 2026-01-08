@@ -1278,20 +1278,19 @@ if stock_input:
                         hide_index=True
                     )
                     
-                    # ✅ [FIX] 數據對齊修正 (Tab 5)
-                    # 說明：集保為週頻率。為了讓十字查價線完美對齊，我們以集保的日期為主。
-                    # 使用 merge_asof(direction='backward') 來抓取該日期（週五）的股價。
-                    # 若週五休市，會自動抓取最近一個交易日（例如週四）的收盤價，確保每個集保點都有價格，且不產生多餘的插值。
+                    # ✅ [FIX] 修正：強制將股價轉為「週K」頻率
+                    # 這樣做能確保十字查價線以「週」為單位移動，完美對齊集保發布日
+                    df_price_weekly = resample_data(df_price_daily, '週K')
                     
-                    df_price_sorted = df_price.sort_values("DateStr")
-                    holder_df_sorted = holder_df.sort_values("DateStr")
+                    # 準備合併
+                    df_price_weekly['_dt'] = pd.to_datetime(df_price_weekly['DateStr'])
+                    holder_df['_dt'] = pd.to_datetime(holder_df['DateStr'])
                     
-                    # 轉換為 datetime 以供 merge_asof 使用
-                    df_price_sorted['_dt'] = pd.to_datetime(df_price_sorted['DateStr'])
-                    holder_df_sorted['_dt'] = pd.to_datetime(holder_df_sorted['DateStr'])
+                    # 合併：以週K股價為主，對齊集保數據 (backward = 找最近一期的數據)
+                    holder_df = holder_df.sort_values('_dt')
+                    df_price_weekly = df_price_weekly.sort_values('_dt')
                     
-                    # 合併：以 holder_df 為基準，找 df_price 中最接近的日期 (backward = 含當日或往前找)
-                    chart_df = pd.merge_asof(holder_df_sorted, df_price_sorted[['_dt', 'Close']], on='_dt', direction='backward')
+                    chart_df = pd.merge_asof(df_price_weekly, holder_df, on='_dt', direction='backward')
                     
                     l_data, r_data, p_data = [], [], []
                     for i, row in chart_df.iterrows():
@@ -1304,11 +1303,11 @@ if stock_input:
                         # ✅ [FIX] 禁用固定標籤
                         {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{st.session_state.large_lot})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
                         {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{st.session_state.retail_lot})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
-                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} 
+                        {"type": "Line", "data": p_data, "options": {"title": "股價(週K)", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} 
                     ]
                     
                     # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
-                    holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
+                    holder_opts = make_opts(400, "籌碼分佈 vs 股價(週)", True)
                     holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     
