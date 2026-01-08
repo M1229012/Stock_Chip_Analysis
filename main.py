@@ -1,1326 +1,1379 @@
-import streamlit as st
-import pandas as pd
-import yfinance as yf
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from io import StringIO
-import time
-import re
-import math
-import requests
-from datetime import datetime, timedelta
-import pytz
-from urllib.parse import urlparse, parse_qs
-import shutil
+# -*- coding: utf-8 -*-
+"""
+V116.18 台股注意股系統 (GitHub Action 單檔直上版 - 回補可靠度強化) + 近90日處置股專區整合版
+修正重點：
+1. [快取] jail_map 改由 Google Sheet「處置股90日明細」讀取 (適應中文欄位)。
+2. [優化] Playwright 攔截條件放寬，移除 json 字串檢查。
+3. [除錯] 移除多餘的 return 與增加 stock_calendar 空值保護。
+4. [修正] 移除「處置原因」欄位，並將排序改為「最新日期排最上面 (Descending)」。
+5. [修正] 處置狀態判斷改依據「執行當日 (TARGET_DATE)」而非「資料日期」。
+6. [修正] 日曆備援邏輯改用 workalendar 套件，自動排除台灣所有國定假日。
+7. [修正] 歷史資料切斷邏輯修正：處置中保留狀態，出關後才歸零。
+"""
+
+import os
 import twstock
-import copy
+import yfinance as yf
+import pandas as pd
 import numpy as np
+import requests
+import re
+import time
+import random
+import gspread
+import logging
+import asyncio
+import nest_asyncio
+from google.oauth2.service_account import Credentials
+from datetime import datetime, timedelta, time as dt_time, date
+from dateutil.relativedelta import relativedelta
+from zoneinfo import ZoneInfo
+from playwright.async_api import async_playwright
+from workalendar.asia import Taiwan
 
-# ✅ TradingView 圖表套件
-from streamlit_lightweight_charts import renderLightweightCharts
+nest_asyncio.apply()
 
-# ================= 1. 系統設定 =================
+# ==========================================
+# 1. 設定靜音模式與常數
+# ==========================================
+logger = logging.getLogger('yfinance')
+logger.setLevel(logging.CRITICAL)
+logger.disabled = True
 
-st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
+UNIT_LOT = 1000
 
-# ✅ CSS 保留原樣
-st.markdown("""
-    <style>
-    /* --- 通用字體設定 --- */
-    html, body, [class*="css"] { font-size: 18px !important; }
-    .stDataFrame { font-size: 16px !important; }
-      
-    /* --- 數據卡片樣式 --- */
-    .metric-container {
-        display: flex;
-        justify-content: space-between;
-        background-color: #262730;
-        padding: 10px;
-        border-radius: 5px;
-        margin-top: 5px;
-        flex-wrap: wrap;
-    }
-    .metric-item {
-        text-align: center;
-        width: 48%;
-        min-width: 100px;
-    }
-    .metric-label {
-        font-size: 0.9rem;
-        color: #aaa;
-        white-space: nowrap;
-    }
-    .metric-value {
-        font-size: 1.2rem;
-        font-weight: bold;
-    }
+# 定義統計表頭
+STATS_HEADERS = [
+    '代號', '名稱', '連續天數', '近30日注意次數', '近10日注意次數', '最近一次日期',
+    '30日狀態碼', '10日狀態碼', '最快處置天數', '處置觸發原因', '風險等級', '觸發條件',
+    '目前價', '警戒價', '差幅(%)', '目前量', '警戒量', '成交值(億)',
+    '週轉率(%)', 'PE', 'PB', '當沖佔比(%)'
+]
 
-    /* --- 手機版 RWD (螢幕 < 768px) --- */
-    @media (max-width: 768px) {
-        html, body, [class*="css"] { font-size: 15px !important; }
-        .stDataFrame { font-size: 14px !important; }
-        h1 { font-size: 1.8rem !important; }
-        h2 { font-size: 1.5rem !important; }
-        h3 { font-size: 1.3rem !important; }
-        .metric-container { padding: 8px; gap: 5px; }
-        .metric-label { font-size: 0.8rem; }
-        .metric-value { font-size: 1rem; }
-        
-        /* 手機時：隱藏包含 desktop-marker 的容器 */
-        div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
-            display: none !important;
-        }
-    }
+# ==========================================
+# 📆 設定區
+# ==========================================
+SHEET_NAME = "台股注意股資料庫_V33"
+PARAM_SHEET_NAME = "個股參數"
+TW_TZ = ZoneInfo("Asia/Taipei")
+TARGET_DATE = datetime.now(TW_TZ)
 
-    /* --- 電腦版 RWD (螢幕 > 768px) --- */
-    @media (min-width: 769px) {
-        /* 電腦時：隱藏包含 mobile-marker 的容器 */
-        div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
-            display: none !important;
-        }
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# 時間門檻
+SAFE_CRAWL_TIME = dt_time(17, 30)        
+DAYTRADE_PUBLISH_TIME = dt_time(21, 0)   
+SAFE_MARKET_OPEN_CHECK = dt_time(16, 30) 
 
-COLOR_UP = '#ef5350' # 紅色 (上漲)
-COLOR_DOWN = '#26a69a' # 綠色 (下跌)
+IS_NIGHT_RUN = TARGET_DATE.hour >= 20
+IS_AFTER_SAFE = TARGET_DATE.time() >= SAFE_CRAWL_TIME
+IS_AFTER_DAYTRADE = TARGET_DATE.time() >= DAYTRADE_PUBLISH_TIME
 
-# ================= 2. 輔助函式 =================
+# 回補參數
+MAX_BACKFILL_TRADING_DAYS = 40   
+VERIFY_RECENT_DAYS = 2            
 
-def normalize_name(name):
-    return str(name).strip().replace(" ", "").replace("　", "")
+# ==========================================
+# 🔑 FinMind 金鑰設定
+# ==========================================
+FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
 
-# ✅ [Refactor] 共用日期解析函式
-def is_roc_date(s: str) -> bool:
-    return re.match(r"\d{2,3}/\d{1,2}/\d{1,2}", str(s).strip()) is not None
+token1 = os.getenv('FinMind_1')
+token2 = os.getenv('FinMind_2')
+FINMIND_TOKENS = [t for t in [token1, token2] if t]
 
-def roc_to_datestr(d_str: str) -> str | None:
-    parts = re.split(r"[/-]", str(d_str).strip())
-    if len(parts) < 2:
+CURRENT_TOKEN_INDEX = 0
+_FINMIND_CACHE = {}
+
+print(f"🚀 啟動 V116.18 台股注意股系統 (Fix: Jail Cutoff Logic)")
+print(f"🕒 系統時間 (Taiwan): {TARGET_DATE.strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"⏰ 時序狀態: After 17:30? {IS_AFTER_SAFE} | After 21:00? {IS_AFTER_DAYTRADE}")
+
+try: twstock.__update_codes()
+except: pass
+
+# ============================
+# 🛠️ 工具函式
+# ============================
+CN_NUM = {"一":"1","二":"2","三":"3","四":"4","五":"5","六":"6","七":"7","八":"8","九":"9","十":"10"}
+
+KEYWORD_MAP = {
+    "起迄兩個營業日": 11, "當日沖銷": 13, "借券賣出": 12, "累積週轉率": 10, "週轉率": 4,
+    "成交量": 9, "本益比": 6, "股價淨值比": 6, "溢折價": 8, "收盤價漲跌百分比": 1,
+    "最後成交價漲跌": 1, "最近六個營業日累積": 1
+}
+
+def normalize_clause_text(s: str) -> str:
+    if not s: return ""
+    s = str(s)
+    s = s.replace("第ㄧ款", "第一款")
+    for cn, dg in CN_NUM.items():
+        s = s.replace(f"第{cn}款", f"第{dg}款")
+    s = s.translate(str.maketrans("１２３４５６７８９０", "1234567890"))
+    return s
+
+def parse_clause_ids_strict(clause_text):
+    if not isinstance(clause_text, str): return set()
+    clause_text = normalize_clause_text(clause_text)
+    ids = set()
+    matches = re.findall(r'第\s*(\d+)\s*款', clause_text)
+    for m in matches: ids.add(int(m))
+    if not ids:
+        for keyword, code in KEYWORD_MAP.items():
+            if keyword in clause_text: ids.add(code)
+    return ids
+
+def merge_clause_text(a, b):
+    ids = set()
+    ids |= parse_clause_ids_strict(a) if a else set()
+    ids |= parse_clause_ids_strict(b) if b else set()
+    if ids: return "、".join([f"第{x}款" for x in sorted(ids)])
+    a = a or ""; b = b or ""
+    return a if len(a) >= len(b) else b
+
+def is_valid_accumulation_day(ids):
+    if not ids: return False
+    return any(1 <= x <= 8 for x in ids)
+
+def is_special_risk_day(ids):
+    if not ids: return False
+    return any(9 <= x <= 14 for x in ids)
+
+def get_ticker_suffix(market_type):
+    m = str(market_type).upper().strip()
+    keywords = ['上櫃', 'TWO', 'TPEX', 'OTC']
+    if any(k in m for k in keywords): return '.TWO'
+    return '.TW'
+
+def connect_google_sheets():
+    try:
+        if not os.path.exists("service_key.json"): return None, None
+        gc = gspread.service_account(filename="service_key.json")
+        try: sh = gc.open(SHEET_NAME)
+        except: sh = gc.create(SHEET_NAME)
+        return sh, None
+    except: return None, None
+
+def get_or_create_ws(sh, title, headers=None, rows=5000, cols=20):
+    need_cols = max(cols, len(headers) if headers else 0)
+    try:
+        ws = sh.worksheet(title)
+        try:
+            if headers and ws.col_count < need_cols:
+                ws.resize(rows=ws.row_count, cols=need_cols)
+        except: pass
+        return ws
+    except:
+        print(f"⚠️ 工作表 '{title}' 不存在，正在建立...")
+        ws = sh.add_worksheet(title=title, rows=str(rows), cols=str(need_cols))
+        if headers:
+            ws.append_row(headers, value_input_option="USER_ENTERED")
+        return ws
+
+def load_log_index(ws_log):
+    existing_keys = set()
+    date_counts = {}
+    try:
+        vals = ws_log.get_all_values()
+        if not vals or len(vals) <= 1: return existing_keys, date_counts
+        for r in vals[1:]:
+            if len(r) >= 3 and str(r[0]).strip():
+                d = str(r[0]).strip()
+                code = str(r[2]).strip().replace("'", "")
+                if code:
+                    k = d + "_" + code
+                    existing_keys.add(k)
+                    date_counts[d] = date_counts.get(d, 0) + 1
+    except: pass
+    return existing_keys, date_counts
+
+def load_status_index(ws_status):
+    key_to_row = {}
+    cnt_map = {}
+    try:
+        vals = ws_status.get_all_values()
+        if not vals or len(vals) <= 1: return key_to_row, cnt_map
+        for r_idx, row in enumerate(vals[1:], start=2):
+            if len(row) >= 1 and str(row[0]).strip():
+                d = str(row[0]).strip()
+                key_to_row[d] = r_idx
+                c = 0
+                if len(row) >= 2:
+                    try: c = int(str(row[1]).strip())
+                    except: c = 0
+                cnt_map[d] = c
+    except: pass
+    return key_to_row, cnt_map
+
+def upsert_status(ws_status, key_to_row, date_str, count, now_str):
+    row_data = [date_str, int(count), now_str]
+    if date_str in key_to_row:
+        r = key_to_row[date_str]
+        try: ws_status.update(values=[row_data], range_name=f"A{r}:C{r}", value_input_option="USER_ENTERED")
+        except: pass
+    else:
+        try: ws_status.append_row(row_data, value_input_option="USER_ENTERED")
+        except: pass
+
+def finmind_get(dataset, data_id=None, start_date=None, end_date=None):
+    global CURRENT_TOKEN_INDEX
+    cache_key = (dataset, data_id, start_date, end_date)
+    if cache_key in _FINMIND_CACHE: return _FINMIND_CACHE[cache_key].copy()
+
+    params = {"dataset": dataset}
+    if data_id: params["data_id"] = str(data_id)
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    if not FINMIND_TOKENS: return pd.DataFrame()
+
+    for _ in range(4):
+        headers = {"Authorization": f"Bearer {FINMIND_TOKENS[CURRENT_TOKEN_INDEX]}", "User-Agent": "Mozilla/5.0", "Connection": "close"}
+        try:
+            r = requests.get(FINMIND_API_URL, params=params, headers=headers, timeout=10)
+            if r.status_code == 200:
+                j = r.json()
+                df = pd.DataFrame(j.get("data", [])) if "data" in j else pd.DataFrame()
+                if len(_FINMIND_CACHE) >= 2000: _FINMIND_CACHE.clear()
+                _FINMIND_CACHE[cache_key] = df
+                return df.copy()
+            elif r.status_code != 200:
+                time.sleep(2)
+                CURRENT_TOKEN_INDEX = (CURRENT_TOKEN_INDEX + 1) % len(FINMIND_TOKENS)
+                continue
+        except: time.sleep(1)
+    return pd.DataFrame()
+
+def update_market_monitoring_log(sh):
+    print("📊 檢查並更新「大盤數據監控」...")
+    HEADERS = ['日期', '代號', '名稱', '收盤價', '漲跌幅(%)', '成交金額(億)']
+    ws_market = get_or_create_ws(sh, "大盤數據監控", headers=HEADERS, cols=10)
+
+    def norm_date(s):
+        s = str(s).strip()
+        if not s: return ""
+        try: return pd.to_datetime(s, errors='coerce').strftime("%Y-%m-%d")
+        except: return s
+
+    key_to_row = {}
+    try:
+        all_vals = ws_market.get_all_values()
+        for r_idx, row in enumerate(all_vals[1:], start=2):
+            if len(row) >= 2:
+                key_to_row[f"{norm_date(row[0])}_{str(row[1]).strip()}"] = r_idx
+    except: pass
+
+    existing_keys = set(key_to_row.keys())
+
+    try:
+        targets = [
+            {'fin_id': 'TAIEX', 'code': '^TWII', 'name': '加權指數'},
+            {'fin_id': 'TPEx',  'code': '^TWOII', 'name': '櫃買指數'}
+        ]
+        start_date_str = (TARGET_DATE - timedelta(days=45)).strftime("%Y-%m-%d")
+        dfs = {}
+        for t in targets:
+            df = finmind_get("TaiwanStockPrice", data_id=t['fin_id'], start_date=start_date_str)
+            if not df.empty:
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+                df.index = df.index.tz_localize(None)
+                if 'close' in df.columns:
+                    df['Close'] = df['close'].astype(float)
+                    df['Pct'] = df['Close'].pct_change() * 100
+                if 'Turnover' in df.columns: df['Volume'] = df['Turnover'].astype(float)
+                elif 'Trading_money' in df.columns: df['Volume'] = df['Trading_money'].astype(float)
+                else: df['Volume'] = 0.0
+                dfs[t['code']] = df
+
+        new_rows = []
+        today_str = TARGET_DATE.strftime("%Y-%m-%d")
+        all_dates = set()
+        for df in dfs.values(): all_dates.update(df.index.strftime("%Y-%m-%d").tolist())
+
+        for d in sorted(all_dates):
+            for t in targets:
+                code = t['code']; name = t['name']
+                df = dfs.get(code)
+                if df is None or d not in df.index.strftime("%Y-%m-%d"): continue
+                try: row = df.loc[d]
+                except: row = df[df.index.strftime("%Y-%m-%d") == d].iloc[0]
+
+                if pd.isna(row.get('Close')): continue
+                close = round(float(row['Close']), 2)
+                pct = round(float(row.get('Pct', 0) or 0), 2)
+                vol = round(float(row.get('Volume', 0) or 0) / 100000000, 2)
+
+                row_data = [d, code, name, close, pct, vol]
+                comp_key = f"{d}_{code}"
+
+                if d == today_str and TARGET_DATE.time() < SAFE_MARKET_OPEN_CHECK: continue
+                if d == today_str and comp_key in key_to_row and TARGET_DATE.time() >= SAFE_MARKET_OPEN_CHECK:
+                    try:
+                        r_num = key_to_row[comp_key]
+                        ws_market.update(values=[row_data], range_name=f'A{r_num}:F{r_num}', value_input_option="USER_ENTERED")
+                    except: pass
+                    continue
+                if comp_key in existing_keys: continue
+                if close > 0: new_rows.append(row_data)
+
+        if new_rows: ws_market.append_rows(new_rows, value_input_option="USER_ENTERED")
+    except Exception as e: print(f" ❌ 大盤更新失敗: {e}")
+
+# ============================
+# 🔥 處置資料相關函式 (Jail)
+# ============================
+def parse_roc_date(roc_date_str):
+    try:
+        roc_date_str = str(roc_date_str).strip()
+        parts = re.split(r"[/-]", roc_date_str)
+        if len(parts) == 3:
+            y = int(parts[0]) + 1911
+            m = int(parts[1])
+            d = int(parts[2])
+            return date(y, m, d)
+    except:
         return None
-    y = int(parts[0])
-    y = y + 1911 if y < 1911 else y
-    m = int(parts[1])
-    d = int(parts[2]) if len(parts) > 2 else 1
-    return f"{y:04d}-{m:02d}-{d:02d}"
-
-# ✅ 獲取所有股票選單 (代號 + 名稱)
-@st.cache_data
-def get_all_stock_options():
-    stock_options = []
-    # 使用 twstock 內建代碼表
-    for code, info in twstock.codes.items():
-        if info.type == "股票": 
-            stock_options.append(f"{code} {info.name}")
-    return stock_options
-
-def get_stock_name(stock_id):
-    try:
-        if stock_id in twstock.codes:
-            return twstock.codes[stock_id].name
-        return ""
-    except:
-        return ""
-
-# ✅ 確保 render_broker_table 定義在主邏輯之前
-def render_broker_table(df, sum_data, color_hex, title):
-    if "買超" in title:
-        label_total = "🔴 合計買超張數"
-        label_avg = "🔴 平均買超成本"
-    else:
-        label_total = "🟢 合計賣超張數"
-        label_avg = "🟢 平均賣超成本"
-
-    full_config = {
-        "broker": "券商分點",
-        "buy": st.column_config.NumberColumn("買進", format="%d"),
-        "sell": st.column_config.NumberColumn("賣出", format="%d"),
-        "net": st.column_config.NumberColumn("買賣超", format="%d"),
-        "pct": "佔比"
-    }
-    
-    st.dataframe(
-        df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
-        use_container_width=True, height=500, hide_index=True, column_config=full_config
-    )
-    
-    st.markdown(f"""
-    <div class="metric-container" style="border-left: 5px solid {color_hex};">
-        <div class="metric-item">
-            <div class="metric-label">{label_total}</div>
-            <div class="metric-value" style="color: {color_hex};">{sum_data['total']}</div>
-        </div>
-        <div class="metric-item">
-            <div class="metric-label">{label_avg}</div>
-            <div class="metric-value">{sum_data['avg']}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ✅ 輔助函式：計算 KD, MACD, BB, RSI, MA
-def calculate_technical_indicators(df):
-    df = df.copy()
-    
-    # 1. 布林通道
-    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
-    df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
-
-    # 2. 計算 KD (9, 3, 3)
-    rsv_period = 9
-    df['9_High'] = df['High'].rolling(window=rsv_period).max()
-    df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
-    df['RSV'] = 100 * ((df['Close'] - df['9_Low']) / (df['9_High'] - df['9_Low']))
-    df['RSV'] = df['RSV'].fillna(50)
-    
-    k_list = []
-    d_list = []
-    k_prev = 50
-    d_prev = 50
-    for rsv in df['RSV']:
-        if pd.isna(rsv):
-            k_now = k_prev
-            d_now = d_prev
-        else:
-            k_now = (2/3) * k_prev + (1/3) * rsv
-            d_now = (2/3) * d_prev + (1/3) * k_now
-        k_list.append(k_now)
-        d_list.append(d_now)
-        k_prev = k_now
-        d_prev = d_now
-        
-    df['K'] = k_list
-    df['D'] = d_list
-
-    # 3. 計算 MACD (12, 26, 9)
-    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['DIF'] = exp12 - exp26
-    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = 2 * (df['DIF'] - df['DEA'])
-
-    # 4. [NEW] 計算 RSI (6日)
-    delta = df['Close'].diff()
-    up = delta.clip(lower=0)
-    down = -1 * delta.clip(upper=0)
-    ema_up = up.ewm(com=5, adjust=False).mean() # com=5 means span=6
-    ema_down = down.ewm(com=5, adjust=False).mean()
-    rs = ema_up / ema_down
-    df['RSI'] = 100 - (100 / (1 + rs))
-
-    # 5. [NEW] 計算更多均線
-    df['MA5'] = df['Close'].rolling(window=5).mean()
-    df['MA10'] = df['Close'].rolling(window=10).mean()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['MA120'] = df['Close'].rolling(window=120).mean()
-    df['MA240'] = df['Close'].rolling(window=240).mean()
-    
-    return df
-
-# ✅ [NEW] 週期轉換函式 (日 -> 週/月)
-def resample_data(df, period):
-    if period == '日K':
-        return df
-    
-    df = df.copy()
-    # 確保索引是 datetime
-    df.index = pd.to_datetime(df['DateStr'])
-    
-    # 設定 Resample 規則: 週K(W-MON:週一為始), 月K(ME:月底)
-    rule = 'W-MON' if period == '週K' else 'ME'
-    
-    # 定義聚合邏輯
-    agg_dict = {
-        'Open': 'first',
-        'High': 'max',
-        'Low': 'min',
-        'Close': 'last',
-        'Volume': 'sum'
-    }
-    
-    # 執行轉換
-    resampled = df.resample(rule).agg(agg_dict).dropna()
-    resampled['DateStr'] = resampled.index.strftime('%Y-%m-%d')
-    resampled = resampled.reset_index(drop=True)
-    
-    # 重新計算技術指標 (因為均線、KD等要在新週期下計算才正確)
-    resampled = calculate_technical_indicators(resampled)
-    return resampled
-
-# ================= 3. 爬蟲核心 =================
-
-@st.cache_resource
-def get_driver_path():
-    return ChromeDriverManager().install()
-
-def get_driver():
-    options = Options()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    if shutil.which("chromium"):
-        options.binary_location = shutil.which("chromium")
-    elif shutil.which("chromium-browser"):
-        options.binary_location = shutil.which("chromium-browser")
-        
-    if shutil.which("chromedriver"):
-        service = Service(shutil.which("chromedriver"))
-    else:
-        service = Service(get_driver_path())
-
-    driver = webdriver.Chrome(service=service, options=options)
-    return driver
-
-def calculate_date_range(stock_id, days):
-    try:
-        adj_days = days
-        if days >= 120:
-            adj_days = days - 1
-            
-        ticker = f"{stock_id}.TW"
-        df = yf.Ticker(ticker).history(period=f"{max(adj_days + 60, 200)}d")
-        
-        if df.empty:
-            ticker = f"{stock_id}.TWO"
-            df = yf.Ticker(ticker).history(period=f"{max(adj_days + 60, 200)}d")
-            
-        if df.empty:
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=adj_days * 1.5)
-            return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
-            
-        df_target = df.tail(adj_days)
-        start_date = df_target.index[0].strftime('%Y-%m-%d')
-        end_date = df_target.index[-1].strftime('%Y-%m-%d')
-        return start_date, end_date
-    except:
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
-
-# ✅ 爬取三大法人資料
-@st.cache_data(persist="disk", ttl=21600)
-def get_institutional_data(stock_id, start_date, end_date):
-    driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        target_df = None
-        for df in tables:
-            if df.astype(str).apply(lambda x: x.str.contains('外資買賣超', na=False)).any().any():
-                target_df = df
-                break
-        
-        if target_df is not None:
-            if len(target_df.columns) >= 4:
-                clean_df = target_df.iloc[:, [0, 1, 2, 3]].copy()
-                clean_df.columns = ['日期', '外資買賣超', '投信買賣超', '自營商買賣超']
-                
-                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
-                
-                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
-                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
-                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
-
-                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
-                return clean_df.dropna(subset=['DateStr'])
-    except:
-        pass
-    finally:
-        driver.quit()
     return None
 
-# ✅ 爬取融資融券資料
-@st.cache_data(persist="disk", ttl=21600)
-def get_margin_data(stock_id, start_date, end_date):
-    driver = get_driver()
-    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
+def parse_jail_period(period_str):
+    if not period_str:
+        return None, None
+
+    s = str(period_str).strip()
+    dates = []
+    if "～" in s:
+        dates = s.split("～")
+    elif "~" in s:
+        dates = s.split("~")
+    elif "-" in s and "/" in s and s.count("-") == 1:
+        dates = s.split("-")
+
+    if len(dates) >= 2:
+        sd = parse_roc_date(dates[0].strip())
+        ed = parse_roc_date(dates[1].strip())
+        if sd and ed:
+            return sd, ed
+    return None, None
+
+# ✅ [修正] 從 Google Sheet 讀取處置股快取 (使用中文欄位)
+def get_jail_map_from_sheet(sh):
+    print("📂 從 Google Sheet 讀取處置名單快取 (處置股90日明細)...")
+    jail_map = {}
     try:
-        driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html))
-        
-        target_df = None
-        for df in tables:
-            if df.astype(str).apply(lambda x: x.str.contains('融資餘額', na=False)).any().any():
-                target_df = df
-                break
-        
-        if target_df is not None:
-            if len(target_df.columns) >= 13:
-                clean_df = target_df.iloc[:, [0, 4, 5, 11, 12]].copy()
-                clean_df.columns = ['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']
-                
-                clean_df = clean_df[clean_df['日期'].apply(is_roc_date)]
-                
-                for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
-                    clean_df[col] = clean_df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', '0')
-                    clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
-                
-                clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
-                return clean_df.dropna(subset=['DateStr'])
+        ws = sh.worksheet("處置股90日明細")
+        rows = ws.get_all_records()
+        for r in rows:
+            # ✅ 改用中文 Key
+            code = str(r.get('代號', '')).strip()
+            if not code: 
+                # 兼容舊版英文 Key
+                code = str(r.get('Code', '')).strip()
+
+            if not code: continue
+
+            period = str(r.get('處置期間', '')).strip()
+            if not period:
+                period = str(r.get('Period', '')).strip()
+
+            sd, ed = parse_jail_period(period)
+            if sd and ed:
+                jail_map.setdefault(code, []).append((sd, ed))
+        print(f"✅ 快取讀取完成，共 {len(jail_map)} 檔處置股資料。")
+    except Exception as e:
+        print(f"⚠️ 讀取處置快取失敗 (可能是初次執行或工作表不存在): {e}")
+    return jail_map
+
+def is_in_jail(stock_id, target_date, jail_map):
+    if not jail_map or stock_id not in jail_map:
+        return False
+    for s, e in jail_map[stock_id]:
+        if s <= target_date <= e:
+            return True
+    return False
+
+def prev_trade_date(d, cal_dates):
+    try:
+        idx = cal_dates.index(d)
+        return cal_dates[idx - 1] if idx > 0 else None
     except:
-        pass
-    finally:
-        driver.quit()
-    return None
+        for i in range(len(cal_dates) - 1, -1, -1):
+            if cal_dates[i] < d:
+                return cal_dates[i]
+        return None
 
-# ✅ [FIX] 將 get_real_data_matrix 移到最上方
-@st.cache_data(persist="disk", ttl=604800)
-def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
-    driver = get_driver()
-    base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
-    url = f"{base_url}?a={stock_id}&e={start_date}&f={end_date}"
+def build_exclude_map(cal_dates, jail_map):
+    exclude_map = {}
+    if not jail_map:
+        return exclude_map
 
-    try:
-        driver.get(url)
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '買超券商')]"))
-            )
-        except:
-            return None, None, None, None, None, url
+    for code, periods in jail_map.items():
+        s = set()
+        for start, end in periods:
+            # ❌ [修正] 移除「處置前一日」的排除邏輯
+            # pd = prev_trade_date(start, cal_dates)
+            # if pd:
+            #     s.add(pd)
 
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html), match="買超券商")
-        if not tables: return None, None, None, None, None, url
-        df = tables[0]
-        
-        header_row = -1
-        for i, row in df.iterrows():
-            row_str = row.astype(str).values
-            if "買超券商" in row_str and "賣超券商" in row_str:
-                header_row = i
-                break
-        if header_row == -1: return None, None, None, None, None, url
+            # 1) 處置期間（只放交易日）
+            for d in cal_dates:
+                if start <= d <= end:
+                    s.add(d)
+        exclude_map[code] = s
+    return exclude_map
 
-        broker_info = {}
-        try:
-            links = driver.find_elements(By.XPATH, "//table//a[contains(@href, 'zco0/zco0.djhtm')]")
-            for link in links:
-                name = normalize_name(link.text)
-                href = link.get_attribute('href')
-                if name and href:
-                    parsed = urlparse(href)
-                    params = parse_qs(parsed.query)
-                    if 'b' in params and 'BHID' in params:
-                        broker_info[name] = {'b': params['b'][0], 'BHID': params['BHID'][0]}
-        except: pass
+def is_excluded(code, d, exclude_map):
+    return bool(exclude_map) and (code in exclude_map) and (d in exclude_map[code])
 
-        sum_buy = {"total": "0", "avg": "0"}
-        sum_sell = {"total": "0", "avg": "0"}
-        
-        try:
-            total_buy_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[22]/td[2]")
-            sum_buy['total'] = total_buy_elem.text.strip()
-            avg_buy_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[23]/td[2]")
-            sum_buy['avg'] = avg_buy_elem.text.strip()
-            total_sell_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[22]/td[4]")
-            sum_sell['total'] = total_sell_elem.text.strip()
-            avg_sell_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[23]/td[4]")
-            sum_sell['avg'] = avg_sell_elem.text.strip()
-        except: pass
+# ✅ [修正] 增加 target_date 參數，僅在「處置已過期」時才執行切斷
+def get_last_n_non_jail_trade_dates(stock_id, cal_dates, jail_map, exclude_map=None, n=30, target_date=None):
+    # 預設：沒有處置紀錄時，使用很舊的日期
+    last_jail_end = date(1900, 1, 1)
 
-        df_clean = df.iloc[header_row+1:].copy()
-        df_buy = df_clean.iloc[:, [0, 1, 2, 3, 4]].copy()
-        df_buy.columns = ['broker', 'buy', 'sell', 'net', 'pct']
-        df_sell = df_clean.iloc[:, [5, 6, 7, 8, 9]].copy()
-        df_sell.columns = ['broker', 'buy', 'sell', 'net', 'pct']
+    if jail_map and stock_id in jail_map:
+        # 找出該股票所有「已經結束」的處置 (end_date < target_date)
+        # target_date 應傳入 TARGET_DATE.date() (程式執行當日)
+        # 這樣如果是「處置中」，該次處置結束日就不會被算進來，歷史資料就不會被切斷
+        past_jail_ends = [e for (s, e) in jail_map[stock_id] if e < target_date]
 
-        def clean_sub_df(d):
-            d = d.dropna(subset=['broker'])
-            mask = d['broker'].astype(str).str.contains("合計|平均|買超券商|賣超券商", na=False)
-            d = d[~mask]
-            for col in ['buy', 'sell', 'net']:
-                d[col] = d[col].astype(str).str.replace(',', '', regex=False).str.replace('+', '', regex=False).str.replace('nan', '', regex=False)
-                d[col] = pd.to_numeric(d[col], errors='coerce').fillna(0).astype(int)
-            return d
+        if past_jail_ends:
+            last_jail_end = max(past_jail_ends)
 
-        df_buy = clean_sub_df(df_buy)
-        df_sell = clean_sub_df(df_sell)
-        df_buy = df_buy[df_buy['net'] > 0].sort_values('net', ascending=False).head(15).reset_index(drop=True)
-        df_sell['abs_net'] = df_sell['net'].abs()
-        df_sell = df_sell.sort_values('abs_net', ascending=False).head(15).drop(columns=['abs_net']).reset_index(drop=True)
-
-        return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
-    except:
-        return None, None, None, None, None, url
-    finally:
-        driver.quit()
-
-@st.cache_data(persist="disk", ttl=604800)
-def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
-    BHID, b, c_val = broker_key
-    driver = get_driver()
-    base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
-    target_url = f"{base_url}?A={stock_id}&BHID={BHID}&b={b}&C={c_val}&D={start_date}&E={end_date}&ver=V3"
-    table_xpath = "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[6]/td/table"
-
-    try:
-        driver.get(target_url)
-        all_dfs = []
-        page_count = 0
-        while page_count < 60:
-            try:
-                WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, table_xpath)))
-            except: break
-
-            try:
-                target_table = driver.find_element(By.XPATH, table_xpath)
-                table_html = target_table.get_attribute('outerHTML')
-                tables = pd.read_html(StringIO(table_html))
-                current_df = tables[0] if tables else None
-            except:
-                html = driver.page_source
-                tables = pd.read_html(StringIO(html), match="日期")
-                current_df = tables[0] if tables else None
-
-            if current_df is not None: all_dfs.append(current_df)
-            
-            try:
-                next_links = driver.find_elements(By.XPATH, "//a[contains(text(), '下一頁')]")
-                if next_links and next_links[0].is_enabled():
-                    next_links[0].click()
-                    time.sleep(0.5) 
-                    page_count += 1
-                else: break 
-            except: break
-
-        if not all_dfs: return None, target_url
-
-        df = pd.concat(all_dfs, ignore_index=True)
-        df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
-        
-        if '買賣超' not in df.columns and len(df.columns) >= 4:
-            df = df.iloc[:, :4]
-            df.columns = ['日期', '買進', '賣出', '買賣超']
-            
-        df = df[df['日期'] != '日期']
-        for col in ['買進', '賣出', '買賣超']:
-             df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', ''), errors='coerce').fillna(0)
-
-        df['買賣超_Calc'] = df['買進'] - df['賣出']
-        df['DateStr'] = df['日期'].apply(roc_to_datestr)
-        df = df.dropna(subset=['DateStr']).sort_values('DateStr', ascending=True)
-        return df, target_url
-    except:
-        return None, target_url
-    finally:
-        driver.quit()
-
-# ✅ [FIX] 使用 Selenium + XPATH 爬取 Norway 神秘金字塔 StockHolders.aspx
-@st.cache_data(persist="disk", ttl=604800)
-def get_shareholding_data(stock_id: str):
-    driver = get_driver()
-    url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
-    
-    try:
-        driver.get(url)
-        # 等待頁面載入
-        time.sleep(2)
-        
-        # 1. 抓取【明細】表格 (Summary Table)
-        # 使用使用者提供的 XPath (明細表格容器)
-        # 目標: .../div[1]/table
-        summary_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[1]/table"
-        summary_df = None
-        try:
-            tbl_summary = driver.find_element(By.XPATH, summary_xpath)
-            summary_df = pd.read_html(StringIO(tbl_summary.get_attribute("outerHTML")))[0]
-        except Exception:
-            pass
-            
-        # 2. 抓取【分級比例】表格 (Ratio Table)
-        # 先點擊【分級比例】頁籤 (li[3])
-        # XPath: .../ul/li[3]/a/span
-        ratio_df = None
-        try:
-            tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
-            driver.execute_script("arguments[0].click();", tab_ratio)
-            time.sleep(1) # 等待切換
-            
-            # 抓取分級比例表格
-            # 目標: .../div[3]/table
-            ratio_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[3]/table"
-            tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
-            ratio_df = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))[0]
-        except Exception:
-            pass
-
-        return {"summary": summary_df, "ratio": ratio_df}
-
-    except Exception:
-        return {"summary": None, "ratio": None}
-    finally:
-        driver.quit()
-
-# ✅ [FIX] 處理分級比例數據
-def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail_threshold: int) -> pd.DataFrame | None:
-    if ratio_df is None or ratio_df.empty: return None
-    
-    df = ratio_df.copy()
-    
-    # 根據用戶提供的資訊，分級比例表的欄位順序固定
-    # Col 2: 資料日期
-    # Col 3: 小於1張
-    # Col 4: 1-5張
-    # ...
-    # Col 17: 1000張以上
-    
-    # 檢查是否至少有這麼多欄
-    if df.shape[1] < 18: return None
-    
-    # 欄位映射 (Index -> 上界張數)
-    # Col 3 (<1) -> 1
-    # Col 4 (1-5) -> 5
-    # Col 5 (5-10) -> 10
-    # ...
-    col_map = {
-        3: 1, 4: 5, 5: 10, 6: 15, 7: 20, 8: 30, 9: 40, 10: 50,
-        11: 100, 12: 200, 13: 400, 14: 600, 15: 800, 16: 1000, 17: 99999999 # 1000以上
-    }
-    
-    # 找出日期欄位索引 (通常是 Col 2，索引為 2)
-    # 我們遍歷每一列，嘗試解析日期
-    out = []
-    
-    # 從資料列開始 (跳過標題，如果 read_html 沒抓對標題)
-    # 假設前幾列可能是標題，找符合 YYYY-MM-DD 或 YYYYMMDD 的
-    for i, row in df.iterrows():
-        try:
-            d_val = str(row.iloc[2]) # 假設日期在第 3 欄
-            d_str = d_val.replace("/", "").replace("-", "")
-            
-            # 簡單驗證日期格式
-            if not re.match(r"^\d{8}$", d_str): continue
-            
-            date_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
-            
-            large_ratio = 0.0
-            retail_ratio = 0.0
-            
-            for col_idx, upper in col_map.items():
-                val_str = str(row.iloc[col_idx]).replace("%", "").replace(",", "")
-                val = float(val_str) if val_str != 'nan' else 0.0
-                
-                # 修正判斷邏輯：使用區間下界來判斷比較準確
-                lower = 0
-                if col_idx == 3: lower = 0
-                elif col_idx == 4: lower = 1
-                elif col_idx == 5: lower = 5
-                elif col_idx == 6: lower = 10
-                elif col_idx == 7: lower = 15
-                elif col_idx == 8: lower = 20
-                elif col_idx == 9: lower = 30
-                elif col_idx == 10: lower = 40
-                elif col_idx == 11: lower = 50
-                elif col_idx == 12: lower = 100
-                elif col_idx == 13: lower = 200
-                elif col_idx == 14: lower = 400
-                elif col_idx == 15: lower = 600
-                elif col_idx == 16: lower = 800
-                elif col_idx == 17: lower = 1000
-                
-                # 散戶條件：持股 < 散戶門檻
-                # 只有當整個區間都在門檻之下才算 (即 上界 <= 門檻)
-                if upper <= retail_threshold:
-                    retail_ratio += val
-                
-                # 大戶條件：持股 >= 大戶門檻
-                # 只有當整個區間都在門檻之上才算 (即 下界 >= 門檻)
-                if lower >= large_threshold:
-                    large_ratio += val
-            
-            out.append({
-                "DateStr": date_fmt,
-                "日期": date_fmt,
-                "大戶持股(%)": round(large_ratio, 2),
-                "散戶持股(%)": round(retail_ratio, 2),
-                # 分級比例表沒有人數，設為 0
-                "大戶人數": 0,
-                "散戶人數": 0
-            })
-            
-        except:
+    picked = []
+    for d in reversed(cal_dates):
+        # ✅ 僅過濾掉「已結束處置」之前的歷史
+        if d <= last_jail_end:
+            break
+        if exclude_map and is_excluded(stock_id, d, exclude_map):
             continue
-            
-    if not out: return None
-    return pd.DataFrame(out).sort_values("DateStr")
+        if jail_map and is_in_jail(stock_id, d, jail_map):
+            continue
+        picked.append(d)
+        if len(picked) >= n:
+            break
 
-@st.cache_data(ttl=21600)
-def get_stock_price(stock_id, refresh_nonce=0):
-    tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
-    df = None
-    for ticker in tickers_to_try:
+    return list(reversed(picked))
+
+# ✅ [新增] Helper: 取得最後一次處置結束日
+def get_last_jail_end(stock_id, target_date, jail_map):
+    last_end = None
+    if not jail_map or stock_id not in jail_map: return None
+    for s, e in jail_map[stock_id]:
+        if e < target_date:
+            last_end = e if (last_end is None or e > last_end) else last_end
+    return last_end
+
+# ============================
+# 🔥 每日公告爬蟲區 (TWSE / TPEx)
+# ============================
+def fetch_twse_attention_rows(date_obj, date_str):
+    date_str_nodash = date_obj.strftime("%Y%m%d")
+    rows = []
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(
+            "https://www.twse.com.tw/rwd/zh/announcement/notice",
+            params={"startDate": date_str_nodash, "endDate": date_str_nodash, "response": "json"},
+            headers=headers,
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None # 視為失敗
+
+        d = r.json()
+        for i in d.get("data", []) or []:
+            code = str(i[1]).strip()
+            name = str(i[2]).strip()
+            if len(code) == 4 and code.isdigit():
+                raw = " ".join([str(x) for x in i])
+                ids = parse_clause_ids_strict(raw)
+                c_str = "、".join([f"第{k}款" for k in sorted(ids)]) or raw
+                rows.append({"日期": date_str, "市場": "TWSE", "代號": code, "名稱": name, "觸犯條款": c_str})
+    except:
+        return None # 異常視為失敗
+    return rows
+
+def fetch_tpex_attention_rows(date_obj, date_str):
+    roc_date = f"{date_obj.year - 1911}/{date_obj.month:02d}/{date_obj.day:02d}"
+    url = "https://www.tpex.org.tw/www/zh-tw/bulletin/attention"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://www.tpex.org.tw/",
+        "Origin": "https://www.tpex.org.tw",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    payload = {"date": roc_date, "response": "json"}
+
+    s = requests.Session()
+
+    try:
+        s.get("https://www.tpex.org.tw/", headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    except:
+        pass
+
+    for attempt in range(1, 4):
         try:
-            stock = yf.Ticker(ticker)
-            temp_df = stock.history(period="2y")
-            if not temp_df.empty:
-                df = temp_df
-                break
-        except: continue
-    if df is None or df.empty: return None
+            r = s.post(url, data=payload, headers=headers, timeout=12)
+            if r.status_code != 200:
+                time.sleep(0.8)
+                continue
 
-    try:
-        df.index = df.index.tz_localize(None)
-        df['DateStr'] = df.index.strftime('%Y-%m-%d')
-        df = calculate_technical_indicators(df)
-        return df
-    except: return None
+            res = r.json()
 
-# ✅ 獲取所有股票選單
-@st.cache_data
-def get_all_stock_options():
-    stock_options = []
-    for code, info in twstock.codes.items():
-        if info.type == "股票": 
-            stock_options.append(f"{code} {info.name}")
-    return stock_options
-
-def get_stock_name(stock_id):
-    try:
-        if stock_id in twstock.codes:
-            return twstock.codes[stock_id].name
-        return ""
-    except: return ""
-
-# ================= 4. 介面邏輯 =================
-
-# ✅ [FIX] 移除標題中的 (TradingView 風格)
-st.title(f"📊 籌碼K線")
-
-tz = pytz.timezone('Asia/Taipei')
-current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-
-if "search_counts" not in st.session_state:
-    st.session_state.search_counts = {}
-
-# ✅ 統計天數選項（移出 sidebar，改由分點頁面控制）
-days_map = {"1日": 1, "5日": 5, "10日": 10, "20日": 20, "40日": 40, "60日": 60, "120日": 120, "240日": 240}
-if "days_label" not in st.session_state:
-    st.session_state.days_label = "120日"
-if "selected_days" not in st.session_state:
-    st.session_state.selected_days = days_map.get(st.session_state.days_label, 120)
-
-with st.sidebar:
-    st.header("參數設定")
-    all_stocks = get_all_stock_options()
-    
-    def get_sort_key(stock_str):
-        code = stock_str.split()[0]
-        count = st.session_state.search_counts.get(code, 0)
-        return -count
-
-    sorted_stocks = sorted(all_stocks, key=get_sort_key)
-    
-    # ✅ [FIX START] 修正股票選擇器重置問題
-    # 檢查是否有上次選過的股票紀錄
-    target_index = 0
-    current_selection = st.session_state.get("stock_selector")
-    
-    if current_selection and current_selection in sorted_stocks:
-        # 如果有上次的選擇，使用該選擇的索引
-        target_index = sorted_stocks.index(current_selection)
-    else:
-        # 第一次執行或找不到時，預設找 2313
-        for idx, s in enumerate(sorted_stocks):
-            if s.startswith("2313"):
-                target_index = idx
-                break
-                
-    # 加上 key 參數以保持狀態
-    stock_selection = st.selectbox(
-        "搜尋股票", 
-        options=sorted_stocks, 
-        index=target_index, 
-        placeholder="請輸入股票代號...",
-        key="stock_selector"
-    )
-    # ✅ [FIX END]
-    
-    if stock_selection: stock_input = stock_selection.split()[0]
-    else: stock_input = ""
-    
-    # ✅ [MOVED] 統計天數已移到「分點」頁面
-    
-    st.markdown(f"🕒 資料抓取時間: {current_time}")
-    
-    if st.button("查詢", type="primary"):
-        if stock_input: st.session_state.search_counts[stock_input] = st.session_state.search_counts.get(stock_input, 0) + 1
-        st.rerun()
-    
-    if "refresh_nonce" not in st.session_state: st.session_state.refresh_nonce = 0
-    if st.button("🔄 強制更新籌碼資料"):
-        st.session_state.refresh_nonce = int(time.time())
-        st.rerun()
-
-if stock_input:
-    stock_name = get_stock_name(stock_input)
-    stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
-
-    # ✅ 使用 session_state 的統計天數（由分點頁面控制）
-    selected_days = st.session_state.selected_days
-    rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
-    
-    with st.spinner(f"正在分析 {stock_display} ..."):
-        df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
-        
-    df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
-    
-    if df_buy is not None and df_sell is not None:
-        st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
-        st.caption(f"資料來源：{target_url}")
-
-        if "active_tab" in st.query_params: default_tab = st.query_params["active_tab"]
-        tab_kline, tab_broker, tab_inst, tab_margin, tab_holder = st.tabs(["K線", "分點", "法人", "融資券", "大戶"])
-
-        # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
-        # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
-        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
-            opts = {
-                "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
-                "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
-                "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
-                "timeScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": time_visible, "timeVisible": False},
-                "crosshair": {
-                    "mode": 1,
-                    "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
-                    "horzLine": {
-                        "visible": True, 
-                        "labelVisible": True,
-                        "labelBackgroundColor": '#1E88E5' # ✅ [FIX] 改為更亮的藍色以提高對比度
-                    }
-                },
-                "height": height,
-            }
-            if scale_mode == "rsi":
-                opts["rightPriceScale"] = {"visible": False, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0}
-            if title:
-                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
-            return opts
-
-        # ==================== Tab 1: K線 ====================
-        with tab_kline:
-            # ✅ [NEW] 將 K 線週期選擇器移至此處 (均線選擇器的上方)
-            kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
-            
-            # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
-            df_price = None
-            if df_price_daily is not None:
-                df_price = resample_data(df_price_daily, kline_period)
-
-            # ✅ [FIX] 改用 st.multiselect 取代多個 Checkbox
-            ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
-            ma_default = ["MA5", "MA10", "MA20", "MA60"]
-            
-            selected_mas = st.multiselect(
-                "選擇均線 / 布林通道",
-                options=ma_options_list,
-                default=ma_default
-            )
-            
-            show_ma5 = "MA5" in selected_mas
-            show_ma10 = "MA10" in selected_mas
-            show_ma20 = "MA20" in selected_mas
-            show_ma60 = "MA60" in selected_mas
-            show_ma120 = "MA120" in selected_mas
-            show_ma240 = "MA240" in selected_mas
-            show_bb = "BB" in selected_mas
-            
-            if df_price is not None and not df_price.empty:
-                charts_payload = []
-                plot_df = df_price.copy()
-                plot_df.index.name = None
-                plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
-                plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-
-                candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
-                for i, row in plot_df.iterrows():
-                    if not pd.isna(row['Open']) and not pd.isna(row['Close']):
-                        candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-                    if show_ma5 and not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
-                    if show_ma10 and not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
-                    if show_ma20 and not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
-                    if show_ma60 and not pd.isna(row['MA60']): ma60_data.append({"time": row['DateStr'], "value": float(row['MA60'])})
-                    if show_ma120 and not pd.isna(row['MA120']): ma120_data.append({"time": row['DateStr'], "value": float(row['MA120'])})
-                    if show_ma240 and not pd.isna(row['MA240']): ma240_data.append({"time": row['DateStr'], "value": float(row['MA240'])})
-                    if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": row['DateStr'], "value": float(row['BB_Up'])})
-                    if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
-
-                # ✅ [FIX] 禁用固定標籤
-                ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}}]
-                if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
-                if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
-                if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
-                if show_ma60: main_series.append({"type": "Line", "data": ma60_data, "options": {**ma_opts, "color": "lime", "lineWidth": 2, "title": "MA60"}})
-                if show_ma120: main_series.append({"type": "Line", "data": ma120_data, "options": {**ma_opts, "color": "gray", "title": "MA120"}})
-                if show_ma240: main_series.append({"type": "Line", "data": ma240_data, "options": {**ma_opts, "color": "blue", "title": "MA240"}})
-                if show_bb:
-                    main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
-                    main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
-                
-                charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
-
-                vol_data = []
-                for i, row in plot_df.iterrows():
-                    if not pd.isna(row['Volume']): vol_data.append({"time": row['DateStr'], "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
-                # ✅ [FIX] 禁用固定標籤
-                charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
-
-                k_data, d_data = [], []
-                if 'K' in plot_df.columns:
-                    for i, row in plot_df.iterrows():
-                        if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
-                        if not pd.isna(row['D']): d_data.append({"time": row['DateStr'], "value": float(row['D'])})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
-                        {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                    ]})
-
-                dif_data, dea_data, hist_data = [], [], []
-                if 'DIF' in plot_df.columns:
-                    for i, row in plot_df.iterrows():
-                        if not pd.isna(row['DIF']): dif_data.append({"time": row['DateStr'], "value": float(row['DIF'])})
-                        if not pd.isna(row['DEA']): dea_data.append({"time": row['DateStr'], "value": float(row['DEA'])})
-                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": row['DateStr'], "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
-                        {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                    ]})
-
-                rsi_data, rsi_80, rsi_20 = [], [], []
-                if 'RSI' in plot_df.columns:
-                    for i, row in plot_df.iterrows():
-                        if not pd.isna(row['RSI']): 
-                            rsi_data.append({"time": row['DateStr'], "value": float(row['RSI'])})
-                            rsi_80.append({"time": row['DateStr'], "value": 80})
-                            rsi_20.append({"time": row['DateStr'], "value": 20})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
-                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
-                        {"type": "Line", "data": rsi_20, "options": {"color": "green", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}}
-                    ]})
-                
-                renderLightweightCharts(charts_payload, key="tab1_kline")
-
-        # ==================== Tab 2: 分點 ====================
-        with tab_broker:
-            # ✅ [MOVED] 統計天數移到分點頁面，調整就即時反映區間分點買賣超
-            days_label_ui = st.selectbox(
-                "統計天數",
-                list(days_map.keys()),
-                index=list(days_map.keys()).index(st.session_state.days_label),
-                key="broker_days_selector"
-            )
-            if days_label_ui != st.session_state.days_label:
-                st.session_state.days_label = days_label_ui
-                st.session_state.selected_days = days_map[days_label_ui]
-                st.rerun()
-
-            brokers_list = list(dict.fromkeys(df_buy['broker'].tolist() + df_sell['broker'].tolist()))
-            target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
-            st.markdown("---")
-            
-            merged_df = None
-            target_key = normalize_name(target_broker)
-            broker_params = None
-            if broker_info:
-                if target_key in broker_info: broker_params = broker_info[target_key]
-                else:
-                    for k, v in broker_info.items():
-                        if target_key in k or k in target_key:
-                            broker_params = v
-                            break
-                            
-            if broker_params:
-                long_start_date = df_price['DateStr'].iloc[0] 
-                long_end_date = df_price['DateStr'].iloc[-1] 
-                broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
-                merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
-
-                if st.session_state.get('merged_key') != merged_key:
-                    with st.spinner(f"正在爬取 {target_broker} ..."):
-                        broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce)
-                        if broker_daily_df is not None and not broker_daily_df.empty:
-                            broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last").sort_values('DateStr')
-                            merged_df = pd.merge(df_price, broker_daily_df, on='DateStr', how='left')
-                            merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
-                            st.session_state['merged_df'] = merged_df
-                            st.session_state['merged_key'] = merged_key
-                        else:
-                            st.session_state.pop('merged_df', None)
-                            st.session_state['merged_key'] = merged_key
-                            st.warning("⚠️ 該券商明細抓取失敗")
-                else:
-                    merged_df = st.session_state.get('merged_df')
-
-            charts_payload_broker = []
-            plot_df = merged_df if merged_df is not None else df_price
-            plot_df = plot_df.copy()
-            plot_df.index.name = None
-            plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
-            plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-            if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
-
-            candlestick_data = []
-            for i, row in plot_df.iterrows():
-                if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-            
-            # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
-            main_chart_series = []
-            main_chart_series.append({
-                "type": "Candlestick",
-                "data": candlestick_data,
-                "options": {
-                    "upColor": COLOR_UP, 
-                    "downColor": COLOR_DOWN, 
-                    "borderUpColor": COLOR_UP, 
-                    "borderDownColor": COLOR_DOWN, 
-                    "wickUpColor": COLOR_UP, 
-                    "wickDownColor": COLOR_DOWN, 
-                    "lastValueVisible": False
-                }
-            })
-
-            charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": main_chart_series})
-            
-            if '買賣超_Final' in plot_df.columns:
-                chip_data, chip_cumulative_data = [], []
-                for i, row in plot_df.iterrows():
-                    val = row.get('買賣超_Final')
-                    if not pd.isna(val): chip_data.append({"time": row['DateStr'], "value": float(val), "color": COLOR_UP if val>0 else COLOR_DOWN})
-                    cum_val = row.get('cumulative_chip')
-                    if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
-                
-                # ✅ [FIX] 禁用固定標籤
-                charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣", False), "series": [
-                     {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                     {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-            
-            # ✅ [修正] 恢復傳送 highlightRange 給前端，這樣全域遮罩 (Global Mask) 才能生效並蓋到下方
-            if charts_payload_broker:
-                charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
-
-            renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
-
-            st.markdown("---")
-            st.markdown("##### 區間前 15 大買賣超排行")
-            t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
-            # ✅ [FIX] 恢復分點前15大表格
-            with t1: render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
-            with t2: render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
-
-        # ==================== Tab 3: 法人 ====================
-        with tab_inst:
-            long_start_date = df_price['DateStr'].iloc[0] 
-            long_end_date = df_price['DateStr'].iloc[-1] 
-            inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
-            plot_df = df_price.copy()
-            plot_df.index.name = None 
-            if inst_df is not None:
-                plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
-                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
-                    if col in plot_df.columns: plot_df[col] = plot_df[col].fillna(0)
-                plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
-                plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
-                plot_df['cum_dealer'] = plot_df['自營商買賣超'].cumsum()
-                # ✅ [NEW] 計算三大法人合計買賣超 與 累積
-                plot_df['total_inst'] = plot_df['外資買賣超'] + plot_df['投信買賣超'] + plot_df['自營商買賣超']
-                plot_df['cum_total'] = plot_df['total_inst'].cumsum()
-
-            charts_payload_inst = []
-            candlestick_data = []
-            for i, row in plot_df.iterrows():
-                if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-            # ✅ [FIX] 禁用固定標籤
-            charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
-
-            if '外資買賣超' in plot_df.columns:
-                f_hist, f_line = [], []
-                t_hist, t_line = [], []
-                d_hist, d_line = [], []
-                total_line, total_hist = [], [] # ✅ [NEW] 合計累積線與合計買賣柱
-                for i, row in plot_df.iterrows():
-                    f_val, f_cum = row['外資買賣超'], row['cum_foreign']
-                    t_val, t_cum = row['投信買賣超'], row['cum_trust']
-                    d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
-                    total_val, total_cum = row['total_inst'], row['cum_total'] # ✅ [NEW]
-                    
-                    f_hist.append({"time": row['DateStr'], "value": float(f_val), "color": COLOR_UP if f_val>0 else COLOR_DOWN})
-                    f_line.append({"time": row['DateStr'], "value": float(f_cum)})
-                    t_hist.append({"time": row['DateStr'], "value": float(t_val), "color": COLOR_UP if t_val>0 else COLOR_DOWN})
-                    t_line.append({"time": row['DateStr'], "value": float(t_cum)})
-                    d_hist.append({"time": row['DateStr'], "value": float(d_val), "color": COLOR_UP if d_val>0 else COLOR_DOWN})
-                    d_line.append({"time": row['DateStr'], "value": float(d_cum)})
-                    
-                    # ✅ [NEW]
-                    total_hist.append({"time": row['DateStr'], "value": float(total_val), "color": COLOR_UP if total_val>0 else COLOR_DOWN})
-                    total_line.append({"time": row['DateStr'], "value": float(total_cum)})
-
-                # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
-                charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
-                    {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-                
-                # 下方維持不變，顯示個別法人詳情，禁用固定標籤
-                charts_payload_inst.append({"chart": make_opts(150, "外資", False), "series": [
-                    {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": f_line, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-                charts_payload_inst.append({"chart": make_opts(150, "投信", False), "series": [
-                    {"type": "Histogram", "data": t_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": t_line, "options": {"title": "累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-                charts_payload_inst.append({"chart": make_opts(150, "自營商", False), "series": [
-                    {"type": "Histogram", "data": d_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": d_line, "options": {"title": "累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-            renderLightweightCharts(charts_payload_inst, key="tab3_inst")
-
-        # ==================== Tab 4: 融資券 ====================
-        with tab_margin:
-            long_start_date = df_price['DateStr'].iloc[0] 
-            long_end_date = df_price['DateStr'].iloc[-1] 
-            margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
-            plot_df = df_price.copy()
-            plot_df.index.name = None 
-            if margin_df is not None:
-                plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
-                plot_df['融資餘額'] = plot_df['融資餘額'].ffill()
-                plot_df['融券餘額'] = plot_df['融券餘額'].ffill()
-                plot_df['融資增減'] = plot_df['融資增減'].fillna(0)
-                plot_df['融券增減'] = plot_df['融券增減'].fillna(0)
-
-            charts_payload_margin = []
-            candlestick_data = []
-            for i, row in plot_df.iterrows():
-                if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-            # ✅ [FIX] 禁用固定標籤
-            charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
-
-            if '融資餘額' in plot_df.columns:
-                ml_bal, ml_diff, ms_bal, ms_diff = [], [], [], []
-                for i, row in plot_df.iterrows():
-                    val_mb = row.get('融資餘額')
-                    val_md = row.get('融資增減')
-                    val_sb = row.get('融券餘額')
-                    val_sd = row.get('融券增減')
-                    if not pd.isna(val_mb): ml_bal.append({"time": row['DateStr'], "value": float(val_mb)})
-                    if not pd.isna(val_md): 
-                        # ✅ [FIX] 增加用紅(COLOR_UP), 減少用綠(COLOR_DOWN)
-                        color = COLOR_UP if val_md > 0 else (COLOR_DOWN if val_md < 0 else "gray")
-                        ml_diff.append({"time": row['DateStr'], "value": float(val_md), "color": color})
-                    if not pd.isna(val_sb): ms_bal.append({"time": row['DateStr'], "value": float(val_sb)})
-                    if not pd.isna(val_sd): 
-                        # ✅ [FIX] 增加用紅(COLOR_UP), 減少用綠(COLOR_DOWN)
-                        color = COLOR_UP if val_sd > 0 else (COLOR_DOWN if val_sd < 0 else "gray")
-                        ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
-
-                # ✅ [FIX] 禁用固定標籤
-                charts_payload_margin.append({"chart": make_opts(150, "融資", False), "series": [
-                    {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    # ✅ [FIX] 餘額改用橘色
-                    {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-                # ✅ [FIX] 禁用固定標籤
-                charts_payload_margin.append({"chart": make_opts(150, "融券", False), "series": [
-                    {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    # ✅ [FIX] 餘額改用橘色
-                    {"type": "Line", "data": ms_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
-
-            renderLightweightCharts(charts_payload_margin, key="tab4_margin")
-            
-            if margin_df is not None and not margin_df.empty:
-                st.markdown("#### 近 10 日融資融券詳細數據")
-                
-                # 1. 排序並取最後 10 筆 (最新的在最後) -> 反轉 (最新的在最前)
-                display_margin = margin_df.sort_values("DateStr").tail(10).iloc[::-1]
-                
-                # 2. 移除 DateStr 欄位 (只留: 日期, 融資餘額, 融資增減, 融券餘額, 融券增減)
-                display_margin = display_margin[['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']]
-                
-                # 3. 設定樣式 (增紅減綠)
-                def highlight_margin(df):
-                    attr = pd.DataFrame('', index=df.index, columns=df.columns)
-                    c_up = f'color: {COLOR_UP}'   # 紅
-                    c_down = f'color: {COLOR_DOWN}' # 綠
-                    
-                    # 融資增減
-                    mask_m_up = df['融資增減'] > 0
-                    mask_m_down = df['融資增減'] < 0
-                    attr.loc[mask_m_up, ['融資增減']] = c_up
-                    attr.loc[mask_m_down, ['融資增減']] = c_down
-                    
-                    # 融券增減
-                    mask_s_up = df['融券增減'] > 0
-                    mask_s_down = df['融券增減'] < 0
-                    attr.loc[mask_s_up, ['融券增減']] = c_up
-                    attr.loc[mask_s_down, ['融券增減']] = c_down
-                    
-                    return attr
-
-                st.dataframe(
-                    display_margin.style.apply(highlight_margin, axis=None), 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-
-        # ==================== Tab 5: 大戶 (集保分佈) ====================
-        with tab_holder:
-            LOT_CHOICES = [10, 50, 100, 200, 400, 600, 800, 1000]
-            if "retail_lot" not in st.session_state: st.session_state.retail_lot = 50
-            if "large_lot" not in st.session_state: st.session_state.large_lot = 400
-
-            # ✅ [FIX] 動態過濾選項 (UI 防呆)
-            # 大戶選項：必須 > 散戶
-            valid_large_opts = [x for x in LOT_CHOICES if x > st.session_state.retail_lot]
-            if not valid_large_opts: valid_large_opts = [1000] # Fallback
-            
-            # 散戶選項：必須 < 大戶
-            valid_retail_opts = [x for x in LOT_CHOICES if x < st.session_state.large_lot]
-            if not valid_retail_opts: valid_retail_opts = [10] # Fallback
-
-            c1, c2 = st.columns(2)
-            with c1:
-                # 若當前值不在有效列表內，重置為列表第一個
-                current_large = st.session_state.large_lot
-                if current_large not in valid_large_opts: current_large = valid_large_opts[0]
-                
-                st.session_state.large_lot = st.selectbox(
-                    "大戶持股標準 (>= 張)", 
-                    options=valid_large_opts, 
-                    index=valid_large_opts.index(current_large),
-                    key="sb_large"
-                )
-
-            with c2:
-                current_retail = st.session_state.retail_lot
-                if current_retail not in valid_retail_opts: current_retail = valid_retail_opts[0]
-                
-                st.session_state.retail_lot = st.selectbox(
-                    "散戶持股標準 (< 張)", 
-                    options=valid_retail_opts, 
-                    index=valid_retail_opts.index(current_retail),
-                    key="sb_retail"
-                )
-
-            # ✅ [FIX] 呼叫正確的函式名稱
-            raw_holder_df = get_shareholding_data(stock_input)
-            
-            if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
-                st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
+            target = []
+            if "tables" in res:
+                for t in res["tables"]:
+                    target.extend(t.get("data", []) or [])
             else:
-                # 使用 分級比例表 進行計算
-                df_ratio = raw_holder_df.get("ratio")
-                holder_df = process_shareholding_df(df_ratio, st.session_state.large_lot, st.session_state.retail_lot)
-                
-                if holder_df is not None and not holder_df.empty:
-                    display_df = holder_df.copy()
-                    # 計算增減 (與前一週比較)
-                    display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
-                    display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
-                    
-                    # 倒序顯示 (最新的在上面)
-                    display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
-                    
-                    # ✅ [FIX] 修正樣式邏輯：根據增減欄位來決定持股欄位的顏色
-                    def highlight_changes(df):
-                        attr = pd.DataFrame('', index=df.index, columns=df.columns)
-                        c_up = f'color: {COLOR_UP}'   # 紅
-                        c_down = f'color: {COLOR_DOWN}' # 綠
-                        
-                        # 大戶邏輯
-                        mask_up = df['大戶增減'] > 0
-                        mask_down = df['大戶增減'] < 0
-                        attr.loc[mask_up, ['大戶持股(%)', '大戶增減']] = c_up
-                        attr.loc[mask_down, ['大戶持股(%)', '大戶增減']] = c_down
-                        
-                        # 散戶邏輯
-                        mask_up_r = df['散戶增減'] > 0
-                        mask_down_r = df['散戶增減'] < 0
-                        attr.loc[mask_up_r, ['散戶持股(%)', '散戶增減']] = c_up
-                        attr.loc[mask_down_r, ['散戶持股(%)', '散戶增減']] = c_down
-                        
-                        return attr
+                target = res.get("data", []) or []
 
-                    st.markdown("#### 集保戶股權分散表")
-                    # ✅ [FIX] hide_index=True 隱藏左側索引
-                    st.dataframe(
-                        display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']]
-                        .style.apply(highlight_changes, axis=None) # 全表套用樣式函式
-                        .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
-                        use_container_width=True, 
-                        height=400,
-                        hide_index=True
-                    )
-                    
-                    # =========================================================
-                    # ✅ [主要修改] 股價只顯示集保日期存在的資料點
-                    # =========================================================
-                    
-                    # 準備合併
-                    df_price_daily['_dt'] = pd.to_datetime(df_price_daily['DateStr'])
-                    holder_df['_dt'] = pd.to_datetime(holder_df['DateStr'])
-                    
-                    # 排序
-                    holder_df = holder_df.sort_values('_dt')
-                    df_price_daily = df_price_daily.sort_values('_dt')
-                    
-                    # ✅ [FIX] 改為以「holder_df (集保數據)」為主表，去抓對應的股價
-                    # 這樣圖表就只會顯示集保分佈表有的日期
-                    chart_df = pd.merge_asof(
-                        holder_df,
-                        df_price_daily[['_dt', 'Close']], # 只取需要的股價欄位
-                        on='_dt',
-                        direction='backward' # 若當天無股價，找前一天的
-                    )
-                    
-                    l_data, r_data, p_data = [], [], []
-                    for i, row in chart_df.iterrows():
-                        if not pd.isna(row['大戶持股(%)']): l_data.append({"time": row['DateStr'], "value": row['大戶持股(%)']})
-                        if not pd.isna(row['散戶持股(%)']): r_data.append({"time": row['DateStr'], "value": row['散戶持股(%)']})
-                        if not pd.isna(row['Close']): p_data.append({"time": row['DateStr'], "value": row['Close']})
-                        
-                    holder_payload = []
-                    holder_series = [
-                        # ✅ [FIX] 禁用固定標籤
-                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{st.session_state.large_lot})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
-                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{st.session_state.retail_lot})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
-                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} 
-                    ]
-                    
-                    # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
-                    holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
-                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
-                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
-                    
-                    holder_payload.append({"chart": holder_opts, "series": holder_series})
-                    renderLightweightCharts(holder_payload, key="tab5_holder")
+            rows = []
+            for i in target:
+                if len(i) <= 5:
+                    continue
+                row_date = str(i[5]).strip()
+                if row_date not in (roc_date, date_str):
+                    continue
 
+                code = str(i[1]).strip()
+                name = str(i[2]).strip()
+                if not (code.isdigit() and len(code) == 4):
+                    continue
+
+                raw = " ".join([str(x) for x in i])
+                ids = parse_clause_ids_strict(raw)
+                c_str = "、".join([f"第{k}款" for k in sorted(ids)]) if ids else raw
+
+                rows.append({"日期": date_str, "市場": "TPEx", "代號": code, "名稱": name, "觸犯條款": c_str})
+
+            return rows
+        except:
+            time.sleep(0.8)
+
+    return None
+
+def get_daily_data(date_obj):
+    date_str = date_obj.strftime("%Y-%m-%d")
+    print(f"📡 爬取公告 {date_str}...")
+
+    twse_rows = fetch_twse_attention_rows(date_obj, date_str)
+    tpex_rows = fetch_tpex_attention_rows(date_obj, date_str)
+
+    if twse_rows is None or tpex_rows is None:
+        print("❌ 抓取失敗（回傳 None），本輪不寫入狀態，留待下次回補")
+        return None
+
+    rows = []
+    rows.extend(twse_rows)
+    rows.extend(tpex_rows)
+
+    if rows:
+        print(f"✅ 抓到 {len(rows)} 檔")
     else:
-        st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
-        st.info("可能有以下原因：\n1. 此股票為「興櫃股票」或 Yahoo Finance 無資料。\n2. 股票代號輸入錯誤。\n3. Yahoo API 暫時連線失敗，請稍後再試。")
+        print("⚠️ 無資料")
+    return rows
+
+def backfill_daily_logs(sh, ws_log, cal_dates, target_trade_date_obj):
+    now_str = TARGET_DATE.strftime("%Y-%m-%d %H:%M:%S")
+    existing_keys, date_counts = load_log_index(ws_log)
+    ws_status = get_or_create_ws(sh, "爬取狀態", headers=["日期", "抓到檔數", "最後更新時間"], cols=5)
+    key_to_row, status_cnt = load_status_index(ws_status)
+    status_is_new = (len(status_cnt) == 0)
+
+    # if not status_is_new: ...
+
+    key_to_row, status_cnt = load_status_index(ws_status)
+    window_dates = cal_dates[-MAX_BACKFILL_TRADING_DAYS:] if len(cal_dates) > MAX_BACKFILL_TRADING_DAYS else cal_dates[:]
+    recent_dates = cal_dates[-VERIFY_RECENT_DAYS:] if len(cal_dates) >= VERIFY_RECENT_DAYS else cal_dates[:]
+    dates_to_check = sorted(set(window_dates + recent_dates))
+
+    rows_to_append = []
+    status_updates = []
+
+    print(f"🧩 回補檢查：共 {len(dates_to_check)} 個交易日（含最近 {VERIFY_RECENT_DAYS} 日強制驗證）")
+
+    for d in dates_to_check:
+        d_str = d.strftime("%Y-%m-%d")
+
+        if d == TARGET_DATE.date() and TARGET_DATE.time() < SAFE_CRAWL_TIME: continue
+
+        log_cnt = int(date_counts.get(d_str, 0))
+        st_cnt = status_cnt.get(d_str, None)
+        need_fetch = False
+
+        if d in recent_dates: need_fetch = True
+        if (st_cnt is not None) and (log_cnt < int(st_cnt)): need_fetch = True
+        if (st_cnt is None) and (log_cnt == 0): need_fetch = True
+        if (st_cnt is None) and (d in window_dates): need_fetch = True
+
+        if not need_fetch: continue
+
+        data = get_daily_data(d)
+
+        # ✅ 若回傳 None 代表抓取失敗，跳過不更新狀態
+        if data is None:
+            print(f"⚠️ {d_str} 抓取失敗(None)，跳過不更新狀態")
+            continue
+
+        official_cnt = len(data)
+
+        for s in data:
+            k = f"{s['日期']}_{s['代號']}"
+            if k not in existing_keys:
+                rows_to_append.append([s['日期'], s['市場'], f"'{s['代號']}", s['名稱'], s['觸犯條款']])
+                existing_keys.add(k)
+                date_counts[s['日期']] = date_counts.get(s['日期'], 0) + 1
+
+        status_updates.append((d_str, official_cnt, st_cnt))
+
+    if rows_to_append:
+        print(f"💾 回補寫入「每日紀錄」：{len(rows_to_append)} 筆")
+        ws_log.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+    else:
+        print("✅ 每日紀錄無需回補寫入")
+
+    key_to_row, status_cnt = load_status_index(ws_status)
+    for d_str, official_cnt, old_st_cnt in status_updates:
+        write_cnt = official_cnt
+        if official_cnt == 0:
+            if old_st_cnt is not None and int(old_st_cnt) > 0: write_cnt = int(old_st_cnt)
+            elif int(date_counts.get(d_str, 0)) > 0: write_cnt = int(date_counts[d_str])
+        upsert_status(ws_status, key_to_row, d_str, write_cnt, now_str)
+
+def is_market_open_by_finmind(date_str):
+    df = finmind_get("TaiwanStockPrice", data_id="2330", start_date=date_str, end_date=date_str)
+    return not df.empty
+
+# ✅ [修正] 增加 Workalendar 自動判斷假日
+def get_official_trading_calendar(days=60):
+    end = TARGET_DATE.strftime("%Y-%m-%d")
+    start = (TARGET_DATE - timedelta(days=days*2)).strftime("%Y-%m-%d")
+    print("📅 下載日曆...")
+    df = finmind_get("TaiwanStockTradingDate", start_date=start, end_date=end)
+    dates = []
+
+    if not df.empty:
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        dates = sorted(df['date'].tolist())
+    else:
+        # ✅ 使用 workalendar 自動判斷平日假日 (包含國定假日)
+        cal = Taiwan()
+        curr = TARGET_DATE.date()
+        while len(dates) < days:
+            if cal.is_working_day(curr):
+                dates.append(curr)
+            curr -= timedelta(days=1)
+        dates = sorted(dates)
+
+    today_date = TARGET_DATE.date()
+    # today_str = today_date.strftime("%Y-%m-%d") # 未使用，可註解
+    is_late_enough = TARGET_DATE.time() > SAFE_MARKET_OPEN_CHECK
+
+    # 再次確認今日是否為工作日 (避免誤判)
+    cal = Taiwan()
+    is_today_work = cal.is_working_day(today_date)
+
+    if dates and today_date > dates[-1] and is_today_work:
+        if is_late_enough:
+            print(f"⚠️ 日曆缺漏今日 ({today_date})，驗證開市中...")
+            if is_market_open_by_finmind(today_date.strftime("%Y-%m-%d")):
+                print(f"✅ 驗證成功 (2330有價)，補入今日。")
+                dates.append(today_date)
+            else:
+                print(f"⛔ 驗證失敗 (2330無價)，判斷為休市或資料未更新，不補入。")
+        else:
+            print(f"⏳ 時間尚早，暫不強制補入今日日曆。")
+
+    return dates[-days:]
+
+def get_daytrade_stats_finmind(stock_id, target_date_str):
+    end = target_date_str
+    start = (datetime.strptime(target_date_str, "%Y-%m-%d") - timedelta(days=15)).strftime("%Y-%m-%d")
+    df_dt = finmind_get("TaiwanStockDayTrading", stock_id, start_date=start, end_date=end)
+    df_p = finmind_get("TaiwanStockPrice", stock_id, start_date=start, end_date=end)
+
+    if df_dt.empty or df_p.empty: return None, None
+    try:
+        m = pd.merge(df_p[['date', 'Trading_Volume']], df_dt[['date', 'Volume']], on='date', how='inner')
+        if m.empty: return None, None
+        m = m.sort_values('date')
+        last = m.iloc[-1]
+        td = (last['Volume']/last['Trading_Volume']*100) if last['Trading_Volume']>0 else 0
+        avg = m.tail(6); sum_v = avg['Volume'].sum(); sum_t = avg['Trading_Volume'].sum()
+        avg_td = (sum_v/sum_t*100) if sum_t>0 else 0
+        return round(td, 2), round(avg_td, 2)
+    except: return None, None
+
+def fetch_history_data(ticker_code):
+    try:
+        df = yf.Ticker(ticker_code).history(period="1y", auto_adjust=False)
+        if df.empty: return pd.DataFrame()
+        df.index = df.index.tz_localize(None)
+        return df
+    except: return pd.DataFrame()
+
+def load_precise_db_from_sheet(sh):
+    try:
+        ws = sh.worksheet(PARAM_SHEET_NAME)
+        data = ws.get_all_records()
+        db = {}
+        for row in data:
+            code = str(row.get('代號', '')).strip()
+            if not code: continue
+            try: shares = int(str(row.get('發行股數', 1)).replace(',', ''))
+            except: shares = 1
+            try: offset = float(row.get('類股漲幅修正', 0.0))
+            except: offset = 0.0
+            try: turn_avg = float(row.get('同類股平均週轉', 5.0))
+            except: turn_avg = 5.0
+            try: purity = float(row.get('成交量純度', 1.0))
+            except: purity = 1.0
+            market = str(row.get('市場', '上市')).strip()
+            db[code] = {"market": market, "shares": shares, "sector_offset": offset, "sector_turn_avg": turn_avg, "vol_purity": purity}
+        return db
+    except: return {}
+
+def fetch_stock_fundamental(stock_id, ticker_code, precise_db):
+    market = '上市'; shares = 0
+    if str(stock_id) in precise_db:
+        db = precise_db[str(stock_id)]
+        market = db['market']; shares = db['shares']
+    data = {'shares': shares, 'market_type': market, 'pe': -1, 'pb': -1}
+    try:
+        t = yf.Ticker(ticker_code)
+        if ".TWO" in ticker_code: data['market_type'] = '上櫃'
+        if data['shares'] <= 1:
+            s = t.fast_info.get('shares', None)
+            if s: data['shares'] = int(s)
+        data['pe'] = t.info.get('trailingPE', t.info.get('forwardPE', 0))
+        data['pb'] = t.info.get('priceToBook', 0)
+        if data['pe']: data['pe'] = round(data['pe'], 2)
+        if data['pb']: data['pb'] = round(data['pb'], 2)
+    except: pass
+    return data
+
+def calc_pct(curr, ref):
+    return ((curr - ref) / ref) * 100 if ref != 0 else 0
+
+def calculate_full_risk(stock_id, hist_df, fund_data, est_days, dt_today_pct, dt_avg6_pct):
+    res = {'risk_level': '低', 'trigger_msg': '', 'curr_price': 0, 'limit_price': 0, 'gap_pct': 999.0, 'curr_vol': 0, 'limit_vol': 0, 'turnover_val': 0, 'turnover_rate': 0, 'pe': fund_data.get('pe', 0), 'pb': fund_data.get('pb', 0), 'day_trade_pct': dt_today_pct, 'is_triggered': False}
+    if hist_df.empty or len(hist_df) < 7:
+        if est_days <= 1: res['risk_level'] = '高'
+        elif est_days <= 2: res['risk_level'] = '中'
+        return res
+
+    curr_close = float(hist_df.iloc[-1]['Close'])
+    curr_vol_shares = float(hist_df.iloc[-1]['Volume'])
+    curr_vol_lots = int(curr_vol_shares / UNIT_LOT)
+    shares = fund_data.get('shares', 1)
+    if shares > 1: turnover = (curr_vol_shares / shares) * 100
+    else: turnover = -1.0
+    turnover_val_money = curr_close * curr_vol_shares
+
+    res['curr_price'] = round(curr_close, 2)
+    res['curr_vol'] = curr_vol_lots
+    res['turnover_rate'] = round(turnover, 2)
+    res['turnover_val'] = round(turnover_val_money / 100000000, 2)
+
+    triggers = []
+    if curr_close < 5: return res
+
+    window_7 = hist_df.tail(7)
+    ref_6 = float(window_7.iloc[0]['Close'])
+    rise_6 = calc_pct(curr_close, ref_6)
+    price_diff_6 = abs(curr_close - ref_6)
+
+    cond_1 = rise_6 > 32
+    cond_2 = (rise_6 > 25) and (price_diff_6 >= 50)
+    if cond_1: triggers.append(f"【第一款】6日漲{rise_6:.1f}%(>32%)")
+    elif cond_2: triggers.append(f"【第一款】6日漲{rise_6:.1f}%且價差{price_diff_6:.0f}元")
+
+    limit_p = ref_6 * 1.32
+    if cond_2: limit_p = min(limit_p, ref_6 * 1.25)
+    res['limit_price'] = round(limit_p, 2)
+    res['gap_pct'] = round(((limit_p - curr_close)/curr_close)*100, 1)
+
+    if len(hist_df)>=31 and calc_pct(curr_close, float(hist_df.iloc[-31]['Close'])) > 100: triggers.append("【第二款】30日漲>100%")
+    if len(hist_df)>=61 and calc_pct(curr_close, float(hist_df.iloc[-61]['Close'])) > 130: triggers.append("【第二款】60日漲>130%")
+    if len(hist_df)>=91 and calc_pct(curr_close, float(hist_df.iloc[-91]['Close'])) > 160: triggers.append("【第二款】90日漲>160%")
+
+    if len(hist_df) >= 61:
+        avg_vol_60 = hist_df['Volume'].iloc[-61:-1].mean()
+        if avg_vol_60 > 0:
+            vol_ratio = curr_vol_shares / avg_vol_60
+            res['limit_vol'] = int(avg_vol_60 * 5 / 1000)
+            if turnover >= 0.1 and curr_vol_lots >= 500:
+                if rise_6 > 25 and vol_ratio > 5: triggers.append(f"【第三款】漲{rise_6:.0f}%+量{vol_ratio:.1f}倍")
+
+    if turnover > 10 and rise_6 > 25: triggers.append(f"【第四款】漲{rise_6:.0f}%+轉{turnover:.0f}%")
+
+    if len(hist_df) >= 61:
+        avg_vol_60 = hist_df['Volume'].iloc[-61:-1].mean()
+        avg_vol_6 = hist_df['Volume'].iloc[-6:].mean()
+        is_exclude = (turnover < 0.1) or (curr_vol_lots < 500) or (turnover_val_money < 30000000)
+        if not is_exclude and avg_vol_60 > 0:
+            r1 = avg_vol_6 / avg_vol_60
+            r2 = curr_vol_shares / avg_vol_60
+            if r1 > 5: triggers.append(f"【第九款】6日均量放大{r1:.1f}倍")
+            if r2 > 5: triggers.append(f"【第九款】當日量放大{r2:.1f}倍")
+
+    if turnover > 0 and turnover_val_money >= 500000000:
+        acc_turn = (hist_df['Volume'].iloc[-6:].sum() / shares) * 100
+        if acc_turn > 50 and turnover > 10: triggers.append(f"【第十款】累轉{acc_turn:.0f}%")
+
+    if len(hist_df) >= 6:
+        gap = hist_df.iloc[-6:]['High'].max() - hist_df.iloc[-6:]['Low'].min()
+        threshold = 100 + (int((curr_close - 500)/500)+1)*25 if curr_close >= 500 else 100
+        if gap >= threshold: triggers.append(f"【第十一款】6日價差{gap:.0f}元(>門檻{threshold})")
+
+    pending_msg = ""
+    # ✅ 當沖率判斷：未公布則只標記 pending，不算觸發
+    if dt_today_pct is None or dt_avg6_pct is None:
+        pending_msg = "(當沖率待公布)"
+    else:
+        dt_vol_est = curr_vol_shares * (dt_today_pct / 100.0)
+        dt_vol_lots = dt_vol_est / 1000
+        is_exclude = (turnover < 5) or (turnover_val_money < 500000000) or (dt_vol_lots < 5000)
+        if not is_exclude:
+            if dt_avg6_pct > 60 and dt_today_pct > 60:
+                triggers.append(f"【第十三款】當沖{dt_today_pct}%(6日{dt_avg6_pct}%)")
+
+    # ✅ 最後輸出訊息：有觸發就加上 pending 註記（若有）
+    if triggers:
+        res['is_triggered'] = True
+        res['risk_level'] = '高'
+        res['trigger_msg'] = "且".join(triggers) + (f" {pending_msg}" if pending_msg else "")
+    else:
+        # 沒觸發就不要因 pending 升級風險
+        res['trigger_msg'] = pending_msg
+        if est_days <= 1: res['risk_level'] = '高'
+        elif est_days <= 2: res['risk_level'] = '中'
+        elif est_days >= 3: res['risk_level'] = '低'
+
+    return res
+
+# ✅ [修正] B) 計算 c1_streak 時，增加 b==1 的判斷 (排除日不計)
+def check_jail_trigger_now(status_list, clause_list):
+    status_list = list(status_list); clause_list = list(clause_list)
+    if len(status_list) < 30:
+        pad = 30 - len(status_list)
+        status_list = [0]*pad + status_list
+        clause_list = [""]*pad + clause_list
+
+    c1_streak = 0
+    # ✅ Fix: zip bits/clauses, check bit==1
+    for b, c in zip(status_list[-3:], clause_list[-3:]):
+        if b == 1 and (1 in parse_clause_ids_strict(c)): 
+            c1_streak += 1
+
+    v5 = 0; v10 = 0; v30 = 0
+    total = len(status_list)
+    for i in range(30):
+        idx = total - 1 - i
+        if idx < 0: break
+        if status_list[idx] == 1:
+            ids = parse_clause_ids_strict(clause_list[idx])
+            if is_valid_accumulation_day(ids):
+                if i < 5: v5 += 1
+                if i < 10: v10 += 1
+                v30 += 1
+
+    reasons = []
+    if c1_streak == 3: reasons.append("已觸發(連3第一款)")
+    if v5 == 5: reasons.append("已觸發(連5)")
+    if v10 >= 6: reasons.append(f"已觸發(10日{v10}次)")
+    if v30 >= 12: reasons.append(f"已觸發(30日{v30}次)")
+    return (len(reasons) > 0), " | ".join(reasons)
+
+def simulate_days_to_jail_strict(status_list, clause_list, *, stock_id=None, target_date=None, jail_map=None, enable_safe_filter=True):
+    if stock_id and target_date and jail_map and is_in_jail(stock_id, target_date, jail_map):
+        return 0, "處置中"
+
+    trigger_now, reason_now = check_jail_trigger_now(status_list, clause_list)
+    if trigger_now:
+        return 0, reason_now.replace("已觸發", "已達標，次一營業日處置")
+
+    if enable_safe_filter:
+        recent_valid_10 = 0
+        check_len = min(len(status_list), 10)
+        if check_len > 0:
+            for b, c in zip(status_list[-check_len:], clause_list[-check_len:]):
+                if b == 1 and is_valid_accumulation_day(parse_clause_ids_strict(c)):
+                    recent_valid_10 += 1
+        if recent_valid_10 == 0: return 99, "X"
+
+    status_list = list(status_list); clause_list = list(clause_list)
+    if len(status_list) < 30:
+        pad = 30 - len(status_list)
+        status_list = [0]*pad + status_list
+        clause_list = [""]*pad + clause_list
+
+    days = 0
+    while days < 10:
+        days += 1
+        status_list.append(1); clause_list.append("第1款")
+
+        c1_streak = 0
+        # ✅ Fix: Same logic here
+        for b, c in zip(status_list[-3:], clause_list[-3:]):
+            if b == 1 and (1 in parse_clause_ids_strict(c)): 
+                c1_streak += 1
+
+        v5 = 0; v10 = 0; v30 = 0
+        total = len(status_list)
+        for i in range(30):
+            idx = total - 1 - i
+            if idx < 0: break
+            if status_list[idx] == 1:
+                ids = parse_clause_ids_strict(clause_list[idx])
+                if is_valid_accumulation_day(ids):
+                    if i < 5: v5 += 1
+                    if i < 10: v10 += 1
+                    v30 += 1
+
+        reasons = []
+        if c1_streak == 3: reasons.append(f"再{days}天處置")
+        if v5 == 5: reasons.append(f"再{days}天處置(連5)")
+        if v10 >= 6: reasons.append(f"再{days}天處置(10日{v10}次)")
+        if v30 >= 12: reasons.append(f"再{days}天處置(30日{v30}次)")
+
+        if reasons:
+            return days, " | ".join(reasons)
+
+    return 99, ""
+
+# ==========================================
+# 🔥 處置股 90 日明細爬蟲邏輯 (Playwright + API)
+# ==========================================
+
+# 1. 上櫃 (TPEx) - API 直攻 + 名稱清理 (改用動態掃描)
+def fetch_tpex_jail_90d(s_date, e_date):
+    # ✅ [修正] 改用民國年 (ROC) 格式，避免 API 對西元日期支援不穩導致漏抓當日
+    sd = f"{s_date.year - 1911}/{s_date.month:02d}/{s_date.day:02d}"
+    ed = f"{e_date.year - 1911}/{e_date.month:02d}/{e_date.day:02d}"
+    print(f"  [上櫃] 請求: {sd} ~ {ed} ... ", end="")
+
+    url = "https://www.tpex.org.tw/www/zh-tw/bulletin/disposal"
+    payload = {"startDate": sd, "endDate": ed, "response": "json", "length": "5000", "start": "0"}
+    headers = {"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"}
+
+    try:
+        r = requests.post(url, data=payload, headers=headers, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            rows = data.get("tables", [{}])[0].get("data", []) or data.get("data", [])
+
+            if rows:
+                clean_data = []
+                for row in rows:
+                    # ✅ [關鍵修正] 放棄固定索引，改用掃描法
+                    c_code = ""
+                    c_name = ""
+                    c_period = ""
+
+                    found_code_idx = -1
+
+                    # 1. 找代號 (前4欄找 4碼數字)
+                    # ✅ [最小修正] 允許代號欄含連結/HTML/特殊空白，抽出純數字後再判斷 4 碼
+                    for i in range(min(len(row), 4)):
+                        val = str(row[i]).strip()
+                        val_digits = re.sub(r"\D", "", val)  # 只保留數字（避免 <a>1234</a>、1234&nbsp;）
+                        if len(val_digits) == 4:
+                            c_code = val_digits
+                            found_code_idx = i
+                            break
+
+                    if not c_code: continue # 嚴格篩選 4 碼
+
+                    # 2. 名稱 (代號下一欄)
+                    if found_code_idx + 1 < len(row):
+                        # ✅ [修正] 移除括號與連結
+                        c_name = str(row[found_code_idx+1]).split("(")[0].strip()
+
+                    # 3. 期間
+                    # ✅ [最小修正] 同時支援 "~" 與 "～"（全形），也容許日期區間字串
+                    for k in range(found_code_idx + 2, len(row)):
+                        s_item = str(row[k]).strip()
+                        if ("~" in s_item) or ("～" in s_item) or ("/" in s_item and "-" in s_item):
+                            c_period = s_item
+                            break
+
+                    clean_data.append({
+                        "Code": c_code,
+                        "Name": c_name,
+                        "Period": c_period,
+                        "Market": "上櫃"
+                    })
+
+                if clean_data:
+                    df = pd.DataFrame(clean_data)
+                    print(f"✅ 成功 ({len(df)} 筆)")
+                    return df
+
+            print("⚠️ 無資料")
+    except Exception as e:
+        print(f"❌ 錯誤: {e}")
+    return pd.DataFrame()
+
+# 2. 上市 (TWSE) - 欄位精準定位 (Index 6)
+async def fetch_twse_playwright_90d(s_date, e_date):
+    print(f"  [上市] 啟動瀏覽器模擬 (修正索引 [2,3,6,7])...")
+    sd_str = s_date.strftime("%Y%m%d")
+    ed_str = e_date.strftime("%Y%m%d")
+
+    url = "https://www.twse.com.tw/zh/announcement/punish.html"
+    captured_data = []
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+        page = await browser.new_page()
+
+        async def handle_response(response):
+            if "announcement/punish" in response.url:
+                try:
+                    data = await response.json()
+                    if "data" in data:
+                        captured_data.extend(data["data"])
+                        print(f"    └── ⚡ 攔截資料: {len(data['data'])} 筆")
+                except: pass
+
+        page.on("response", handle_response)
+
+        try:
+            await page.goto(url, wait_until="networkidle")
+            await page.evaluate(f"""
+                () => {{
+                    document.querySelector('input[name="startDate"]').value = "{sd_str}";
+                    document.querySelector('input[name="endDate"]').value = "{ed_str}";
+                }}
+            """)
+            await page.locator("button.search").click()
+            await page.wait_for_timeout(5000)
+        except Exception as e:
+            print(f"    ❌ 操作失敗: {e}")
+
+        await browser.close()
+
+    if captured_data:
+        df = pd.DataFrame(captured_data)
+
+        # Index 2: Code (代號)
+        # Index 3: Name (名稱)
+        # Index 6: Period (處置期間)  <-- td[7]
+        # ✅ [修正] 移除 Index 7 (Reason)
+
+        if df.shape[1] >= 8:
+            df = df.iloc[:, [2, 3, 6]]
+            df.columns = ["Code", "Name", "Period"]
+            df["Market"] = "上市"
+            print(f"    ✅ 整理完成 ({len(df)} 筆)")
+            return df
+        else:
+            print(f"    ⚠️ 欄位數量不足 ({df.shape[1]})，無法對應")
+
+    print("    ⚠️ 無資料")
+    return pd.DataFrame()
+
+async def run_jail_crawler_pipeline():
+    """ 整合上市櫃近 90 日處置股爬蟲流程 """
+    # ✅ [修正] 改用 TARGET_DATE (台灣時間)，避免雲端主機 UTC 時間造成日期落差
+    end_date = TARGET_DATE.date()
+    start_date = end_date - timedelta(days=150) # 寬鬆一點抓 150 天，篩選後取 90
+    print(f"🎯 啟動全市場處置股抓取: {start_date} ~ {end_date}")
+
+    all_dfs = []
+
+    # 1. 抓上櫃 (改為一次抓取，避免分批時最後一天(當日)變成單日查詢導致查無資料)
+    # ✅ [修正] 移除 while 迴圈，改為一次性請求
+    df_tpex = fetch_tpex_jail_90d(start_date, end_date)
+    if not df_tpex.empty: all_dfs.append(df_tpex)
+
+    # 2. 抓上市 (一次)
+    df_twse = await fetch_twse_playwright_90d(start_date, end_date)
+    if not df_twse.empty: all_dfs.append(df_twse)
+
+    if all_dfs:
+        print("\n🔄 合併處置股資料中...")
+        final_df = pd.concat(all_dfs, ignore_index=True)
+
+        # 轉字串並去空白
+        final_df["Code"] = final_df["Code"].astype(str).str.strip()
+        final_df["Name"] = final_df["Name"].astype(str).str.strip()
+        final_df["Period"] = final_df["Period"].astype(str).str.strip()
+
+        # ✅ [新增] 上市資料清洗：若代號空白，嘗試從名稱提取 (如 "1519 華城")
+        mask_empty_code = (final_df["Code"] == "")
+        if mask_empty_code.any():
+            print(f"⚠️ 發現 {mask_empty_code.sum()} 筆代號空白資料，嘗試修復...")
+            extracted = final_df.loc[mask_empty_code, "Name"].str.extract(r'^(\d{4})')
+            final_df.loc[mask_empty_code, "Code"] = extracted[0].fillna("")
+            final_df.loc[mask_empty_code, "Name"] = final_df.loc[mask_empty_code, "Name"].str.replace(r'^\d{4}\s+', '', regex=True)
+
+        # ✅ [關鍵優化] 在 regex 篩選前再次強制清除所有非數字字元
+        final_df["Code"] = final_df["Code"].astype(str).str.replace(r'\D', '', regex=True)
+
+        # ✅ 修正需求 1: 嚴格篩選只有 4 位數字的股票代號
+        final_df = final_df[final_df["Code"].str.match(r'^\d{4}$')]
+
+        # ✅ 修正需求 2: 建立正確的排序日期 (解析民國年 114/xx/xx -> 2025xx)
+        def parse_sort_date(period_str):
+            try:
+                # 取區間的起始日
+                start_part = period_str.replace("~", "-").split("-")[0].strip()
+                if "/" in start_part:
+                    parts = start_part.split("/")
+                    if len(parts) == 3:
+                        y = int(parts[0]) + 1911
+                        m = int(parts[1])
+                        d = int(parts[2])
+                        return f"{y}{m:02d}{d:02d}"
+                return "99999999"
+            except:
+                return "99999999"
+
+        final_df["SortDate"] = final_df["Period"].apply(parse_sort_date)
+
+        # ✅ 修正需求 3: 排序 (Newest -> Oldest)
+        # ascending=[False, True] -> SortDate Descending (Newest first), Code Ascending
+        final_df.sort_values(by=["SortDate", "Code"], ascending=[False, True], inplace=True)
+        final_df.drop_duplicates(subset=["Code", "Period"], inplace=True)
+
+        # ✅ 修正需求 4: 刪除 SortDate 欄位
+        final_df.drop(columns=["SortDate"], inplace=True)
+
+        # ✅ 修正需求 5: 欄位中文化 (移除處置原因)
+        final_df.rename(columns={
+            "Market": "市場",
+            "Code": "代號",
+            "Name": "名稱",
+            "Period": "處置期間"
+        }, inplace=True)
+
+        return final_df
+    else:
+        print("❌ 無處置股資料")
+        return pd.DataFrame()
+
+# ============================
+# Main
+# ============================
+def main():
+    sh, _ = connect_google_sheets()
+    if not sh: return
+
+    # ✅ [修正] 優先執行爬蟲，確保處置名單是最新的
+    print("\n" + "="*50)
+    print("🚀 啟動額外任務：抓取近 90 日處置股清單 (Playwright)...")
+    print("="*50)
+
+    try:
+        # 使用 asyncio.run 執行非同步的 Playwright 爬蟲流程
+        df_jail_90 = asyncio.run(run_jail_crawler_pipeline())
+
+        if not df_jail_90.empty:
+            sheet_title = "處置股90日明細"
+            print(f"💾 正在寫入 Google Sheet: {sheet_title}...")
+
+            # 定義需要的欄位順序 (中文欄位)
+            export_cols = ["市場", "代號", "名稱", "處置期間"]
+
+            # 準備寫入資料
+            final_rows = [export_cols] + df_jail_90[export_cols].values.tolist()
+
+            # 寫入工作表
+            ws_jail = get_or_create_ws(sh, sheet_title, headers=export_cols)
+            ws_jail.clear()
+            ws_jail.append_rows(final_rows, value_input_option='USER_ENTERED')
+            print(f"✅ {sheet_title} 更新完成！")
+        else:
+            print("⚠️ 查無處置股資料，跳過寫入。")
+
+    except Exception as e:
+        print(f"❌ 處置股爬蟲任務失敗: {e}")
+
+    # ============================
+    # 後續執行風險計算與監控
+    # ============================
+    update_market_monitoring_log(sh)
+
+    cal_dates = get_official_trading_calendar(240)
+
+    # ✅ [修正] main() 修正 T-2 回朔 Bug
+    target_trade_date_obj = cal_dates[-1]
+    is_today_trade = (target_trade_date_obj == TARGET_DATE.date())
+
+    # 只有「日曆已包含今天」且「現在 < 17:30」才退回 T-1
+    if is_today_trade and (not IS_AFTER_SAFE) and len(cal_dates) >= 2:
+        print(f"⏳ 現在時間 {TARGET_DATE.strftime('%H:%M')} 早於 {SAFE_CRAWL_TIME}，且日曆包含今日，切換為 T-1 模式。")
+        target_trade_date_obj = cal_dates[-2]
+
+    target_date_str = target_trade_date_obj.strftime("%Y-%m-%d")
+    print(f"📅 最終鎖定運算日期: {target_date_str}")
+
+    ws_log = get_or_create_ws(sh, "每日紀錄", headers=['日期','市場','代號','名稱','觸犯條款'])
+
+    # ✅ 執行回補 (包含檢查狀態表缺失)
+    backfill_daily_logs(sh, ws_log, cal_dates, target_trade_date_obj)
+
+    print("📊 讀取歷史 Log...")
+    log_data = ws_log.get_all_records()
+    df_log = pd.DataFrame(log_data)
+    if not df_log.empty:
+        df_log['代號'] = df_log['代號'].astype(str).str.strip().str.replace("'", "")
+        # ✅ [修正] 強制日期標準化 (YYYY-MM-DD)，解決 Google Sheets 格式混亂問題
+        df_log['日期'] = pd.to_datetime(df_log['日期'], errors='coerce').dt.strftime("%Y-%m-%d")
+        df_log = df_log[df_log['日期'].notna()]
+
+    clause_map = {}
+    for _, r in df_log.iterrows():
+        key = (str(r['代號']), str(r['日期']))
+        clause_map[key] = merge_clause_text(clause_map.get(key,""), str(r['觸犯條款']))
+
+    # ✅ [修正] jail_map 改為從 Sheet 快取讀取，不再爬蟲
+    # jail_map = get_jail_map(target_trade_date_obj - timedelta(days=90), target_trade_date_obj) # (移除舊邏輯)
+    jail_map = get_jail_map_from_sheet(sh)
+
+    exclude_map = build_exclude_map(cal_dates, jail_map)
+
+    start_dt_str = cal_dates[-90].strftime("%Y-%m-%d")
+    df_recent = df_log[df_log['日期'] >= start_dt_str]
+    target_stocks = df_recent['代號'].unique()
+
+    precise_db = load_precise_db_from_sheet(sh)
+    rows_stats = []
+
+    print(f"🔍 掃描 {len(target_stocks)} 檔股票...")
+    for idx, code in enumerate(target_stocks):
+        code = str(code).strip()
+        name = df_log[df_log['代號']==code]['名稱'].iloc[-1] if not df_log[df_log['代號']==code].empty else "未知"
+
+        db_info = precise_db.get(code, {})
+        m_type = str(db_info.get('market', '上市')).upper()
+        suffix = '.TWO' if any(k in m_type for k in ['上櫃', 'TWO', 'TPEX', 'OTC']) else '.TW'
+        ticker_code = f"{code}{suffix}"
+
+        # ✅ [修正] 傳入 target_date，確保只切斷已過期的處置
+        stock_calendar = get_last_n_non_jail_trade_dates(
+            code, cal_dates, jail_map, exclude_map, 30, target_date=TARGET_DATE.date()
+        )
+
+        # ✅ [新增] C) 取得最近一次處置結束日，作為累積重置點
+        # ✅ [修正] 這裡也使用 TARGET_DATE.date() 確保與爬蟲邏輯一致
+        cutoff = get_last_jail_end(code, TARGET_DATE.date(), jail_map)
+
+        bits = []; clauses = []
+        for d in stock_calendar:
+            d0 = d # stock_calendar 元素本身就是 date object
+
+            # ✅ C) 出關後：cutoff(含)以前全部不納入任何累積/連3判斷
+            if cutoff and d0 <= cutoff:
+                bits.append(0); clauses.append("")
+                continue
+
+            c = clause_map.get((code, d.strftime("%Y-%m-%d")), "")
+            if is_excluded(code, d, exclude_map):
+                # ✅ A) 排除日清空 clause
+                bits.append(0); clauses.append(""); continue
+
+            if c: bits.append(1); clauses.append(c)
+            else: bits.append(0); clauses.append("")
+
+        # ✅ [修正] 強制 enable_safe_filter=False (剛出關不被濾掉)
+        # ✅ [修正] target_date 使用 TARGET_DATE.date() (程式執行當下日期) 判斷處置狀態
+        est_days, reason = simulate_days_to_jail_strict(
+            bits, clauses, 
+            stock_id=code, 
+            target_date=TARGET_DATE.date(), 
+            jail_map=jail_map,
+            enable_safe_filter=False
+        )
+
+        latest_ids = parse_clause_ids_strict(clauses[-1] if clauses else "")
+        is_special_risk = is_special_risk_day(latest_ids)
+        is_clause_13 = False
+        for c in clauses:
+            if 13 in parse_clause_ids_strict(c):
+                is_clause_13 = True
+                break
+
+        est_days_int = 99
+        est_days_display = "X"
+        reason_display = ""
+
+        if reason == "X":
+            est_days_int = 99
+            est_days_display = "X"
+            if is_special_risk:
+                reason_display = "籌碼異常(人工審核風險)"
+                if is_clause_13: reason_display += " + 刑期可能延長"
+        elif est_days == 0:
+            est_days_int = 0
+            est_days_display = "0"
+            reason_display = reason
+        else:
+            est_days_int = int(est_days)
+            est_days_display = str(est_days_int)
+            reason_display = reason
+            if is_special_risk:
+                reason_display += " | ⚠️留意人工處置風險"
+            if is_clause_13:
+                reason_display += " (若進處置將關12天)"
+
+        hist = fetch_history_data(ticker_code)
+        if hist.empty:
+            alt_s = '.TWO' if suffix=='.TW' else '.TW'
+            hist = fetch_history_data(f"{code}{alt_s}")
+            if not hist.empty: ticker_code = f"{code}{alt_s}"
+
+        fund = fetch_stock_fundamental(code, ticker_code, precise_db)
+
+        # ✅ 當沖率抓取判斷：只有過了 21:00 才抓，否則給 None
+        dt_today, dt_avg6 = None, None
+        if IS_AFTER_DAYTRADE:
+            dt_today, dt_avg6 = get_daytrade_stats_finmind(code, target_date_str)
+
+        risk = calculate_full_risk(code, hist, fund, est_days_int, dt_today, dt_avg6)
+
+        # streak
+        valid_bits = [1 if b==1 and is_valid_accumulation_day(parse_clause_ids_strict(c)) else 0 for b,c in zip(bits, clauses)]
+        streak = 0
+        for v in reversed(valid_bits):
+            if v: streak+=1
+            else: break
+
+        status_30 = "".join(map(str, valid_bits)).zfill(30)
+
+        def safe(v):
+            if v is None: return ""
+            try: 
+                if np.isnan(v): return ""
+            except: pass
+            return str(v)
+
+        # ✅ [修正] 增加保護，避免 stock_calendar 空值取 [-1] 錯誤
+        last_date_val = ""
+        if stock_calendar:
+            last_date_val = stock_calendar[-1].strftime("%Y-%m-%d")
+
+        row = [
+            f"'{code}", name, safe(streak), safe(sum(valid_bits)), safe(sum(valid_bits[-10:])),
+            last_date_val, # 使用保護後的變數
+            f"'{status_30}", f"'{status_30[-10:]}", est_days_display, safe(reason_display),
+            safe(risk['risk_level']), safe(risk['trigger_msg']),
+            safe(risk['curr_price']), safe(risk['limit_price']), safe(risk['gap_pct']),
+            safe(risk['curr_vol']), safe(risk['limit_vol']), safe(risk['turnover_val']),
+            safe(risk['turnover_rate']), safe(risk['pe']), safe(risk['pb']), safe(risk['day_trade_pct'])
+        ]
+        rows_stats.append(row)
+        if (idx+1)%10==0: time.sleep(1)
+
+    if rows_stats:
+        print("💾 更新統計表...")
+        ws_stats = get_or_create_ws(sh, "近30日熱門統計", headers=STATS_HEADERS)
+        ws_stats.clear()
+        ws_stats.append_row(STATS_HEADERS, value_input_option='USER_ENTERED')
+        ws_stats.append_rows(rows_stats, value_input_option='USER_ENTERED')
+        print("✅ 完成")
+
+if __name__ == "__main__":
+    main()
