@@ -532,9 +532,12 @@ def get_shareholding_data(stock_id: str):
     
     try:
         driver.get(url)
+        # 等待頁面載入
         time.sleep(2)
-
-        # 1) 明細表 (Summary Table)
+        
+        # 1. 抓取【明細】表格 (Summary Table)
+        # 使用使用者提供的 XPath (明細表格容器)
+        # 目標: .../div[1]/table
         summary_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[1]/table"
         summary_df = None
         try:
@@ -542,73 +545,21 @@ def get_shareholding_data(stock_id: str):
             summary_df = pd.read_html(StringIO(tbl_summary.get_attribute("outerHTML")))[0]
         except Exception:
             pass
-
-        # 2) 分級比例 (Ratio Table) + 翻頁抓歷史
+            
+        # 2. 抓取【分級比例】表格 (Ratio Table)
+        # 先點擊【分級比例】頁籤 (li[3])
+        # XPath: .../ul/li[3]/a/span
         ratio_df = None
         try:
             tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
             driver.execute_script("arguments[0].click();", tab_ratio)
-            time.sleep(1)
-
+            time.sleep(1) # 等待切換
+            
+            # 抓取分級比例表格
+            # 目標: .../div[3]/table
             ratio_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[3]/table"
-
-            ratio_frames = []
-            seen_signatures = set()
-
-            # 目標：最多抓到約 1 年（保守抓 370 天）
-            cutoff_dt = datetime.now() - timedelta(days=370)
-
-            def try_extract_min_dt(df_: pd.DataFrame):
-                # 嘗試從整張表找到「最早日期」
-                cand = []
-                for col in df_.columns:
-                    s = df_[col].astype(str).str.replace("/", "").str.replace("-", "")
-                    dt = pd.to_datetime(s, format="%Y%m%d", errors="coerce")
-                    if dt.notna().sum() >= max(3, int(len(df_) * 0.3)):
-                        cand.append(dt.min())
-                if not cand:
-                    return None
-                cand = [x for x in cand if pd.notna(x)]
-                return min(cand) if cand else None
-
-            page_count = 0
-            while page_count < 80:  # 上限保護
-                try:
-                    tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
-                    tables = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))
-                    if not tables:
-                        break
-                    df_page = tables[0]
-                except Exception:
-                    break
-
-                signature = (df_page.shape, str(df_page.head(3).values.tolist())[:300])
-                if signature in seen_signatures:
-                    break
-                seen_signatures.add(signature)
-
-                ratio_frames.append(df_page)
-
-                min_dt = try_extract_min_dt(df_page)
-                if min_dt is not None and min_dt <= cutoff_dt:
-                    break
-
-                try:
-                    next_links = driver.find_elements(By.XPATH, "//a[contains(text(),'下一頁')]")
-                    if next_links and next_links[0].is_enabled():
-                        driver.execute_script("arguments[0].click();", next_links[0])
-                        time.sleep(0.8)
-                        page_count += 1
-                        continue
-                    else:
-                        break
-                except Exception:
-                    break
-
-            if ratio_frames:
-                ratio_df = pd.concat(ratio_frames, ignore_index=True)
-                ratio_df = ratio_df.drop_duplicates()
-
+            tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
+            ratio_df = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))[0]
         except Exception:
             pass
 
@@ -636,18 +587,27 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     if df.shape[1] < 18: return None
     
     # 欄位映射 (Index -> 上界張數)
+    # Col 3 (<1) -> 1
+    # Col 4 (1-5) -> 5
+    # Col 5 (5-10) -> 10
+    # ...
     col_map = {
         3: 1, 4: 5, 5: 10, 6: 15, 7: 20, 8: 30, 9: 40, 10: 50,
         11: 100, 12: 200, 13: 400, 14: 600, 15: 800, 16: 1000, 17: 99999999 # 1000以上
     }
     
+    # 找出日期欄位索引 (通常是 Col 2，索引為 2)
+    # 我們遍歷每一列，嘗試解析日期
     out = []
     
+    # 從資料列開始 (跳過標題，如果 read_html 沒抓對標題)
+    # 假設前幾列可能是標題，找符合 YYYY-MM-DD 或 YYYYMMDD 的
     for i, row in df.iterrows():
         try:
             d_val = str(row.iloc[2]) # 假設日期在第 3 欄
             d_str = d_val.replace("/", "").replace("-", "")
             
+            # 簡單驗證日期格式
             if not re.match(r"^\d{8}$", d_str): continue
             
             date_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
@@ -659,6 +619,7 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 val_str = str(row.iloc[col_idx]).replace("%", "").replace(",", "")
                 val = float(val_str) if val_str != 'nan' else 0.0
                 
+                # 修正判斷邏輯：使用區間下界來判斷比較準確
                 lower = 0
                 if col_idx == 3: lower = 0
                 elif col_idx == 4: lower = 1
@@ -676,9 +637,13 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 elif col_idx == 16: lower = 800
                 elif col_idx == 17: lower = 1000
                 
+                # 散戶條件：持股 < 散戶門檻
+                # 只有當整個區間都在門檻之下才算 (即 上界 <= 門檻)
                 if upper <= retail_threshold:
                     retail_ratio += val
                 
+                # 大戶條件：持股 >= 大戶門檻
+                # 只有當整個區間都在門檻之上才算 (即 下界 >= 門檻)
                 if lower >= large_threshold:
                     large_ratio += val
             
@@ -687,6 +652,7 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 "日期": date_fmt,
                 "大戶持股(%)": round(large_ratio, 2),
                 "散戶持股(%)": round(retail_ratio, 2),
+                # 分級比例表沒有人數，設為 0
                 "大戶人數": 0,
                 "散戶人數": 0
             })
@@ -695,7 +661,6 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
             continue
             
     if not out: return None
-    # ✅ [FIX] 不限制筆數，回傳所有抓到的資料，確保能顯示歷史長資料
     return pd.DataFrame(out).sort_values("DateStr")
 
 @st.cache_data(ttl=21600)
@@ -705,8 +670,7 @@ def get_stock_price(stock_id, refresh_nonce=0):
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            # ✅ [FIX] 抓取更長歷史股價(2y -> 5y) 以匹配集保歷史資料
-            temp_df = stock.history(period="5y")
+            temp_df = stock.history(period="2y")
             if not temp_df.empty:
                 df = temp_df
                 break
@@ -766,17 +730,21 @@ with st.sidebar:
     sorted_stocks = sorted(all_stocks, key=get_sort_key)
     
     # ✅ [FIX START] 修正股票選擇器重置問題
+    # 檢查是否有上次選過的股票紀錄
     target_index = 0
     current_selection = st.session_state.get("stock_selector")
     
     if current_selection and current_selection in sorted_stocks:
+        # 如果有上次的選擇，使用該選擇的索引
         target_index = sorted_stocks.index(current_selection)
     else:
+        # 第一次執行或找不到時，預設找 2313
         for idx, s in enumerate(sorted_stocks):
             if s.startswith("2313"):
                 target_index = idx
                 break
                 
+    # 加上 key 參數以保持狀態
     stock_selection = st.selectbox(
         "搜尋股票", 
         options=sorted_stocks, 
