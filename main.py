@@ -127,8 +127,8 @@ def get_stock_name(stock_id):
     except:
         return ""
 
-# ✅ 確保 render_broker_table 定義在主邏輯之前
-def render_broker_table(df, sum_data, color_hex, title):
+# ✅ [MODIFIED] 修改 render_broker_table 以支援互動選取
+def render_broker_table(df, sum_data, color_hex, title, key_id):
     if "買超" in title:
         label_total = "🔴 合計買超張數"
         label_avg = "🔴 平均買超成本"
@@ -144,9 +144,16 @@ def render_broker_table(df, sum_data, color_hex, title):
         "pct": "佔比"
     }
     
-    st.dataframe(
+    # ✅ 使用 on_select 啟用選擇功能
+    event = st.dataframe(
         df.style.map(lambda x: f'color: {color_hex}; font-weight: bold', subset=['net']),
-        use_container_width=True, height=500, hide_index=True, column_config=full_config
+        use_container_width=True, 
+        height=500, 
+        hide_index=True, 
+        column_config=full_config,
+        on_select="rerun", # 點擊後重新執行
+        selection_mode="single-row", # 單選模式
+        key=key_id
     )
     
     st.markdown(f"""
@@ -161,6 +168,12 @@ def render_broker_table(df, sum_data, color_hex, title):
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # 若有選取，回傳選中的券商名稱
+    if len(event.selection.rows) > 0:
+        selected_idx = event.selection.rows[0]
+        return df.iloc[selected_idx]['broker']
+    return None
 
 # ✅ 輔助函式：計算 KD, MACD, BB, RSI, MA
 def calculate_technical_indicators(df):
@@ -932,6 +945,34 @@ if stock_input:
             # ✅ [LAYOUT CHANGE] 改為左圖右表 (Left: Charts, Right: Tables)
             col_chart, col_table = st.columns([3, 1])
             
+            # 初始化 session_state
+            if "active_broker" not in st.session_state:
+                st.session_state.active_broker = None
+
+            # --- 右側：排行表 (優先處理以捕捉事件) ---
+            with col_table:
+                st.markdown("##### 區間前 15 大")
+                t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
+                
+                new_active = None
+                
+                with t1: 
+                    # ✅ 捕捉點擊事件
+                    selected_buy = render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大", key_id="buy_table")
+                    if selected_buy:
+                        new_active = selected_buy
+                        
+                with t2: 
+                    # ✅ 捕捉點擊事件
+                    selected_sell = render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大", key_id="sell_table")
+                    if selected_sell:
+                        new_active = selected_sell
+                
+                # 若有選取新的分點，更新 session_state
+                if new_active and new_active != st.session_state.active_broker:
+                    st.session_state.active_broker = new_active
+                    st.rerun()
+
             # --- 左側：圖表區 ---
             with col_chart:
                 c1, c2 = st.columns([1, 2])
@@ -947,100 +988,101 @@ if stock_input:
                         st.session_state.days_label = days_label_ui
                         st.session_state.selected_days = days_map[days_label_ui]
                         st.rerun()
-                with c2:
+                
+                # ✅ 決定目標券商 (從點擊狀態或預設第一筆)
+                target_broker = st.session_state.active_broker
+                if not target_broker:
                     brokers_list = list(dict.fromkeys(df_buy['broker'].tolist() + df_sell['broker'].tolist()))
-                    target_broker = st.selectbox("選擇要查看每日明細的券商", brokers_list)
+                    if brokers_list:
+                        target_broker = brokers_list[0]
+                        st.session_state.active_broker = target_broker
                 
-                merged_df = None
-                target_key = normalize_name(target_broker)
-                broker_params = None
-                if broker_info:
-                    if target_key in broker_info: broker_params = broker_info[target_key]
-                    else:
-                        for k, v in broker_info.items():
-                            if target_key in k or k in target_key:
-                                broker_params = v
-                                break
-                                
-                if broker_params:
-                    long_start_date = df_price['DateStr'].iloc[0] 
-                    long_end_date = df_price['DateStr'].iloc[-1] 
-                    broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
-                    merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
-
-                    if st.session_state.get('merged_key') != merged_key:
-                        with st.spinner(f"正在爬取 {target_broker} ..."):
-                            broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce)
-                            if broker_daily_df is not None and not broker_daily_df.empty:
-                                broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last").sort_values('DateStr')
-                                merged_df = pd.merge(df_price, broker_daily_df, on='DateStr', how='left')
-                                merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
-                                st.session_state['merged_df'] = merged_df
-                                st.session_state['merged_key'] = merged_key
-                            else:
-                                st.session_state.pop('merged_df', None)
-                                st.session_state['merged_key'] = merged_key
-                                st.warning("⚠️ 該券商明細抓取失敗")
-                    else:
-                        merged_df = st.session_state.get('merged_df')
-
-                charts_payload_broker = []
-                plot_df = merged_df if merged_df is not None else df_price
-                plot_df = plot_df.copy()
-                plot_df.index.name = None
-                plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
-                plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-                if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
-
-                candlestick_data = []
-                for i, row in plot_df.iterrows():
-                    if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                if target_broker:
+                    with c2:
+                        st.markdown(f"### 目前檢視：{target_broker}")
                 
-                # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
-                main_chart_series = []
-                main_chart_series.append({
-                    "type": "Candlestick",
-                    "data": candlestick_data,
-                    "options": {
-                        "upColor": COLOR_UP, 
-                        "downColor": COLOR_DOWN, 
-                        "borderUpColor": COLOR_UP, 
-                        "borderDownColor": COLOR_DOWN, 
-                        "wickUpColor": COLOR_UP, 
-                        "wickDownColor": COLOR_DOWN, 
-                        "lastValueVisible": False
-                    }
-                })
+                    merged_df = None
+                    target_key = normalize_name(target_broker)
+                    broker_params = None
+                    if broker_info:
+                        if target_key in broker_info: broker_params = broker_info[target_key]
+                        else:
+                            for k, v in broker_info.items():
+                                if target_key in k or k in target_key:
+                                    broker_params = v
+                                    break
+                                    
+                    if broker_params:
+                        long_start_date = df_price['DateStr'].iloc[0] 
+                        long_end_date = df_price['DateStr'].iloc[-1] 
+                        broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
+                        merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
 
-                charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": main_chart_series})
-                
-                if '買賣超_Final' in plot_df.columns:
-                    chip_data, chip_cumulative_data = [], []
+                        if st.session_state.get('merged_key') != merged_key:
+                            with st.spinner(f"正在爬取 {target_broker} ..."):
+                                broker_daily_df, detail_url = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce)
+                                if broker_daily_df is not None and not broker_daily_df.empty:
+                                    broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last").sort_values('DateStr')
+                                    merged_df = pd.merge(df_price, broker_daily_df, on='DateStr', how='left')
+                                    merged_df['買賣超_Final'] = merged_df['買賣超_Calc'].fillna(0)
+                                    st.session_state['merged_df'] = merged_df
+                                    st.session_state['merged_key'] = merged_key
+                                else:
+                                    st.session_state.pop('merged_df', None)
+                                    st.session_state['merged_key'] = merged_key
+                                    st.warning("⚠️ 該券商明細抓取失敗")
+                        else:
+                            merged_df = st.session_state.get('merged_df')
+
+                    charts_payload_broker = []
+                    plot_df = merged_df if merged_df is not None else df_price
+                    plot_df = plot_df.copy()
+                    plot_df.index.name = None
+                    plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
+                    plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+                    if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
+
+                    candlestick_data = []
                     for i, row in plot_df.iterrows():
-                        val = row.get('買賣超_Final')
-                        if not pd.isna(val): chip_data.append({"time": row['DateStr'], "value": float(val), "color": COLOR_UP if val>0 else COLOR_DOWN})
-                        cum_val = row.get('cumulative_chip')
-                        if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
+                        if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
                     
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣", False), "series": [
-                        {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                    ]})
-                
-                # ✅ [修正] 恢復傳送 highlightRange 給前端，這樣全域遮罩 (Global Mask) 才能生效並蓋到下方
-                if charts_payload_broker:
-                    charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
+                    # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
+                    main_chart_series = []
+                    main_chart_series.append({
+                        "type": "Candlestick",
+                        "data": candlestick_data,
+                        "options": {
+                            "upColor": COLOR_UP, 
+                            "downColor": COLOR_DOWN, 
+                            "borderUpColor": COLOR_UP, 
+                            "borderDownColor": COLOR_DOWN, 
+                            "wickUpColor": COLOR_UP, 
+                            "wickDownColor": COLOR_DOWN, 
+                            "lastValueVisible": False
+                        }
+                    })
 
-                renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
+                    charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": main_chart_series})
+                    
+                    if '買賣超_Final' in plot_df.columns:
+                        chip_data, chip_cumulative_data = [], []
+                        for i, row in plot_df.iterrows():
+                            val = row.get('買賣超_Final')
+                            if not pd.isna(val): chip_data.append({"time": row['DateStr'], "value": float(val), "color": COLOR_UP if val>0 else COLOR_DOWN})
+                            cum_val = row.get('cumulative_chip')
+                            if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
+                        
+                        # ✅ [FIX] 禁用固定標籤
+                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣", False), "series": [
+                            {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                            {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                        ]})
+                    
+                    # ✅ [修正] 恢復傳送 highlightRange 給前端，這樣全域遮罩 (Global Mask) 才能生效並蓋到下方
+                    if charts_payload_broker:
+                        charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
 
-            # --- 右側：排行表 ---
-            with col_table:
-                st.markdown("##### 區間前 15 大")
-                t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
-                # ✅ [FIX] 恢復分點前15大表格
-                with t1: render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大")
-                with t2: render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大")
+                    renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
         # ==================== Tab 3: 法人 ====================
         with tab_inst:
