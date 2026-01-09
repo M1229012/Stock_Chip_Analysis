@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (包含將 Radio 修改為分頁樣式)
+# ✅ CSS 設定 (包含將 Radio 修改為膠囊分段樣式)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,52 +86,52 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS Hack] 將 Radio Button 修改為 "分頁 (Tabs)" 的外觀
+       ✅ [CSS Hack] 將 Radio Button 修改為 "Smooth Segmented Control" (膠囊分段) 樣式
        ========================================================================= */
-    /* 隱藏 Radio 的圓圈輸入框 */
+    /* 1. 隱藏 Radio 的圓圈輸入框 */
     div.row-widget.stRadio > div[role="radiogroup"] > label > div:first-child {
         display: none !important;
     }
     
-    /* 調整 Radio Group 容器，使其橫向排列並帶有背景 */
+    /* 2. 調整 Radio Group 容器 - 膠囊狀背景槽 */
     div.row-widget.stRadio > div[role="radiogroup"] {
         flex-direction: row;
-        background-color: #131722;
-        padding: 4px;
-        border-radius: 8px;
-        gap: 6px;
-        border: 1px solid #333;
+        background-color: #2c303a; /* 深色模式下的淺灰槽背景 */
+        padding: 4px; /* 內距，讓選中項有邊距 */
+        border-radius: 24px; /* 大圓角，形成膠囊形狀 */
+        gap: 0px; /* 選項之間無間隙 */
+        border: none;
         display: inline-flex;
-        width: 100%; /* 佔滿寬度 */
+        width: 100%;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); /* 內部陰影增加凹陷感 */
     }
 
-    /* 調整每個選項 (Label) 的樣式：像按鈕/分頁 */
+    /* 3. 調整每個選項 (Label) 的樣式 - 未選中狀態 */
     div.row-widget.stRadio > div[role="radiogroup"] > label {
         background-color: transparent;
         padding: 8px 16px;
-        border-radius: 6px;
-        border: 1px solid transparent;
+        border-radius: 20px; /* 選項本身的圓角 */
+        border: none;
         flex: 1; /* 平均分配寬度 */
         text-align: center;
         justify-content: center;
         margin-right: 0 !important;
-        transition: all 0.2s;
-        color: #aaa;
+        transition: all 0.2s ease-in-out; /* 平滑過渡 */
+        color: #8e939e; /* 未選中的灰色文字 */
+        font-weight: 500;
     }
 
-    /* 滑鼠懸停效果 */
+    /* 滑鼠懸停效果 (未選中時) */
     div.row-widget.stRadio > div[role="radiogroup"] > label:hover {
-        background-color: #262730;
-        color: white;
+        color: #ffffff;
     }
 
-    /* ✅ 選中狀態 (Highligt) - 模擬 Tab 選中 */
-    /* Streamlit 會給選中的 label 加上 aria-checked="true" */
+    /* 4. ✅ 選中狀態 (Highlight) - 藍色膠囊凸起 (仿照圖片風格) */
     div.row-widget.stRadio > div[role="radiogroup"] > label[aria-checked="true"] {
-        background-color: #ef5350 !important; /* 紅色背景 */
-        color: white !important;
+        background-color: #1E88E5 !important; /* 亮藍色背景 */
+        color: white !important; /* 白色文字 */
         font-weight: bold;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2); /* 外部陰影增加浮起感 */
     }
     </style>
     """, unsafe_allow_html=True)
