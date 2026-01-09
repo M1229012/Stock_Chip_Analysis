@@ -1052,9 +1052,19 @@ if stock_input:
                 # ✅ [LAYOUT CHANGE] 將統計天數選單移至此處 (右側欄位上方)
                 # 使用 key="days_label" 直接綁定到 st.session_state.days_label
                 # 這樣修改時 Streamlit 會自動 rerun，並且保留在當前分頁
+                
+                # ✅ [FIX] 強制設定 index 為 "20日" (索引為 3)，讓預設選單正確顯示
+                # ["1日", "5日", "10日", "20日", ...] -> 20日是 index 3
+                default_index = 3 
+                try:
+                    default_index = list(days_map.keys()).index(st.session_state.days_label)
+                except:
+                    default_index = 3
+
                 st.selectbox(
                     "統計天數",
                     list(days_map.keys()),
+                    index=default_index,
                     key="days_label" 
                 )
                 
@@ -1139,6 +1149,8 @@ if stock_input:
                     if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
                     candlestick_data = []
+                    # ✅ [NEW] 準備均線數據
+                    ma5_data, ma10_data, ma20_data = [], [], []
                     
                     # ✅ [關鍵修改] 構建 K 線數據，加入「區間凸顯」邏輯
                     # rank_start_date 和 rank_end_date 為當前統計區間
@@ -1180,6 +1192,11 @@ if stock_input:
                                 item["wickColor"] = fade_color
                                 
                             candlestick_data.append(item)
+                            
+                            # ✅ 收集均線數據
+                            if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
+                            if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
+                            if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
                     
                     # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
                     main_chart_series = []
@@ -1197,6 +1214,12 @@ if stock_input:
                             "lastValueVisible": False
                         }
                     })
+                    
+                    # ✅ [NEW] 加入均線到圖表
+                    ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
+                    main_chart_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
+                    main_chart_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
+                    main_chart_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
                     charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True), "series": main_chart_series})
                     
@@ -1246,10 +1269,24 @@ if stock_input:
 
             charts_payload_inst = []
             candlestick_data = []
+            # ✅ [NEW] 準備均線數據
+            ma5_data, ma10_data, ma20_data = [], [], []
+            
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-            # ✅ [FIX] 禁用固定標籤
-            charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
+                # ✅ 收集均線數據
+                if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
+                if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
+                if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
+
+            # ✅ [NEW] 整合 K 線與均線
+            ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
+            main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
+            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
+            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
+            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+
+            charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '外資買賣超' in plot_df.columns:
                 f_hist, f_line = [], []
@@ -1310,10 +1347,24 @@ if stock_input:
 
             charts_payload_margin = []
             candlestick_data = []
+            # ✅ [NEW] 準備均線數據
+            ma5_data, ma10_data, ma20_data = [], [], []
+
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-            # ✅ [FIX] 禁用固定標籤
-            charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]})
+                # ✅ 收集均線數據
+                if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
+                if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
+                if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
+
+            # ✅ [NEW] 整合 K 線與均線
+            ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
+            main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
+            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
+            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
+            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+
+            charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '融資餘額' in plot_df.columns:
                 ml_bal, ml_diff, ms_bal, ms_diff = [], [], [], []
