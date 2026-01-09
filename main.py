@@ -1322,25 +1322,5 @@ if stock_input:
                     renderLightweightCharts(holder_payload, key="tab5_holder")
 
     else:
-        st.markdown(
-            f"""
-            <div style="padding: 32px 24px; background: linear-gradient(135deg,#22223b 85%, #4a4e69 100%); border-radius: 18px; box-shadow: 0 4px 24px rgba(42,42,66,0.15); margin-bottom: 18px; display: flex; align-items: center;">
-                <div style="flex: 0 0 55px; height: 55px; border-radius: 50%; background: #c3073f22; display: flex; align-items: center; justify-content: center; margin-right: 24px; border: 1.5px solid #c3073f;">
-                    <span style="font-size: 2.5rem; color: #c3073f; font-weight: bold;">!</span>
-                </div>
-                <div>
-                    <div style="font-size: 1.4rem; font-weight: 600; color: #fff; letter-spacing: 1px; margin-bottom: 5px;">
-                        無法取得 K 線圖資料 <span style="color: #ffa600;">({stock_input})</span>
-                    </div>
-                    <div style="color: #f1faee; font-size: 1.1rem; margin-top: 2px;">
-                        <ul style="padding-left:22px; margin: 0;">
-                            <li>此股票為<span style="color:#db324d">「興櫃股票」</span>或 Yahoo Finance 無資料</li>
-                            <li>股票代號輸入錯誤</li>
-                            <li>Yahoo API 暫時連線失敗，請稍後再試</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
+        st.info("可能有以下原因：\n1. 此股票為「興櫃股票」或 Yahoo Finance 無資料。\n2. 股票代號輸入錯誤。\n3. Yahoo API 暫時連線失敗，請稍後再試。")
