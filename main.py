@@ -711,8 +711,7 @@ def get_stock_name(stock_id):
         if stock_id in twstock.codes:
             return twstock.codes[stock_id].name
         return ""
-    except:
-        return ""
+    except: return ""
 
 # ================= 4. 介面邏輯 =================
 
