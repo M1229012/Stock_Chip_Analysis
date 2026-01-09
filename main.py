@@ -152,7 +152,7 @@ st.markdown("""
         justify-content: center;
         /* ✅ [關鍵微調] 向左移動 4px，修正視覺偏差 */
         position: relative;
-        left: -10px;
+        left: -20px;
     }
     
     /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
