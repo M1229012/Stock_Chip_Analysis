@@ -995,7 +995,8 @@ if stock_input:
                 # ✅ [FIX] 禁用固定標籤
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
-                k_data, d_data = [],[]
+                # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
+                k_data, d_data = [], []
                 if 'K' in plot_df.columns:
                     for i, row in plot_df.iterrows():
                         if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
@@ -1157,22 +1158,26 @@ if stock_input:
                                 "close": float(row['Close'])
                             }
                             
-                            # ✅ 顏色邏輯：區間內正常亮色，區間外變暗/灰色
-                            if is_in_range:
-                                # 正常的紅綠配色
-                                if row['Close'] >= row['Open']:
-                                    item["color"] = COLOR_UP
-                                    item["borderColor"] = COLOR_UP
-                                    item["wickColor"] = COLOR_UP
-                                else:
-                                    item["color"] = COLOR_DOWN
-                                    item["borderColor"] = COLOR_DOWN
-                                    item["wickColor"] = COLOR_DOWN
+                            # ✅ [修正] 顏色邏輯：區間內正常亮色，區間外變淡 (使用 rgba 透明度)
+                            # 使用 rgba 可以讓顏色變淺，而非變灰
+                            if row['Close'] >= row['Open']:
+                                base_color = COLOR_UP
+                                # 淡紅色: 239, 83, 80, 0.3
+                                fade_color = 'rgba(239, 83, 80, 0.3)'
                             else:
-                                # 區間外的顏色 (暗灰色/半透明) -> 創造聚焦效果
-                                item["color"] = "#2c2c2c"        # 非常暗的灰色實體
-                                item["borderColor"] = "#444444"  # 稍微亮一點的邊框
-                                item["wickColor"] = "#444444"    # 稍微亮一點的引線
+                                base_color = COLOR_DOWN
+                                # 淡綠色: 38, 166, 154, 0.3
+                                fade_color = 'rgba(38, 166, 154, 0.3)'
+
+                            if is_in_range:
+                                item["color"] = base_color
+                                item["borderColor"] = base_color
+                                item["wickColor"] = base_color
+                            else:
+                                # 區間外的顏色 (變淺/半透明)
+                                item["color"] = fade_color
+                                item["borderColor"] = fade_color
+                                item["wickColor"] = fade_color
                                 
                             candlestick_data.append(item)
                     
@@ -1193,18 +1198,28 @@ if stock_input:
                         }
                     })
 
-                    charts_payload_broker.append({"chart": make_opts(400, "股價 (灰色為統計區間外)", True), "series": main_chart_series})
+                    charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True), "series": main_chart_series})
                     
                     if '買賣超_Final' in plot_df.columns:
                         chip_data, chip_cumulative_data = [], []
                         for i, row in plot_df.iterrows():
                             val = row.get('買賣超_Final')
-                            if not pd.isna(val): chip_data.append({"time": row['DateStr'], "value": float(val), "color": COLOR_UP if val>0 else COLOR_DOWN})
+                            is_in_range = rank_start_date <= row['DateStr'] <= rank_end_date
+                            
+                            if not pd.isna(val): 
+                                # ✅ [修正] 副圖（分點買賣超）也套用變淺邏輯
+                                if val > 0:
+                                    c = COLOR_UP if is_in_range else 'rgba(239, 83, 80, 0.3)'
+                                else:
+                                    c = COLOR_DOWN if is_in_range else 'rgba(38, 166, 154, 0.3)'
+                                    
+                                chip_data.append({"time": row['DateStr'], "value": float(val), "color": c})
+                                
                             cum_val = row.get('cumulative_chip')
                             if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
                         
                         # ✅ [FIX] 禁用固定標籤
-                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣", False), "series": [
+                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (淺色為統計區間外)", False), "series": [
                             {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
