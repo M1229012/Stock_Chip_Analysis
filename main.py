@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (強制修正：使用 :has 選擇器確保選中狀態一定顯示)
+# ✅ CSS 設定 (強制修正：使用 :has 選擇器確保選中狀態一定顯示，並微調對齊)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,7 +86,7 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS 強制修正] 確保 Radio Button 選中狀態有明顯反饋
+       ✅ [CSS 強制修正] 確保 Radio Button 選中狀態有明顯反饋且對齊
        ========================================================================= */
     
     /* 1. 隱藏 Radio 的圓圈輸入框 */
@@ -147,18 +147,18 @@ st.markdown("""
     /* 修正內部文字容器 padding，避免 Streamlit 預設樣式干擾 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
         padding: 0 !important;
-        /* ✅ 新增：確保內部容器也是置中 */
         display: flex;
         align-items: center;
         justify-content: center;
     }
     
-    /* 修正內部文字顏色，確保被選中時文字真的變紅 */
+    /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {
         color: #ef5350 !important;
         font-weight: bold !important;
-        /* ✅ 新增：移除 p 標籤的預設邊距，確保垂直置中 */
         margin: 0 !important;
+        /* ✅ [微調] 增加一點點上邊距，人工修正視覺基準線，確保文字在紅框中完美垂直置中 */
+        padding-top: 2px !important; 
     }
     </style>
     """, unsafe_allow_html=True)
