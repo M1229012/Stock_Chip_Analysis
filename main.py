@@ -788,7 +788,11 @@ if stock_input:
     stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
 
     # ✅ 使用 session_state 的統計天數（由分點頁面控制）
-    selected_days = st.session_state.selected_days
+    # ✅ 關鍵：這裡直接讀取 st.session_state.days_label，如果 widget 有變動，streamlit 重新執行時這裡就會拿到新的值
+    current_days_label = st.session_state.days_label
+    selected_days = days_map.get(current_days_label, 120)
+    st.session_state.selected_days = selected_days # 同步更新
+
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
     with st.spinner(f"正在分析 {stock_display} ..."):
@@ -953,6 +957,15 @@ if stock_input:
 
             # --- 右側：排行表 (優先處理以捕捉事件，但不調用 rerun) ---
             with col_table:
+                # ✅ [LAYOUT CHANGE] 將統計天數選單移至此處 (右側欄位上方)
+                # 使用 key="days_label" 直接綁定到 st.session_state.days_label
+                # 這樣修改時 Streamlit 會自動 rerun，並且保留在當前分頁
+                st.selectbox(
+                    "統計天數",
+                    list(days_map.keys()),
+                    key="days_label" 
+                )
+                
                 st.markdown("##### 區間前 15 大")
                 t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
                 
@@ -978,18 +991,6 @@ if stock_input:
             # --- 左側：圖表區 (讀取更新後的 active_broker) ---
             with col_chart:
                 c1, c2 = st.columns([1, 2])
-                with c1:
-                    # ✅ [MOVED] 統計天數移到分點頁面，調整就即時反映區間分點買賣超
-                    days_label_ui = st.selectbox(
-                        "統計天數",
-                        list(days_map.keys()),
-                        index=list(days_map.keys()).index(st.session_state.days_label),
-                        key="broker_days_selector"
-                    )
-                    if days_label_ui != st.session_state.days_label:
-                        st.session_state.days_label = days_label_ui
-                        st.session_state.selected_days = days_map[days_label_ui]
-                        st.rerun()
                 
                 # ✅ 決定目標券商 (從點擊狀態或預設第一筆)
                 target_broker = st.session_state.active_broker
@@ -1000,8 +1001,8 @@ if stock_input:
                         st.session_state.active_broker = target_broker
                 
                 if target_broker:
-                    with c2:
-                        st.markdown(f"### 目前檢視：{target_broker}")
+                    # 顯示標題
+                    st.markdown(f"### 目前檢視：{target_broker}")
                 
                     merged_df = None
                     target_key = normalize_name(target_broker)
@@ -1018,7 +1019,8 @@ if stock_input:
                         long_start_date = df_price['DateStr'].iloc[0] 
                         long_end_date = df_price['DateStr'].iloc[-1] 
                         broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
-                        merged_key = (stock_input, broker_key, st.session_state.refresh_nonce)
+                        # ✅ 加入 selected_days 到 key 中，確保天數切換時會重新爬取
+                        merged_key = (stock_input, broker_key, st.session_state.refresh_nonce, selected_days)
 
                         if st.session_state.get('merged_key') != merged_key:
                             with st.spinner(f"正在爬取 {target_broker} ..."):
