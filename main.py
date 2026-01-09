@@ -144,15 +144,12 @@ st.markdown("""
         font-weight: bold !important;
     }
     
-    /* 修正內部文字容器 padding，避免 Streamlit 預設樣式干擾，並微調位置 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
-        padding: 0 !important;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        /* ✅ [關鍵微調] 向左移動 4px，修正視覺偏差 */
-        position: relative;
-        left: -100px;
+    div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
+        margin: 0 !important;
+        padding-top: 2px !important; /* 垂直微調 */
+        
+        /* 👇 這裡控制左右位置，負數往左 */
+        transform: translateX(-5px) !important; 
     }
     
     /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
