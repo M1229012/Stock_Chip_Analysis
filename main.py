@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (強制修改 Radio 為膠囊分段樣式)
+# ✅ CSS 設定 (修改為 Material UI 底線分頁樣式)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,61 +86,62 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS 強制修正] 將 Radio Button 修改為 "Segmented Control" (膠囊分段)
+       ✅ [CSS 強制修正] 將 Radio Button 修改為 "Material UI Tabs" (底線分頁) 樣式
        ========================================================================= */
     
-    /* 1. 找到 Radio Group 的容器，設定為深色底槽 (Trough) */
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
-        background-color: #1e2026; /* 深灰底色 */
-        padding: 6px;
-        border-radius: 12px;
-        display: flex;
-        flex-direction: row;
-        gap: 0px; /* 選項間無縫隙 */
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); /* 內陰影讓槽看起來凹陷 */
-        overflow: hidden; /* 確保內容不溢出圓角 */
-        border: 1px solid rgba(255,255,255,0.1);
-    }
-
-    /* 2. 強制隱藏原本的圓圈按鈕 (Radio Circle) */
+    /* 1. 隱藏 Radio 的圓圈輸入框 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {
         display: none !important;
-        width: 0px !important;
-        margin: 0px !important;
+    }
+
+    /* 2. 調整 Radio Group 容器 - 透明背景，底部加一條灰線當軌道 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        background-color: transparent;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        padding: 0;
+        gap: 24px; /* 選項之間的間距 */
+        display: flex;
+        flex-direction: row;
+        border-bottom: 2px solid #2c303a; /* 整條底部的深灰軌道線 */
+        margin-bottom: 10px;
     }
 
     /* 3. 設定每個選項 (Label) 的樣式 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
-        flex: 1; /* 平均分配寬度 */
-        text-align: center;
-        justify-content: center;
-        padding: 10px 20px !important;
-        margin: 0px !important;
-        background-color: transparent;
-        color: #8b92a2; /* 未選中文字顏色 */
-        border-radius: 8px; /* 選項本身的圓角 */
+        background-color: transparent !important;
         border: none;
-        transition: all 0.2s ease;
+        border-radius: 0;
+        color: #8b92a2; /* 未選中顏色 */
+        padding: 10px 4px !important; /* 上下 padding */
+        margin: 0 !important;
+        font-weight: 500;
+        font-size: 16px;
+        transition: color 0.2s, border-bottom-color 0.2s;
+        border-bottom: 3px solid transparent; /* 預留底線位置 */
+        margin-bottom: -2px !important; /* 讓底線蓋在軌道線上 */
         cursor: pointer;
         display: flex;
         align-items: center;
+        justify-content: center;
+        flex: 0 1 auto; /* 不要強制平均寬度，依文字長度 */
+        min-width: 60px;
     }
 
     /* 4. 滑鼠懸停效果 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
-        background-color: rgba(255, 255, 255, 0.05);
         color: #ffffff;
     }
 
-    /* 5. ✅ 選中狀態 (Highligt) - 亮色膠囊 */
+    /* 5. ✅ 選中狀態 (Highligt) - 文字變色 + 紅色底線 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label[aria-checked="true"] {
-        background-color: #ef5350 !important; /* 主題紅色 (可改藍色 #1E88E5) */
-        color: #ffffff !important;
+        color: #ef5350 !important; /* 主題紅 */
+        border-bottom-color: #ef5350 !important;
         font-weight: bold;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3); /* 浮起陰影 */
     }
     
-    /* 修正內部文字容器的 padding，避免位移 */
+    /* 修正內部文字容器 padding */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
         padding: 0 !important;
     }
@@ -872,7 +873,7 @@ if stock_input:
             st.session_state.current_page = "K線"
             
         # 使用水平 radio 模擬 tabs，並隱藏標題
-        # ✅ 搭配 CSS 使其看起來像分頁
+        # ✅ 搭配 CSS 使其看起來像 Material UI Tabs
         selected_page = st.radio(
             "功能分頁", 
             ["K線", "分點", "法人", "融資券", "大戶"], 
