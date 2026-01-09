@@ -116,7 +116,7 @@ st.markdown("""
         border: none;
         border-radius: 6px 6px 0 0; /* 上方圓角 */
         color: #8b92a2 !important; /* 未選中：灰色 */
-        padding: 12px 24px !important; /* 增加點擊範圍 */
+        padding: 8px 16px !important; /* 增加點擊範圍 */
         margin: 0 !important;
         font-weight: 500;
         font-size: 16px;
@@ -152,7 +152,7 @@ st.markdown("""
         justify-content: center;
         /* ✅ [關鍵微調] 向左移動 4px，修正視覺偏差 */
         position: relative;
-        left: -4px;
+        left: -10px;
     }
     
     /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
