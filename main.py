@@ -84,6 +84,11 @@ st.markdown("""
             display: none !important;
         }
     }
+    
+    /* 隱藏 Radio 的 label 並調整樣式使其像 Tabs */
+    div[role="radiogroup"] > label {
+        display: none !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -800,12 +805,25 @@ if stock_input:
         
     df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
     
+    # ✅ [NEW] 預先定義 df_price 為日資料，確保所有分頁都能存取到基礎資料
+    df_price = df_price_daily.copy() if df_price_daily is not None else None
+    
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         st.caption(f"資料來源：{target_url}")
 
-        if "active_tab" in st.query_params: default_tab = st.query_params["active_tab"]
-        tab_kline, tab_broker, tab_inst, tab_margin, tab_holder = st.tabs(["K線", "分點", "法人", "融資券", "大戶"])
+        # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = "K線"
+            
+        selected_page = st.radio(
+            "功能分頁", 
+            ["K線", "分點", "法人", "融資券", "大戶"], 
+            horizontal=True,
+            label_visibility="collapsed",
+            key="current_page" # 綁定 session_state
+        )
+        st.divider()
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
@@ -836,12 +854,11 @@ if stock_input:
             return opts
 
         # ==================== Tab 1: K線 ====================
-        with tab_kline:
+        if selected_page == "K線":
             # ✅ [NEW] 將 K 線週期選擇器移至此處 (均線選擇器的上方)
             kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
             
             # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
-            df_price = None
             if df_price_daily is not None:
                 df_price = resample_data(df_price_daily, kline_period)
 
@@ -945,7 +962,7 @@ if stock_input:
                 renderLightweightCharts(charts_payload, key="tab1_kline")
 
         # ==================== Tab 2: 分點 ====================
-        with tab_broker:
+        if selected_page == "分點":
             # ✅ [LAYOUT CHANGE] 改為左圖右表 (Left: Charts, Right: Tables)
             col_chart, col_table = st.columns([3, 1])
             
@@ -1093,7 +1110,7 @@ if stock_input:
                     renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
         # ==================== Tab 3: 法人 ====================
-        with tab_inst:
+        if selected_page == "法人":
             long_start_date = df_price['DateStr'].iloc[0] 
             long_end_date = df_price['DateStr'].iloc[-1] 
             inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
@@ -1161,7 +1178,7 @@ if stock_input:
             renderLightweightCharts(charts_payload_inst, key="tab3_inst")
 
         # ==================== Tab 4: 融資券 ====================
-        with tab_margin:
+        if selected_page == "融資券":
             long_start_date = df_price['DateStr'].iloc[0] 
             long_end_date = df_price['DateStr'].iloc[-1] 
             margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
@@ -1250,7 +1267,7 @@ if stock_input:
                 )
 
         # ==================== Tab 5: 大戶 (集保分佈) ====================
-        with tab_holder:
+        if selected_page == "大戶":
             LOT_CHOICES = [10, 50, 100, 200, 400, 600, 800, 1000]
             if "retail_lot" not in st.session_state: st.session_state.retail_lot = 50
             if "large_lot" not in st.session_state: st.session_state.large_lot = 400
