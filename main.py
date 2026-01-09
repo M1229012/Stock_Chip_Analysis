@@ -151,7 +151,7 @@ def render_broker_table(df, sum_data, color_hex, title, key_id):
         height=500, 
         hide_index=True, 
         column_config=full_config,
-        on_select="rerun", # 點擊後重新執行
+        on_select="rerun", # 點擊後重新執行 (由 Streamlit 內部觸發)
         selection_mode="single-row", # 單選模式
         key=key_id
     )
@@ -948,32 +948,34 @@ if stock_input:
             # 初始化 session_state
             if "active_broker" not in st.session_state:
                 st.session_state.active_broker = None
+            if "last_buy" not in st.session_state: st.session_state.last_buy = None
+            if "last_sell" not in st.session_state: st.session_state.last_sell = None
 
-            # --- 右側：排行表 (優先處理以捕捉事件) ---
+            # --- 右側：排行表 (優先處理以捕捉事件，但不調用 rerun) ---
             with col_table:
                 st.markdown("##### 區間前 15 大")
                 t1, t2 = st.tabs(["🔴 買超", "🟢 賣超"])
                 
-                new_active = None
+                sel_buy = None
+                sel_sell = None
                 
                 with t1: 
                     # ✅ 捕捉點擊事件
-                    selected_buy = render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大", key_id="buy_table")
-                    if selected_buy:
-                        new_active = selected_buy
+                    sel_buy = render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大", key_id="buy_table")
                         
                 with t2: 
                     # ✅ 捕捉點擊事件
-                    selected_sell = render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大", key_id="sell_table")
-                    if selected_sell:
-                        new_active = selected_sell
+                    sel_sell = render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大", key_id="sell_table")
                 
-                # 若有選取新的分點，更新 session_state
-                if new_active and new_active != st.session_state.active_broker:
-                    st.session_state.active_broker = new_active
-                    st.rerun()
+                # ✅ 判斷是否有新的選取 (使用 last_buy/sell 避免衝突)
+                if sel_buy and sel_buy != st.session_state.last_buy:
+                    st.session_state.active_broker = sel_buy
+                    st.session_state.last_buy = sel_buy
+                elif sel_sell and sel_sell != st.session_state.last_sell:
+                    st.session_state.active_broker = sel_sell
+                    st.session_state.last_sell = sel_sell
 
-            # --- 左側：圖表區 ---
+            # --- 左側：圖表區 (讀取更新後的 active_broker) ---
             with col_chart:
                 c1, c2 = st.columns([1, 2])
                 with c1:
