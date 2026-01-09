@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (修改為 Material UI 底線分頁樣式)
+# ✅ CSS 設定 (優化版 Material UI Tabs：移除底線 + 增強點擊反饋)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,7 +86,7 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS 強制修正] 將 Radio Button 修改為 "Material UI Tabs" (底線分頁) 樣式
+       ✅ [CSS 優化] 增強導航列反饋 & 移除多餘底線
        ========================================================================= */
     
     /* 1. 隱藏 Radio 的圓圈輸入框 */
@@ -94,50 +94,51 @@ st.markdown("""
         display: none !important;
     }
 
-    /* 2. 調整 Radio Group 容器 - 透明背景，底部加一條灰線當軌道 */
+    /* 2. 調整 Radio Group 容器 - 移除原本的灰色底線 (border-bottom) */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         background-color: transparent;
         border: none;
         border-radius: 0;
         box-shadow: none;
         padding: 0;
-        gap: 24px; /* 選項之間的間距 */
+        gap: 10px; /* 選項之間的間距 */
         display: flex;
         flex-direction: row;
-        border-bottom: 2px solid #2c303a; /* 整條底部的深灰軌道線 */
         margin-bottom: 10px;
+        /* border-bottom: 2px solid #2c303a;  <-- 已移除此行，消除橫線 */
     }
 
     /* 3. 設定每個選項 (Label) 的樣式 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
-        background-color: transparent !important;
+        background-color: transparent;
         border: none;
-        border-radius: 0;
+        border-radius: 4px; /* 輕微圓角 */
         color: #8b92a2; /* 未選中顏色 */
-        padding: 10px 4px !important; /* 上下 padding */
+        padding: 10px 16px !important; /* 增加 padding 讓點擊範圍變大 */
         margin: 0 !important;
         font-weight: 500;
         font-size: 16px;
-        transition: color 0.2s, border-bottom-color 0.2s;
+        transition: all 0.2s ease; /* 添加過渡動畫 */
         border-bottom: 3px solid transparent; /* 預留底線位置 */
-        margin-bottom: -2px !important; /* 讓底線蓋在軌道線上 */
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        flex: 0 1 auto; /* 不要強制平均寬度，依文字長度 */
-        min-width: 60px;
+        flex: 0 1 auto;
+        min-width: 80px; /* 確保按鈕不會太小 */
     }
 
-    /* 4. 滑鼠懸停效果 */
+    /* 4. ✅ 滑鼠懸停效果 (Hover Feedback) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
-        color: #ffffff;
+        color: #ffffff !important;
+        background-color: rgba(255, 255, 255, 0.1); /* 懸停時出現淺灰背景 */
     }
 
-    /* 5. ✅ 選中狀態 (Highligt) - 文字變色 + 紅色底線 */
+    /* 5. ✅ 選中狀態 (Active Highlight) - 增強辨識度 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label[aria-checked="true"] {
-        color: #ef5350 !important; /* 主題紅 */
-        border-bottom-color: #ef5350 !important;
+        color: #ef5350 !important; /* 主題紅文字 */
+        border-bottom-color: #ef5350 !important; /* 紅色底線 */
+        background-color: rgba(239, 83, 80, 0.15) !important; /* ✅ 新增：選中時的淡紅背景 */
         font-weight: bold;
     }
     
@@ -881,7 +882,8 @@ if stock_input:
             label_visibility="collapsed",
             key="current_page" # 綁定 session_state，確保互動後停留在同一頁
         )
-        st.divider()
+        # ✅ [FIX] 移除 st.divider()，解決那條長線的問題
+        # st.divider() 
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
