@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (優化版 Material UI Tabs：增強選中狀態的可視化)
+# ✅ CSS 設定 (強制修正：使用 :has 選擇器確保選中狀態一定顯示)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,7 +86,7 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS 優化] 增強導航列反饋 & 選中狀態 (Active State)
+       ✅ [CSS 強制修正] 確保 Radio Button 選中狀態有明顯反饋
        ========================================================================= */
     
     /* 1. 隱藏 Radio 的圓圈輸入框 */
@@ -94,59 +94,65 @@ st.markdown("""
         display: none !important;
     }
 
-    /* 2. 調整 Radio Group 容器 */
+    /* 2. 調整 Radio Group 容器 - 透明背景，只在選項區域下方顯示線條 */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         background-color: transparent;
         border: none;
-        border-radius: 0;
         box-shadow: none;
         padding: 0;
-        gap: 8px; /* 選項之間的間距 */
+        gap: 10px; /* 選項間距 */
         display: flex;
         flex-direction: row;
-        margin-bottom: 10px;
+        margin-bottom: 5px;
+        /* 這裡加上一條全長的淡線當作軌道 (可選) */
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
+        width: fit-content; /* 讓線條只跟著按鈕長度，不要橫跨整個螢幕 */
+        min-width: 100%; /* 或者是讓它橫跨螢幕但顏色很淡 */
     }
 
-    /* 3. 設定每個選項 (Label) 的預設樣式 (未選中) */
+    /* 3. 設定每個選項 (Label) 的基礎樣式 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
-        background-color: transparent;
+        background-color: transparent !important;
         border: none;
-        border-radius: 4px; /* 輕微圓角 */
-        color: #8b92a2; /* 未選中文字顏色：灰 */
-        padding: 12px 20px !important; /* 增加點擊範圍 */
+        border-radius: 6px 6px 0 0; /* 上方圓角 */
+        color: #8b92a2 !important; /* 未選中：灰色 */
+        padding: 12px 24px !important; /* 增加點擊範圍 */
         margin: 0 !important;
         font-weight: 500;
         font-size: 16px;
-        transition: all 0.2s ease; /* 平滑過渡動畫 */
-        border-bottom: 3px solid transparent; /* 預留底線位置，避免跳動 */
+        transition: all 0.15s ease-in-out;
+        border-bottom: 3px solid transparent; /* 預留底線位置 */
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
         flex: 0 1 auto;
-        min-width: 80px;
     }
 
-    /* 4. ✅ 滑鼠懸停效果 (Hover Feedback) - 提示使用者可點擊 */
+    /* 4. ✅ 滑鼠懸停效果 (Hover) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
         color: #ffffff !important;
-        background-color: rgba(255, 255, 255, 0.1); /* 懸停時出現淺灰背景 */
+        background-color: rgba(255, 255, 255, 0.05) !important; /* 懸停時淡淡的灰 */
     }
 
-    /* 5. ✅ 選中狀態 (Active Highlight) - 讓使用者明確知道在哪一頁 */
-    /* Streamlit 有時用 aria-checked，有時用 data-checked，兩個都寫確保相容 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label[aria-checked="true"],
-    div[data-testid="stRadio"] > div[role="radiogroup"] label[data-checked="true"] {
-        color: #ef5350 !important; /* 主題紅文字 */
-        border-bottom: 3px solid #ef5350 !important; /* 明顯的紅色底線 */
-        background-color: rgba(239, 83, 80, 0.15) !important; /* ✅ 選中時的淡紅背景 */
+    /* 5. ✅ [關鍵修正] 選中狀態 (Active) 
+       使用 :has(input:checked) 確保一定能抓到被選取的項目 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
+        color: #ef5350 !important; /* 文字變紅 */
+        border-bottom: 3px solid #ef5350 !important; /* 底部紅線 */
+        background-color: rgba(239, 83, 80, 0.15) !important; /* 背景淡紅 */
         font-weight: bold !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); /* 輕微陰影增加層次感 */
     }
     
-    /* 修正內部文字容器 padding */
+    /* 修正內部文字容器 padding，避免 Streamlit 預設樣式干擾 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
         padding: 0 !important;
+    }
+    
+    /* 修正內部文字顏色，確保被選中時文字真的變紅 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {
+        color: #ef5350 !important;
+        font-weight: bold !important;
     }
     </style>
     """, unsafe_allow_html=True)
