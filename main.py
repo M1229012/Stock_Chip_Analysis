@@ -1082,9 +1082,13 @@ if stock_input:
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
                     
-                    # ✅ [修正] 恢復傳送 highlightRange 給前端，這樣全域遮罩 (Global Mask) 才能生效並蓋到下方
+                    # ✅ [重要修正] 強制注入 highlightRange
+                    # 確保前端能收到正確的統計區間，用於繪製遮罩
                     if charts_payload_broker:
-                        charts_payload_broker[0]["highlightRange"] = {"start": rank_start_date, "end": rank_end_date}
+                        charts_payload_broker[0]["highlightRange"] = {
+                            "start": rank_start_date,
+                            "end": rank_end_date
+                        }
 
                     renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
