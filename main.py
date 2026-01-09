@@ -995,7 +995,7 @@ if stock_input:
                 # ✅ [FIX] 禁用固定標籤
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
-                k_data, d_data = []
+                k_data, d_data = [],[]
                 if 'K' in plot_df.columns:
                     for i, row in plot_df.iterrows():
                         if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
