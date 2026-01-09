@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (優化版 Material UI Tabs：移除底線 + 增強點擊反饋)
+# ✅ CSS 設定 (優化版 Material UI Tabs：增強選中狀態的可視化)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,7 +86,7 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS 優化] 增強導航列反饋 & 移除多餘底線
+       ✅ [CSS 優化] 增強導航列反饋 & 選中狀態 (Active State)
        ========================================================================= */
     
     /* 1. 隱藏 Radio 的圓圈輸入框 */
@@ -94,52 +94,54 @@ st.markdown("""
         display: none !important;
     }
 
-    /* 2. 調整 Radio Group 容器 - 移除原本的灰色底線 (border-bottom) */
+    /* 2. 調整 Radio Group 容器 */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         background-color: transparent;
         border: none;
         border-radius: 0;
         box-shadow: none;
         padding: 0;
-        gap: 10px; /* 選項之間的間距 */
+        gap: 8px; /* 選項之間的間距 */
         display: flex;
         flex-direction: row;
         margin-bottom: 10px;
-        /* border-bottom: 2px solid #2c303a;  <-- 已移除此行，消除橫線 */
     }
 
-    /* 3. 設定每個選項 (Label) 的樣式 */
+    /* 3. 設定每個選項 (Label) 的預設樣式 (未選中) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
         background-color: transparent;
         border: none;
         border-radius: 4px; /* 輕微圓角 */
-        color: #8b92a2; /* 未選中顏色 */
-        padding: 10px 16px !important; /* 增加 padding 讓點擊範圍變大 */
+        color: #8b92a2; /* 未選中文字顏色：灰 */
+        padding: 12px 20px !important; /* 增加點擊範圍 */
         margin: 0 !important;
         font-weight: 500;
         font-size: 16px;
-        transition: all 0.2s ease; /* 添加過渡動畫 */
-        border-bottom: 3px solid transparent; /* 預留底線位置 */
+        transition: all 0.2s ease; /* 平滑過渡動畫 */
+        border-bottom: 3px solid transparent; /* 預留底線位置，避免跳動 */
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
         flex: 0 1 auto;
-        min-width: 80px; /* 確保按鈕不會太小 */
+        min-width: 80px;
     }
 
-    /* 4. ✅ 滑鼠懸停效果 (Hover Feedback) */
+    /* 4. ✅ 滑鼠懸停效果 (Hover Feedback) - 提示使用者可點擊 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
         color: #ffffff !important;
         background-color: rgba(255, 255, 255, 0.1); /* 懸停時出現淺灰背景 */
     }
 
-    /* 5. ✅ 選中狀態 (Active Highlight) - 增強辨識度 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label[aria-checked="true"] {
+    /* 5. ✅ 選中狀態 (Active Highlight) - 讓使用者明確知道在哪一頁 */
+    /* Streamlit 有時用 aria-checked，有時用 data-checked，兩個都寫確保相容 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label[aria-checked="true"],
+    div[data-testid="stRadio"] > div[role="radiogroup"] label[data-checked="true"] {
         color: #ef5350 !important; /* 主題紅文字 */
-        border-bottom-color: #ef5350 !important; /* 紅色底線 */
-        background-color: rgba(239, 83, 80, 0.15) !important; /* ✅ 新增：選中時的淡紅背景 */
-        font-weight: bold;
+        border-bottom: 3px solid #ef5350 !important; /* 明顯的紅色底線 */
+        background-color: rgba(239, 83, 80, 0.15) !important; /* ✅ 選中時的淡紅背景 */
+        font-weight: bold !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); /* 輕微陰影增加層次感 */
     }
     
     /* 修正內部文字容器 padding */
