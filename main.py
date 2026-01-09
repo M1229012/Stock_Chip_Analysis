@@ -147,12 +147,18 @@ st.markdown("""
     /* 修正內部文字容器 padding，避免 Streamlit 預設樣式干擾 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
         padding: 0 !important;
+        /* ✅ 新增：確保內部容器也是置中 */
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     
     /* 修正內部文字顏色，確保被選中時文字真的變紅 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {
         color: #ef5350 !important;
         font-weight: bold !important;
+        /* ✅ 新增：移除 p 標籤的預設邊距，確保垂直置中 */
+        margin: 0 !important;
     }
     </style>
     """, unsafe_allow_html=True)
