@@ -803,9 +803,9 @@ if "search_counts" not in st.session_state:
 # ✅ 統計天數選項（移出 sidebar，改由分點頁面控制）
 days_map = {"1日": 1, "5日": 5, "10日": 10, "20日": 20, "40日": 40, "60日": 60, "120日": 120, "240日": 240}
 if "days_label" not in st.session_state:
-    st.session_state.days_label = "120日"
+    st.session_state.days_label = "20日" # [FIX] 將預設改為 20日
 if "selected_days" not in st.session_state:
-    st.session_state.selected_days = days_map.get(st.session_state.days_label, 120)
+    st.session_state.selected_days = days_map.get(st.session_state.days_label, 20) # [FIX] 同步將預設值改為 20
 
 with st.sidebar:
     st.header("參數設定")
@@ -866,7 +866,7 @@ if stock_input:
     # ✅ 使用 session_state 的統計天數（由分點頁面控制）
     # ✅ 關鍵：這裡直接讀取 st.session_state.days_label，如果 widget 有變動，streamlit 重新執行時這裡就會拿到新的值
     current_days_label = st.session_state.days_label
-    selected_days = days_map.get(current_days_label, 120)
+    selected_days = days_map.get(current_days_label, 20) # [FIX] 將 fallback 改為 20
     st.session_state.selected_days = selected_days # 同步更新
 
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
