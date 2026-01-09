@@ -84,11 +84,6 @@ st.markdown("""
             display: none !important;
         }
     }
-    
-    /* 隱藏 Radio 的 label 並調整樣式使其像 Tabs */
-    div[role="radiogroup"] > label {
-        display: none !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -816,12 +811,13 @@ if stock_input:
         if 'current_page' not in st.session_state:
             st.session_state.current_page = "K線"
             
+        # 使用水平 radio 模擬 tabs，並隱藏標題
         selected_page = st.radio(
             "功能分頁", 
             ["K線", "分點", "法人", "融資券", "大戶"], 
             horizontal=True,
             label_visibility="collapsed",
-            key="current_page" # 綁定 session_state
+            key="current_page" # 綁定 session_state，確保互動後停留在同一頁
         )
         st.divider()
 
