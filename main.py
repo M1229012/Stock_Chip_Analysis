@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 保留原樣
+# ✅ CSS 設定 (包含將 Radio 修改為分頁樣式)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -83,6 +83,55 @@ st.markdown("""
         div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
             display: none !important;
         }
+    }
+
+    /* =========================================================================
+       ✅ [CSS Hack] 將 Radio Button 修改為 "分頁 (Tabs)" 的外觀
+       ========================================================================= */
+    /* 隱藏 Radio 的圓圈輸入框 */
+    div.row-widget.stRadio > div[role="radiogroup"] > label > div:first-child {
+        display: none !important;
+    }
+    
+    /* 調整 Radio Group 容器，使其橫向排列並帶有背景 */
+    div.row-widget.stRadio > div[role="radiogroup"] {
+        flex-direction: row;
+        background-color: #131722;
+        padding: 4px;
+        border-radius: 8px;
+        gap: 6px;
+        border: 1px solid #333;
+        display: inline-flex;
+        width: 100%; /* 佔滿寬度 */
+    }
+
+    /* 調整每個選項 (Label) 的樣式：像按鈕/分頁 */
+    div.row-widget.stRadio > div[role="radiogroup"] > label {
+        background-color: transparent;
+        padding: 8px 16px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        flex: 1; /* 平均分配寬度 */
+        text-align: center;
+        justify-content: center;
+        margin-right: 0 !important;
+        transition: all 0.2s;
+        color: #aaa;
+    }
+
+    /* 滑鼠懸停效果 */
+    div.row-widget.stRadio > div[role="radiogroup"] > label:hover {
+        background-color: #262730;
+        color: white;
+    }
+
+    /* ✅ 選中狀態 (Highligt) - 模擬 Tab 選中 */
+    /* Streamlit 會給選中的 label 加上 aria-checked="true" */
+    div.row-widget.stRadio > div[role="radiogroup"] > label[aria-checked="true"] {
+        background-color: #ef5350 !important; /* 紅色背景 */
+        color: white !important;
+        font-weight: bold;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -812,6 +861,7 @@ if stock_input:
             st.session_state.current_page = "K線"
             
         # 使用水平 radio 模擬 tabs，並隱藏標題
+        # ✅ 搭配 CSS 使其看起來像分頁
         selected_page = st.radio(
             "功能分頁", 
             ["K線", "分點", "法人", "融資券", "大戶"], 
