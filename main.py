@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (包含將 Radio 修改為膠囊分段樣式)
+# ✅ CSS 設定 (強制修改 Radio 為膠囊分段樣式)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -86,52 +86,63 @@ st.markdown("""
     }
 
     /* =========================================================================
-       ✅ [CSS Hack] 將 Radio Button 修改為 "Smooth Segmented Control" (膠囊分段) 樣式
+       ✅ [CSS 強制修正] 將 Radio Button 修改為 "Segmented Control" (膠囊分段)
        ========================================================================= */
-    /* 1. 隱藏 Radio 的圓圈輸入框 */
-    div.row-widget.stRadio > div[role="radiogroup"] > label > div:first-child {
-        display: none !important;
-    }
     
-    /* 2. 調整 Radio Group 容器 - 膠囊狀背景槽 */
-    div.row-widget.stRadio > div[role="radiogroup"] {
+    /* 1. 找到 Radio Group 的容器，設定為深色底槽 (Trough) */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        background-color: #1e2026; /* 深灰底色 */
+        padding: 6px;
+        border-radius: 12px;
+        display: flex;
         flex-direction: row;
-        background-color: #2c303a; /* 深色模式下的淺灰槽背景 */
-        padding: 4px; /* 內距，讓選中項有邊距 */
-        border-radius: 24px; /* 大圓角，形成膠囊形狀 */
-        gap: 0px; /* 選項之間無間隙 */
-        border: none;
-        display: inline-flex;
-        width: 100%;
-        box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); /* 內部陰影增加凹陷感 */
+        gap: 0px; /* 選項間無縫隙 */
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); /* 內陰影讓槽看起來凹陷 */
+        overflow: hidden; /* 確保內容不溢出圓角 */
+        border: 1px solid rgba(255,255,255,0.1);
     }
 
-    /* 3. 調整每個選項 (Label) 的樣式 - 未選中狀態 */
-    div.row-widget.stRadio > div[role="radiogroup"] > label {
-        background-color: transparent;
-        padding: 8px 16px;
-        border-radius: 20px; /* 選項本身的圓角 */
-        border: none;
+    /* 2. 強制隱藏原本的圓圈按鈕 (Radio Circle) */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {
+        display: none !important;
+        width: 0px !important;
+        margin: 0px !important;
+    }
+
+    /* 3. 設定每個選項 (Label) 的樣式 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label {
         flex: 1; /* 平均分配寬度 */
         text-align: center;
         justify-content: center;
-        margin-right: 0 !important;
-        transition: all 0.2s ease-in-out; /* 平滑過渡 */
-        color: #8e939e; /* 未選中的灰色文字 */
-        font-weight: 500;
+        padding: 10px 20px !important;
+        margin: 0px !important;
+        background-color: transparent;
+        color: #8b92a2; /* 未選中文字顏色 */
+        border-radius: 8px; /* 選項本身的圓角 */
+        border: none;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
     }
 
-    /* 滑鼠懸停效果 (未選中時) */
-    div.row-widget.stRadio > div[role="radiogroup"] > label:hover {
+    /* 4. 滑鼠懸停效果 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
+        background-color: rgba(255, 255, 255, 0.05);
         color: #ffffff;
     }
 
-    /* 4. ✅ 選中狀態 (Highlight) - 藍色膠囊凸起 (仿照圖片風格) */
-    div.row-widget.stRadio > div[role="radiogroup"] > label[aria-checked="true"] {
-        background-color: #1E88E5 !important; /* 亮藍色背景 */
-        color: white !important; /* 白色文字 */
+    /* 5. ✅ 選中狀態 (Highligt) - 亮色膠囊 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label[aria-checked="true"] {
+        background-color: #ef5350 !important; /* 主題紅色 (可改藍色 #1E88E5) */
+        color: #ffffff !important;
         font-weight: bold;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2); /* 外部陰影增加浮起感 */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3); /* 浮起陰影 */
+    }
+    
+    /* 修正內部文字容器的 padding，避免位移 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
+        padding: 0 !important;
     }
     </style>
     """, unsafe_allow_html=True)
