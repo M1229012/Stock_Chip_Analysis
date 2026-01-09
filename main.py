@@ -28,7 +28,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (強制修正：使用 :has 選擇器確保選中狀態一定顯示，並微調對齊)
+# ✅ CSS 設定 (強制修正：使用 :has 選擇器確保選中狀態顯示，並微調文字水平/垂直位置)
 st.markdown("""
     <style>
     /* --- 通用字體設定 --- */
@@ -144,12 +144,15 @@ st.markdown("""
         font-weight: bold !important;
     }
     
-    /* 修正內部文字容器 padding，避免 Streamlit 預設樣式干擾 */
+    /* 修正內部文字容器 padding，避免 Streamlit 預設樣式干擾，並微調位置 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div[data-testid="stMarkdownContainer"] {
         padding: 0 !important;
         display: flex;
         align-items: center;
         justify-content: center;
+        /* ✅ [關鍵微調] 向左移動 4px，修正視覺偏差 */
+        position: relative;
+        left: -4px;
     }
     
     /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
