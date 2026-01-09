@@ -995,7 +995,7 @@ if stock_input:
                 # ✅ [FIX] 禁用固定標籤
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
-                k_data, d_data = [], []
+                k_data, d_data = []
                 if 'K' in plot_df.columns:
                     for i, row in plot_df.iterrows():
                         if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
@@ -1138,14 +1138,50 @@ if stock_input:
                     if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
                     candlestick_data = []
+                    
+                    # ✅ [關鍵修改] 構建 K 線數據，加入「區間凸顯」邏輯
+                    # rank_start_date 和 rank_end_date 為當前統計區間
+                    
                     for i, row in plot_df.iterrows():
-                        if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                        if not pd.isna(row['Open']):
+                            
+                            # 判斷當前日期是否在選定的統計區間內
+                            is_in_range = rank_start_date <= row['DateStr'] <= rank_end_date
+                            
+                            # 基礎數據結構
+                            item = {
+                                "time": row['DateStr'],
+                                "open": float(row['Open']),
+                                "high": float(row['High']),
+                                "low": float(row['Low']),
+                                "close": float(row['Close'])
+                            }
+                            
+                            # ✅ 顏色邏輯：區間內正常亮色，區間外變暗/灰色
+                            if is_in_range:
+                                # 正常的紅綠配色
+                                if row['Close'] >= row['Open']:
+                                    item["color"] = COLOR_UP
+                                    item["borderColor"] = COLOR_UP
+                                    item["wickColor"] = COLOR_UP
+                                else:
+                                    item["color"] = COLOR_DOWN
+                                    item["borderColor"] = COLOR_DOWN
+                                    item["wickColor"] = COLOR_DOWN
+                            else:
+                                # 區間外的顏色 (暗灰色/半透明) -> 創造聚焦效果
+                                item["color"] = "#2c2c2c"        # 非常暗的灰色實體
+                                item["borderColor"] = "#444444"  # 稍微亮一點的邊框
+                                item["wickColor"] = "#444444"    # 稍微亮一點的引線
+                                
+                            candlestick_data.append(item)
                     
                     # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
                     main_chart_series = []
                     main_chart_series.append({
                         "type": "Candlestick",
                         "data": candlestick_data,
+                        # 選項中的顏色會被 data 中的個別顏色覆蓋，但還是留著當預設值
                         "options": {
                             "upColor": COLOR_UP, 
                             "downColor": COLOR_DOWN, 
@@ -1157,7 +1193,7 @@ if stock_input:
                         }
                     })
 
-                    charts_payload_broker.append({"chart": make_opts(400, "股價", True), "series": main_chart_series})
+                    charts_payload_broker.append({"chart": make_opts(400, "股價 (灰色為統計區間外)", True), "series": main_chart_series})
                     
                     if '買賣超_Final' in plot_df.columns:
                         chip_data, chip_cumulative_data = [], []
@@ -1173,14 +1209,6 @@ if stock_input:
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
                     
-                    # ✅ [重要修正] 強制注入 highlightRange
-                    # 確保前端能收到正確的統計區間，用於繪製遮罩
-                    if charts_payload_broker:
-                        charts_payload_broker[0]["highlightRange"] = {
-                            "start": rank_start_date,
-                            "end": rank_end_date
-                        }
-
                     renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
 
         # ==================== Tab 3: 法人 ====================
