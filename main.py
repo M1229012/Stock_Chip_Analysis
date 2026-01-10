@@ -33,23 +33,36 @@ st.markdown("""
     <style>
     /* ================= 隱藏 Streamlit 介面元素 (Header, Footer, Manage App) ================= */
     
-    /* 隱藏頂部 Header (包含 GitHub 圖示、漢堡選單) */
+    /* 1. 隱藏頂部 Header (包含 GitHub 圖示、漢堡選單) */
     header[data-testid="stHeader"] {
         visibility: hidden;
+        height: 0px !important;
     }
     
-    /* 隱藏右上角部署按鈕與 Manage App 按鈕 */
+    /* 2. 隱藏右上角部署按鈕 */
     .stDeployButton, .stAppDeployButton {
         display: none !important;
     }
     
-    /* 隱藏頁尾 (包含 Made with Streamlit 與底部的 Manage App) */
-    footer {
+    /* 3. ✅ [關鍵修正] 隱藏 "Manage app" 按鈕 (通常位於右下或左下) */
+    [data-testid="stManageAppButton"] {
         display: none !important;
         visibility: hidden !important;
     }
     
-    /* 隱藏主選單 (Triple dots) */
+    /* 4. 隱藏底部的狀態工具列 (Status Widget) */
+    [data-testid="stStatusWidget"] {
+        visibility: hidden !important;
+    }
+
+    /* 5. 隱藏頁尾 (包含 Made with Streamlit) */
+    footer {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0px !important;
+    }
+    
+    /* 6. 隱藏主選單 (Triple dots) */
     #MainMenu {
         visibility: hidden;
     }
