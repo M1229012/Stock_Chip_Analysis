@@ -881,7 +881,7 @@ if stock_input:
     
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
-        st.caption(f"資料來源：{target_url}")
+        #st.caption(f"資料來源：{target_url}")
 
         # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
         if 'current_page' not in st.session_state:
