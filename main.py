@@ -28,58 +28,20 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (整合：強力隱藏所有 Streamlit 浮水印/管理按鈕 + 手機版優化)
+# ✅ CSS 設定 (整合：隱藏 Header + 手機版優化 + 介面樣式)
 st.markdown("""
     <style>
-    /* ================= 強力隱藏 Streamlit 預設介面 ================= */
-    
-    /* 1. 隱藏上方 Header (包含 GitHub 圖示、漢堡選單、Deploy 按鈕) */
+    /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
     header[data-testid="stHeader"] {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0px !important;
+        visibility: hidden;
     }
-
-    /* 2. 隱藏右上角的功能工具列 (三點選單、檢視原始碼) */
-    [data-testid="stToolbar"] {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0px !important;
+    /* 隱藏部署按鈕 (保險起見) */
+    .stDeployButton {
+        display: none;
     }
-
-    /* 3. 隱藏右上角裝飾用的彩條 */
-    [data-testid="stDecoration"] {
-        display: none !important;
-    }
-
-    /* 4. 隱藏底部的 Footer (Made with Streamlit) */
-    footer {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0px !important;
-    }
-
-    /* 5. 隱藏狀態工具列 (畫面角落的運行圖示) */
-    [data-testid="stStatusWidget"] {
-        display: none !important;
-        visibility: hidden !important;
-    }
-    
-    /* 6. ✅ [關鍵修正] 針對右下角 "Manage App" 的強力隱藏 */
-    .stAppDeployButton {
-        display: none !important;
-    }
-    [data-testid="stManageAppButton"] {
-        display: none !important;
-    }
-    /* 隱藏 Viewer Badge (某些版本會顯示在右下角的浮動標籤) */
-    .viewerBadge_container__1QSob {
-        display: none !important;
-    }
-
-    /* 7. 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
+    /* 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
     .block-container {
-        padding-top: 0rem !important;
+        padding-top: 1rem !important;
     }
 
     /* ================= 通用字體設定 ================= */
@@ -955,7 +917,7 @@ if stock_input:
     
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
-        st.caption(f"資料來源：{target_url}")
+        #st.caption(f"資料來源：{target_url}")
 
         # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
         if 'current_page' not in st.session_state:
