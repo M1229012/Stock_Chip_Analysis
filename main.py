@@ -28,17 +28,32 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (整合：隱藏 Header + 手機版優化 + 介面樣式)
+# ✅ CSS 設定 (整合：隱藏 Header/Footer/Manage App + 手機版優化 + 介面樣式)
 st.markdown("""
     <style>
-    /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
+    /* ================= 隱藏 Streamlit 介面元素 (Header, Footer, Manage App) ================= */
+    
+    /* 隱藏頂部 Header (包含 GitHub 圖示、漢堡選單) */
     header[data-testid="stHeader"] {
         visibility: hidden;
     }
-    /* 隱藏部署按鈕 (保險起見) */
-    .stDeployButton {
-        display: none;
+    
+    /* 隱藏右上角部署按鈕與 Manage App 按鈕 */
+    .stDeployButton, .stAppDeployButton {
+        display: none !important;
     }
+    
+    /* 隱藏頁尾 (包含 Made with Streamlit 與底部的 Manage App) */
+    footer {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    
+    /* 隱藏主選單 (Triple dots) */
+    #MainMenu {
+        visibility: hidden;
+    }
+
     /* 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
     .block-container {
         padding-top: 1rem !important;
