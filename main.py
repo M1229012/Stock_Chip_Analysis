@@ -28,21 +28,23 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (整合：強力隱藏 Header/Footer/Toolbar + 手機版優化)
+# ✅ CSS 設定 (整合：強力隱藏所有 Streamlit 浮水印/管理按鈕 + 手機版優化)
 st.markdown("""
     <style>
     /* ================= 強力隱藏 Streamlit 預設介面 ================= */
     
-    /* 1. 隱藏上方 Header (包含 GitHub 圖示、漢堡選單) */
+    /* 1. 隱藏上方 Header (包含 GitHub 圖示、漢堡選單、Deploy 按鈕) */
     header[data-testid="stHeader"] {
         display: none !important;
         visibility: hidden !important;
+        height: 0px !important;
     }
 
-    /* 2. 隱藏右上角的功能工具列 (三點選單、Deploy按鈕) - 這是別人看原始碼的路徑 */
+    /* 2. 隱藏右上角的功能工具列 (三點選單、檢視原始碼) */
     [data-testid="stToolbar"] {
         display: none !important;
         visibility: hidden !important;
+        height: 0px !important;
     }
 
     /* 3. 隱藏右上角裝飾用的彩條 */
@@ -54,6 +56,7 @@ st.markdown("""
     footer {
         display: none !important;
         visibility: hidden !important;
+        height: 0px !important;
     }
 
     /* 5. 隱藏狀態工具列 (畫面角落的運行圖示) */
@@ -61,8 +64,20 @@ st.markdown("""
         display: none !important;
         visibility: hidden !important;
     }
+    
+    /* 6. ✅ [關鍵修正] 針對右下角 "Manage App" 的強力隱藏 */
+    .stAppDeployButton {
+        display: none !important;
+    }
+    [data-testid="stManageAppButton"] {
+        display: none !important;
+    }
+    /* 隱藏 Viewer Badge (某些版本會顯示在右下角的浮動標籤) */
+    .viewerBadge_container__1QSob {
+        display: none !important;
+    }
 
-    /* 6. 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
+    /* 7. 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
     .block-container {
         padding-top: 0rem !important;
     }
