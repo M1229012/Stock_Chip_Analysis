@@ -901,13 +901,24 @@ if stock_input:
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
-        # ✅ [MODIFIED] 新增 data_len 參數，用於設定預設顯示範圍
-        def make_opts(height, title=None, time_visible=True, scale_mode="normal", data_len=None):
+        # ✅ [MODIFIED] 修改 make_opts 函式，移除無效的 data_len 參數，改用 barSpacing 控制縮放
+        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             opts = {
                 "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
                 "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
                 "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
-                "timeScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": time_visible, "timeVisible": False},
+                "timeScale": {
+                    "borderColor": "rgba(197, 203, 206, 0.8)", 
+                    "visible": time_visible, 
+                    "timeVisible": False,
+                    # ✅ 關鍵修正：透過增加 barSpacing (K棒寬度) 來放大圖表
+                    # 預設值通常約為 6，設為 14 可以在一般寬度下顯示約 60 根 K 棒
+                    "barSpacing": 14, 
+                    "rightOffset": 2, # 右側保留一點空間
+                    "fixLeftEdge": False, # 允許左側滾動
+                    "fixRightEdge": False,
+                    "lockVisibleTimeRangeOnResize": True,
+                },
                 # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
                 "crosshair": {
@@ -927,16 +938,6 @@ if stock_input:
             if title:
                 opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
             
-            # ✅ [MODIFIED] 設定預設可視範圍 (顯示最後 60 根 bar)
-            if data_len is not None and data_len > 0:
-                # 計算可視範圍：從 (總長度 - 60) 開始，到 (總長度 + 2) 結束 (稍微留白)
-                from_idx = max(0, data_len - 60)
-                to_idx = data_len + 2 
-                opts["timeScale"]["visibleLogicalRange"] = {
-                    "from": from_idx,
-                    "to": to_idx
-                }
-
             return opts
 
         # ==================== Tab 1: K線 ====================
@@ -973,9 +974,6 @@ if stock_input:
                 plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
                 plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
-                # ✅ [MODIFIED] 取得目前資料總長度，用於設定縮放
-                current_len = len(plot_df)
-
                 candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
@@ -1002,15 +1000,14 @@ if stock_input:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
                 
-                # ✅ [MODIFIED] 傳入 current_len
-                charts_payload.append({"chart": make_opts(400, "股價", True, data_len=current_len), "series": main_series})
+                # ✅ [MODIFIED] 移除 data_len 參數
+                charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
                 vol_data = []
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Volume']): vol_data.append({"time": row['DateStr'], "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [MODIFIED] 傳入 current_len
-                charts_payload.append({"chart": make_opts(150, "成交量", False, data_len=current_len), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
+                charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
                 k_data, d_data = [], []
@@ -1019,8 +1016,7 @@ if stock_input:
                         if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": row['DateStr'], "value": float(row['D'])})
                     # ✅ [FIX] 禁用固定標籤
-                    # ✅ [MODIFIED] 傳入 current_len
-                    charts_payload.append({"chart": make_opts(150, "KD", False, data_len=current_len), "series": [
+                    charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
@@ -1032,8 +1028,7 @@ if stock_input:
                         if not pd.isna(row['DEA']): dea_data.append({"time": row['DateStr'], "value": float(row['DEA'])})
                         if not pd.isna(row['MACD_Hist']): hist_data.append({"time": row['DateStr'], "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
                     # ✅ [FIX] 禁用固定標籤
-                    # ✅ [MODIFIED] 傳入 current_len
-                    charts_payload.append({"chart": make_opts(150, "MACD", False, data_len=current_len), "series": [
+                    charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1047,8 +1042,7 @@ if stock_input:
                             rsi_80.append({"time": row['DateStr'], "value": 80})
                             rsi_20.append({"time": row['DateStr'], "value": 20})
                     # ✅ [FIX] 禁用固定標籤
-                    # ✅ [MODIFIED] 傳入 current_len
-                    charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi", data_len=current_len), "series": [
+                    charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
                         {"type": "Line", "data": rsi_20, "options": {"color": "green", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}}
@@ -1168,9 +1162,6 @@ if stock_input:
                     plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
                     if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
-                    # ✅ [MODIFIED] 取得目前資料總長度，用於設定縮放
-                    current_len = len(plot_df)
-
                     candlestick_data = []
                     # ✅ [NEW] 準備均線數據
                     ma5_data, ma10_data, ma20_data = [], [], []
@@ -1244,8 +1235,8 @@ if stock_input:
                     main_chart_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                     main_chart_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
-                    # ✅ [MODIFIED] 傳入 current_len
-                    charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True, data_len=current_len), "series": main_chart_series})
+                    # ✅ [MODIFIED] 移除 data_len
+                    charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True), "series": main_chart_series})
                     
                     if '買賣超_Final' in plot_df.columns:
                         chip_data, chip_cumulative_data = [], []
@@ -1266,8 +1257,7 @@ if stock_input:
                             if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
                         
                         # ✅ [FIX] 禁用固定標籤
-                        # ✅ [MODIFIED] 傳入 current_len
-                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (淺色為統計區間外)", False, data_len=current_len), "series": [
+                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (淺色為統計區間外)", False), "series": [
                             {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
@@ -1297,9 +1287,6 @@ if stock_input:
             # ✅ [NEW] 準備均線數據
             ma5_data, ma10_data, ma20_data = [], [], []
             
-            # ✅ [MODIFIED] 取得目前資料總長度，用於設定縮放
-            current_len = len(plot_df)
-
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
                 # ✅ 收集均線數據
@@ -1314,8 +1301,8 @@ if stock_input:
             main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
             main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
-            # ✅ [MODIFIED] 傳入 current_len
-            charts_payload_inst.append({"chart": make_opts(400, "股價", True, data_len=current_len), "series": main_series})
+            # ✅ [MODIFIED] 移除 data_len
+            charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '外資買賣超' in plot_df.columns:
                 f_hist, f_line = [], []
@@ -1340,23 +1327,21 @@ if stock_input:
                     total_line.append({"time": row['DateStr'], "value": float(total_cum)})
 
                 # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
-                # ✅ [MODIFIED] 傳入 current_len
-                charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False, data_len=current_len), "series": [
+                charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
                     {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 
                 # 下方維持不變，顯示個別法人詳情，禁用固定標籤
-                # ✅ [MODIFIED] 傳入 current_len
-                charts_payload_inst.append({"chart": make_opts(150, "外資", False, data_len=current_len), "series": [
+                charts_payload_inst.append({"chart": make_opts(150, "外資", False), "series": [
                     {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": f_line, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-                charts_payload_inst.append({"chart": make_opts(150, "投信", False, data_len=current_len), "series": [
+                charts_payload_inst.append({"chart": make_opts(150, "投信", False), "series": [
                     {"type": "Histogram", "data": t_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": t_line, "options": {"title": "累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-                charts_payload_inst.append({"chart": make_opts(150, "自營商", False, data_len=current_len), "series": [
+                charts_payload_inst.append({"chart": make_opts(150, "自營商", False), "series": [
                     {"type": "Histogram", "data": d_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": d_line, "options": {"title": "累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
@@ -1381,9 +1366,6 @@ if stock_input:
             # ✅ [NEW] 準備均線數據
             ma5_data, ma10_data, ma20_data = [], [], []
 
-            # ✅ [MODIFIED] 取得目前資料總長度，用於設定縮放
-            current_len = len(plot_df)
-
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
                 # ✅ 收集均線數據
@@ -1398,8 +1380,8 @@ if stock_input:
             main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
             main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
-            # ✅ [MODIFIED] 傳入 current_len
-            charts_payload_margin.append({"chart": make_opts(400, "股價", True, data_len=current_len), "series": main_series})
+            # ✅ [MODIFIED] 移除 data_len
+            charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '融資餘額' in plot_df.columns:
                 ml_bal, ml_diff, ms_bal, ms_diff = [], [], [], []
@@ -1420,15 +1402,13 @@ if stock_input:
                         ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
 
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [MODIFIED] 傳入 current_len
-                charts_payload_margin.append({"chart": make_opts(150, "融資", False, data_len=current_len), "series": [
+                charts_payload_margin.append({"chart": make_opts(150, "融資", False), "series": [
                     {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [MODIFIED] 傳入 current_len
-                charts_payload_margin.append({"chart": make_opts(150, "融券", False, data_len=current_len), "series": [
+                charts_payload_margin.append({"chart": make_opts(150, "融券", False), "series": [
                     {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ms_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1596,8 +1576,8 @@ if stock_input:
                     ]
                     
                     # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
-                    # ✅ [MODIFIED] 傳入 chart_df 的長度
-                    holder_opts = make_opts(400, "籌碼分佈 vs 股價", True, data_len=len(chart_df))
+                    # ✅ [MODIFIED] 移除 data_len
+                    holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
                     holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     
