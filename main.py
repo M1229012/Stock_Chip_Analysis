@@ -28,48 +28,43 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (整合：隱藏 Header/Footer/Manage App + 手機版優化 + 介面樣式)
+# ✅ CSS 設定 (整合：強力隱藏 Header/Footer/Toolbar + 手機版優化)
 st.markdown("""
     <style>
-    /* ================= 隱藏 Streamlit 介面元素 (Header, Footer, Manage App) ================= */
+    /* ================= 強力隱藏 Streamlit 預設介面 ================= */
     
-    /* 1. 隱藏頂部 Header (包含 GitHub 圖示、漢堡選單) */
+    /* 1. 隱藏上方 Header (包含 GitHub 圖示、漢堡選單) */
     header[data-testid="stHeader"] {
-        visibility: hidden;
-        height: 0px !important;
-    }
-    
-    /* 2. 隱藏右上角部署按鈕 */
-    .stDeployButton, .stAppDeployButton {
         display: none !important;
-    }
-    
-    /* 3. ✅ [關鍵修正] 隱藏 "Manage app" 按鈕 (通常位於右下或左下) */
-    [data-testid="stManageAppButton"] {
-        display: none !important;
-        visibility: hidden !important;
-    }
-    
-    /* 4. 隱藏底部的狀態工具列 (Status Widget) */
-    [data-testid="stStatusWidget"] {
         visibility: hidden !important;
     }
 
-    /* 5. 隱藏頁尾 (包含 Made with Streamlit) */
+    /* 2. 隱藏右上角的功能工具列 (三點選單、Deploy按鈕) - 這是別人看原始碼的路徑 */
+    [data-testid="stToolbar"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* 3. 隱藏右上角裝飾用的彩條 */
+    [data-testid="stDecoration"] {
+        display: none !important;
+    }
+
+    /* 4. 隱藏底部的 Footer (Made with Streamlit) */
     footer {
         display: none !important;
         visibility: hidden !important;
-        height: 0px !important;
-    }
-    
-    /* 6. 隱藏主選單 (Triple dots) */
-    #MainMenu {
-        visibility: hidden;
     }
 
-    /* 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
+    /* 5. 隱藏狀態工具列 (畫面角落的運行圖示) */
+    [data-testid="stStatusWidget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* 6. 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
     .block-container {
-        padding-top: 1rem !important;
+        padding-top: 0rem !important;
     }
 
     /* ================= 通用字體設定 ================= */
