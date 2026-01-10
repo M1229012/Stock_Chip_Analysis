@@ -75,6 +75,15 @@ st.markdown("""
         div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
             display: none !important;
         }
+
+        /* ✅ [FIX] 手機版 Radio Button 優化：縮小間距與內距，確保單行顯示 */
+        div[data-testid="stRadio"] > div[role="radiogroup"] {
+            gap: 2px !important; /* 縮小按鈕間距 */
+        }
+        div[data-testid="stRadio"] > div[role="radiogroup"] label {
+            padding: 6px 8px !important; /* 縮小點擊範圍內距 */
+            font-size: 14px !important; /* 稍微縮小字體 */
+        }
     }
 
     /* --- 電腦版 RWD (螢幕 > 768px) --- */
@@ -103,11 +112,25 @@ st.markdown("""
         gap: 10px; /* 選項間距 */
         display: flex;
         flex-direction: row;
+        
+        /* ✅ [FIX] 強制不換行，並允許橫向捲動 */
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        white-space: nowrap !important;
+        
         margin-bottom: 5px;
         /* 這裡加上一條全長的淡線當作軌道 (可選) */
         border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
-        width: fit-content; /* 讓線條只跟著按鈕長度，不要橫跨整個螢幕 */
-        min-width: 100%; /* 或者是讓它橫跨螢幕但顏色很淡 */
+        width: 100%; /* 佔滿寬度 */
+        
+        /* 隱藏捲軸 */
+        scrollbar-width: none; 
+        -ms-overflow-style: none;
+    }
+    
+    /* 隱藏 Chrome/Safari 捲軸 */
+    div[data-testid="stRadio"] > div[role="radiogroup"]::-webkit-scrollbar {
+        display: none;
     }
 
     /* 3. 設定每個選項 (Label) 的基礎樣式 */
@@ -126,7 +149,7 @@ st.markdown("""
         display: flex;
         align-items: center;
         justify-content: center;
-        flex: 0 1 auto;
+        flex: 0 0 auto; /* ✅ [FIX] 防止項目被壓縮 */
     }
 
     /* 4. ✅ 滑鼠懸停效果 (Hover) */
@@ -150,6 +173,9 @@ st.markdown("""
         
         /* 👇 這裡控制左右位置，負數往左 */
         transform: translateX(-5px) !important; 
+        
+        /* ✅ [FIX] 確保文字不換行 */
+        white-space: nowrap !important;
     }
     
     /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
@@ -881,7 +907,7 @@ if stock_input:
     
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
-        #st.caption(f"資料來源：{target_url}")
+        st.caption(f"資料來源：{target_url}")
 
         # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
         if 'current_page' not in st.session_state:
