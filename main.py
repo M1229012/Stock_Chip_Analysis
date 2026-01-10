@@ -843,8 +843,8 @@ if "days_label" not in st.session_state:
 if "selected_days" not in st.session_state:
     st.session_state.selected_days = days_map.get(st.session_state.days_label, 20) # [FIX] 同步將預設值改為 20
 
-with st.sidebar:
-    st.header("參數設定")
+# ✅ [UI REFACTOR] 將側邊欄的輸入移至主畫面頂部的 Expander，確保手機版可見
+with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=True):
     all_stocks = get_all_stock_options()
     
     def get_sort_key(stock_str):
@@ -882,18 +882,21 @@ with st.sidebar:
     if stock_selection: stock_input = stock_selection.split()[0]
     else: stock_input = ""
     
-    # ✅ [MOVED] 統計天數已移到「分點」頁面
+    # 使用欄位排列按鈕
+    col_btn1, col_btn2 = st.columns(2)
     
-    st.markdown(f"🕒 資料抓取時間: {current_time}")
-    
-    if st.button("查詢", type="primary"):
-        if stock_input: st.session_state.search_counts[stock_input] = st.session_state.search_counts.get(stock_input, 0) + 1
-        st.rerun()
-    
-    if "refresh_nonce" not in st.session_state: st.session_state.refresh_nonce = 0
-    if st.button("🔄 強制更新籌碼資料"):
-        st.session_state.refresh_nonce = int(time.time())
-        st.rerun()
+    with col_btn1:
+        if st.button("🔎 查詢", type="primary", use_container_width=True):
+            if stock_input: st.session_state.search_counts[stock_input] = st.session_state.search_counts.get(stock_input, 0) + 1
+            st.rerun()
+            
+    with col_btn2:
+        if "refresh_nonce" not in st.session_state: st.session_state.refresh_nonce = 0
+        if st.button("🔄 強制更新籌碼資料", use_container_width=True):
+            st.session_state.refresh_nonce = int(time.time())
+            st.rerun()
+
+    st.caption(f"🕒 資料抓取時間: {current_time}")
 
 if stock_input:
     stock_name = get_stock_name(stock_input)
