@@ -901,7 +901,7 @@ if stock_input:
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
-        # ✅ [MODIFIED] 移除 data_len 參數，改回使用純 barSpacing 設定
+        # ✅ [REVERTED] 恢復 make_opts 到未嘗試縮放前的狀態 (移除 barSpacing/rightOffset/data_len)
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             opts = {
                 "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
@@ -911,13 +911,6 @@ if stock_input:
                     "borderColor": "rgba(197, 203, 206, 0.8)", 
                     "visible": time_visible, 
                     "timeVisible": False,
-                    # ✅ [CRITICAL FIX] 使用 barSpacing: 12，這會強制放大 K 棒
-                    # 因為 12px 寬度在 1000px 螢幕上只能顯示約 80 根，自然達成縮放效果
-                    "barSpacing": 12, 
-                    "rightOffset": 5, 
-                    "fixLeftEdge": False,
-                    "fixRightEdge": False,
-                    "lockVisibleTimeRangeOnResize": True,
                 },
                 # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
