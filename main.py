@@ -28,14 +28,27 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (強制修正：使用 :has 選擇器確保選中狀態顯示，並微調文字水平/垂直位置)
+# ✅ CSS 設定 (整合：隱藏 Header + 手機版優化 + 介面樣式)
 st.markdown("""
     <style>
-    /* --- 通用字體設定 --- */
+    /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
+    header[data-testid="stHeader"] {
+        visibility: hidden;
+    }
+    /* 隱藏部署按鈕 (保險起見) */
+    .stDeployButton {
+        display: none;
+    }
+    /* 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
+    .block-container {
+        padding-top: 1rem !important;
+    }
+
+    /* ================= 通用字體設定 ================= */
     html, body, [class*="css"] { font-size: 18px !important; }
     .stDataFrame { font-size: 16px !important; }
       
-    /* --- 數據卡片樣式 --- */
+    /* ================= 數據卡片樣式 ================= */
     .metric-container {
         display: flex;
         justify-content: space-between;
@@ -60,7 +73,7 @@ st.markdown("""
         font-weight: bold;
     }
 
-    /* --- 手機版 RWD (螢幕 < 768px) --- */
+    /* ================= 手機版 RWD (螢幕 < 768px) ================= */
     @media (max-width: 768px) {
         html, body, [class*="css"] { font-size: 15px !important; }
         .stDataFrame { font-size: 14px !important; }
@@ -86,7 +99,7 @@ st.markdown("""
         }
     }
 
-    /* --- 電腦版 RWD (螢幕 > 768px) --- */
+    /* ================= 電腦版 RWD (螢幕 > 768px) ================= */
     @media (min-width: 769px) {
         /* 電腦時：隱藏包含 mobile-marker 的容器 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
@@ -94,9 +107,7 @@ st.markdown("""
         }
     }
 
-    /* =========================================================================
-       ✅ [CSS 強制修正] 確保 Radio Button 選中狀態有明顯反饋且對齊
-       ========================================================================= */
+    /* ================= [CSS 強制修正] Radio Button 樣式 ================= */
     
     /* 1. 隱藏 Radio 的圓圈輸入框 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {
@@ -113,7 +124,7 @@ st.markdown("""
         display: flex;
         flex-direction: row;
         
-        /* ✅ [FIX] 強制不換行，並允許橫向捲動 */
+        /* ✅ [FIX] 強制不換行，並允許橫向捲動 (手機版關鍵修正) */
         flex-wrap: nowrap !important;
         overflow-x: auto !important;
         white-space: nowrap !important;
@@ -158,8 +169,7 @@ st.markdown("""
         background-color: rgba(255, 255, 255, 0.05) !important; /* 懸停時淡淡的灰 */
     }
 
-    /* 5. ✅ [關鍵修正] 選中狀態 (Active) 
-       使用 :has(input:checked) 確保一定能抓到被選取的項目 */
+    /* 5. ✅ [關鍵修正] 選中狀態 (Active) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
         color: #ef5350 !important; /* 文字變紅 */
         border-bottom: 3px solid #ef5350 !important; /* 底部紅線 */
@@ -907,7 +917,7 @@ if stock_input:
     
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
-        #st.caption(f"資料來源：{target_url}")
+        st.caption(f"資料來源：{target_url}")
 
         # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
         if 'current_page' not in st.session_state:
