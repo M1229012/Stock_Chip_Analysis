@@ -1568,7 +1568,7 @@ if stock_input:
                         .style.apply(highlight_changes, axis=None) # 全表套用樣式函式
                         .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
                         use_container_width=True, 
-                        height=400,
+                        height=1200,
                         hide_index=True
                     )
                     
