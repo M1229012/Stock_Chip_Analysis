@@ -35,20 +35,30 @@ from streamlit_lightweight_charts import renderLightweightCharts
 nest_asyncio.apply()
 
 # ==========================================
-# 步驟 0: 強制設定 Colab 時區為台灣 (轉為 Python 執行)
+# 0. 系統環境自動修復與設定 (時區 + Xvfb)
 # ==========================================
+print("正在檢查系統環境...")
+
+# --- 修正 1: 自動安裝 Xvfb (解決 FileNotFoundError) ---
+# pyvirtualdisplay 需要 Xvfb 才能運作。如果系統沒裝，嘗試自動安裝。
+if shutil.which("Xvfb") is None:
+    print("⚠️ 檢測到系統缺少 Xvfb，正在嘗試自動安裝...")
+    try:
+        # 適用於 Colab 或有 root 權限的環境
+        os.system("apt-get update && apt-get install -y xvfb")
+        print("✅ Xvfb 安裝嘗試完成")
+    except Exception as e:
+        print(f"❌ Xvfb 安裝失敗 (可能是權限不足): {e}")
+        # 如果是在 Streamlit Cloud，這裡會失敗，使用者需要在 packages.txt 加入 xvfb
+
+# --- 修正 2: 強制設定時區為 Asia/Taipei ---
 print("正在設定時區為 Asia/Taipei...")
 try:
-    # 這裡對應您原本的 !rm /etc/localtime 和 !ln ...
     if os.path.exists('/etc/localtime'):
         os.system('rm /etc/localtime')
     os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
-    
-    # 設定環境變數
     os.environ['TZ'] = 'Asia/Taipei'
     time.tzset()
-    
-    # 確認現在時間
     print(f"目前系統時間 (校正後): {datetime.now()}")
 except Exception as e:
     print(f"時區設定可能有誤 (非 Linux/Colab 環境可忽略): {e}")
@@ -443,6 +453,8 @@ def get_wantgoo_trend_data(stock_id):
     # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
     
     # --- 啟動虛擬螢幕 ---
+    # 這裡會嘗試啟動 Xvfb，如果環境沒裝 Xvfb，會報 FileNotFoundError
+    # 因為我們已在程式開頭嘗試自動安裝，如果還是失敗，這裡會 crash，但這是預期行為 (因為沒 Display 就無法繞過 CF)
     display = Display(visible=0, size=(1920, 1080))
     display.start()
 
