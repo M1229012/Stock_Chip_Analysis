@@ -35,7 +35,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 nest_asyncio.apply()
 
 # ==========================================
-# 步驟 0: 強制設定 Colab 時區為台灣 (照您的代碼移植)
+# 步驟 0: 強制設定 Colab 時區為台灣 (轉為 Python 執行)
 # ==========================================
 print("正在設定時區為 Asia/Taipei...")
 try:
@@ -482,6 +482,7 @@ def get_wantgoo_trend_data(stock_id):
                 print("\n✅ 成功！(已校正時區) 資料如下：\n")
                 
                 # 這裡為了要能畫圖，我需要把 print 改成存入 list，但抓取邏輯完全一樣
+                # 這裡改回抓取全部 rows，因為 K 線需要歷史資料，不只前 5 筆
                 rows = sb.find_elements("main table tbody tr")
                 
                 for i, row in enumerate(rows):
@@ -663,6 +664,7 @@ def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
             row_str = row.astype(str).values
             if "買超券商" in row_str and "賣超券商" in row_str:
                 header_row = i
+
                 break
         if header_row == -1: return None, None, None, None, None, url
 
