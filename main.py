@@ -441,20 +441,9 @@ def get_driver():
 def get_wantgoo_trend_data(stock_id):
     # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
     
-    # [安全機制] 檢查是否安裝 Xvfb，避免在 Streamlit Cloud 崩潰
-    has_xvfb = shutil.which("Xvfb") is not None
-    display = None
-    
-    if has_xvfb:
-        try:
-            # --- 啟動虛擬螢幕 ---
-            display = Display(visible=0, size=(1920, 1080))
-            display.start()
-        except Exception as e:
-            print(f"Xvfb 啟動失敗: {e}")
-            has_xvfb = False
-    else:
-        print("警告: 系統未安裝 Xvfb，虛擬螢幕無法啟動。")
+    # --- 啟動虛擬螢幕 ---
+    display = Display(visible=0, size=(1920, 1080))
+    display.start()
 
     # --- 設定目標網址 ---
     url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
@@ -466,10 +455,7 @@ def get_wantgoo_trend_data(stock_id):
     try:
         # 這裡可以加入 locale 設定，進一步告訴 Chrome 我們是繁體中文使用者
         # ✅ [關鍵]: 嚴格照抄您的代碼 headless=False
-        # 但如果沒有 Xvfb，headless=False 會崩潰，所以做個最後防線
-        use_headless = False if has_xvfb else True
-        
-        with SB(uc=True, test=True, headless=use_headless, locale_code="zh-TW") as sb: 
+        with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb: 
             
             print(f"正在前往: {url}")
             sb.uc_open_with_reconnect(url, reconnect_time=3)
@@ -545,12 +531,7 @@ def get_wantgoo_trend_data(stock_id):
         print(f"❌ 發生錯誤: {e}")
 
     finally:
-        # 如果 display 成功啟動才關閉
-        if display:
-            try:
-                display.stop()
-            except:
-                pass
+        display.stop()
         print("\n程式執行完畢")
 
     if result_data:
