@@ -12,3 +12,4 @@ pytz
 numpy
 nest_asyncio
 seleniumbase
+pyvirtualdisplay
