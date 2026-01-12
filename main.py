@@ -35,20 +35,22 @@ from streamlit_lightweight_charts import renderLightweightCharts
 nest_asyncio.apply()
 
 # ==========================================
-# 0. 系統環境設定 (時區)
+# 步驟 0: 強制設定 Colab 時區為台灣 (照您的代碼移植)
 # ==========================================
-print("正在檢查系統環境...")
-
-# 強制設定時區為 Asia/Taipei
+print("正在設定時區為 Asia/Taipei...")
 try:
     if os.path.exists('/etc/localtime'):
         os.system('rm /etc/localtime')
     os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
+    
+    # 設定環境變數
     os.environ['TZ'] = 'Asia/Taipei'
     time.tzset()
-    print(f"目前系統時間 (校正後): {datetime.now()}")
+    
+    # 確認現在時間
+    print(f"目前系統時間: {datetime.now()}")
 except Exception as e:
-    print(f"時區設定可能有誤 (非 Linux/Colab 環境可忽略): {e}")
+    print(f"時區設定訊息: {e}")
 
 
 # ================= 1. 系統設定 =================
@@ -434,41 +436,40 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ [FIXED] Wantgoo 爬蟲函式 - 修正 FileNotFoundError 問題
+# ✅ [NEW] Wantgoo 爬蟲函式 - 嚴格遵照您的程式碼
 @st.cache_data(persist="disk", ttl=3600)
 def get_wantgoo_trend_data(stock_id):
-    # --- 設定目標網址 ---
-    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+    # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
     
-    print("正在啟動反偵測瀏覽器 (UC Mode)...")
-    
-    # [FIX] 自動偵測 Xvfb
-    # 如果系統沒有裝 Xvfb，shutil.which('Xvfb') 會回傳 None
-    # 這種情況下我們不能呼叫 Display()，否則會 crash
-    # 同時，如果沒有 Display，SB 必須跑在 headless=True 模式
-    
+    # [安全機制] 檢查是否安裝 Xvfb，避免在 Streamlit Cloud 崩潰
+    has_xvfb = shutil.which("Xvfb") is not None
     display = None
-    sb_headless = True # 預設無頭模式 (安全)
-
-    if shutil.which("Xvfb") is not None:
+    
+    if has_xvfb:
         try:
+            # --- 啟動虛擬螢幕 ---
             display = Display(visible=0, size=(1920, 1080))
             display.start()
-            # 只有當虛擬螢幕成功啟動後，才將 headless 設為 False
-            sb_headless = False
-            print("✅ Xvfb 偵測成功，將使用虛擬螢幕 (headless=False)")
         except Exception as e:
-            print(f"⚠️ 虛擬螢幕啟動失敗，將使用純無頭模式: {e}")
-            sb_headless = True
+            print(f"Xvfb 啟動失敗: {e}")
+            has_xvfb = False
     else:
-        print("⚠️ 系統未安裝 Xvfb，將使用純無頭模式 (headless=True)")
-        sb_headless = True
+        print("警告: 系統未安裝 Xvfb，虛擬螢幕無法啟動。")
 
+    # --- 設定目標網址 ---
+    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+
+    print("正在啟動反偵測瀏覽器 (UC Mode)...")
+    
     result_data = []
 
     try:
-        # ✅ 使用動態決定的 sb_headless 參數
-        with SB(uc=True, test=True, headless=sb_headless, locale_code="zh-TW") as sb: 
+        # 這裡可以加入 locale 設定，進一步告訴 Chrome 我們是繁體中文使用者
+        # ✅ [關鍵]: 嚴格照抄您的代碼 headless=False
+        # 但如果沒有 Xvfb，headless=False 會崩潰，所以做個最後防線
+        use_headless = False if has_xvfb else True
+        
+        with SB(uc=True, test=True, headless=use_headless, locale_code="zh-TW") as sb: 
             
             print(f"正在前往: {url}")
             sb.uc_open_with_reconnect(url, reconnect_time=3)
@@ -494,6 +495,7 @@ def get_wantgoo_trend_data(stock_id):
                 
                 print("\n✅ 成功！(已校正時區) 資料如下：\n")
                 
+                # 這裡為了要能畫圖，我需要把 print 改成存入 list，但抓取邏輯完全一樣
                 rows = sb.find_elements("main table tbody tr")
                 
                 for i, row in enumerate(rows):
@@ -506,6 +508,7 @@ def get_wantgoo_trend_data(stock_id):
                         con_5 = cols[4].text.strip()
                         con_20 = cols[5].text.strip()
                         
+                        # 為了畫圖，這裡需要簡單清洗資料，但選取元素的方式與您的程式碼一模一樣
                         try:
                             # 移除逗號與百分比
                             buy_sell_cln = buy_sell.replace(',', '')
@@ -542,7 +545,7 @@ def get_wantgoo_trend_data(stock_id):
         print(f"❌ 發生錯誤: {e}")
 
     finally:
-        # 如果有啟動 display，才需要停止
+        # 如果 display 成功啟動才關閉
         if display:
             try:
                 display.stop()
