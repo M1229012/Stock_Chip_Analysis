@@ -21,6 +21,7 @@ import twstock
 import copy
 import numpy as np
 import os
+import subprocess
 
 # ✅ [NEW] 新增 SeleniumBase 相關引用
 import nest_asyncio
@@ -32,6 +33,20 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 # 應用 nest_asyncio 以解決 Colab/Streamlit 環境下的 Event Loop 問題
 nest_asyncio.apply()
+
+# ================= 0. 強制設定 Colab 時區為台灣 (整合您的設定) =================
+try:
+    # 嘗試設定時區，如果是在 Windows/Mac 本機執行可能會失敗，這邊做個 try-catch
+    # 如果是 Colab 環境，這段會生效
+    if os.path.exists('/etc/localtime'):
+        os.system('rm /etc/localtime')
+        os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
+    
+    os.environ['TZ'] = 'Asia/Taipei'
+    time.tzset()
+    print(f"目前系統時間: {datetime.now()}")
+except Exception as e:
+    print(f"時區設定跳過 (非 Linux/Colab 環境): {e}")
 
 # ================= 1. 系統設定 =================
 
@@ -416,23 +431,26 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ [NEW] Wantgoo 爬蟲函式 (使用 SeleniumBase)
+# ✅ [NEW] Wantgoo 爬蟲函式 (完全依照您提供的程式碼邏輯)
 @st.cache_data(persist="disk", ttl=3600)
 def get_wantgoo_trend_data(stock_id):
+    # --- 設定目標網址 ---
     url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
     
-    # 啟動虛擬螢幕 (防止在無頭模式下報錯)
+    # --- 啟動虛擬螢幕 (依照您的程式碼) ---
+    # 注意：在 st.cache_data 裡面開啟 display 務必要關閉
     try:
         display = Display(visible=0, size=(1920, 1080))
         display.start()
     except Exception as e:
-        print(f"Virtual Display Start Error (Ignorable on some envs): {e}")
+        print(f"Virtual Display Start Error: {e}")
 
     result_data = []
 
     try:
-        # 使用 SeleniumBase (UC Mode)
-        with SB(uc=True, test=True, headless=True, locale_code="zh-TW") as sb:
+        # ✅ 這裡完完全全照您的程式碼：使用 SB(uc=True, test=True, headless=False, locale_code="zh-TW")
+        # 雖然在無頭環境 headless=False 有點反直覺，但在 Colab + pyvirtualdisplay 下是可行的
+        with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb:
             print(f"正在前往: {url}")
             sb.uc_open_with_reconnect(url, reconnect_time=3)
             
@@ -446,52 +464,62 @@ def get_wantgoo_trend_data(stock_id):
                 else:
                     break
             
+            print(f"目前網頁標題: {sb.get_title()}")
+
             # --- 抓取資料 ---
             print("正在等待表格載入...")
             
             try:
                 # 等待表格出現
                 sb.wait_for_element("main table", timeout=15)
+                
                 rows = sb.find_elements("main table tbody tr")
                 
-                for row in rows:
+                for i, row in enumerate(rows): # 抓取全部資料，不僅限前5筆
                     cols = row.find_elements(by="tag name", value="td")
+                    
                     if len(cols) >= 6:
-                        date_val = cols[0].text.strip() # e.g. "01/12"
-                        buy_sell = cols[2].text.strip().replace(',', '')
-                        count_diff = cols[3].text.strip().replace(',', '')
-                        con_5 = cols[4].text.strip().replace('%', '')
-                        con_20 = cols[5].text.strip().replace('%', '')
+                        date_val = cols[0].text.strip()
+                        buy_sell = cols[2].text.strip()
+                        count_diff = cols[3].text.strip()
+                        con_5 = cols[4].text.strip()
+                        con_20 = cols[5].text.strip()
                         
-                        # 日期處理：Wantgoo 只有月/日，需加上年份
-                        # 簡單邏輯：假設資料是最近的，若月份比當前月份大很多，可能是去年
+                        # 為了要畫圖，必須把 date_val (如 01/12) 轉成 2026-01-12
+                        # 這裡加入日期處理邏輯
                         try:
+                            # 移除逗號
+                            buy_sell_cln = buy_sell.replace(',', '')
+                            count_diff_cln = count_diff.replace(',', '')
+                            con_5_cln = con_5.replace('%', '')
+                            con_20_cln = con_20.replace('%', '')
+
                             now = datetime.now()
                             dt_temp = datetime.strptime(date_val, "%m/%d")
                             year = now.year
-                            # 如果現在是 1月，但資料是 12月，則年份減 1
+                            
+                            # 簡單的跨年判斷：如果現在是 1月，但資料是 12月，則年份減 1
                             if now.month == 1 and dt_temp.month == 12:
                                 year -= 1
-                            # 如果現在是 12月，但資料是 1月 (不太可能發生，除非未來)，則年份加 1
                             
                             date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
-                        except:
-                            date_str = None
 
-                        if date_str:
                             result_data.append({
                                 "DateStr": date_str,
-                                "買賣超": float(buy_sell) if buy_sell.replace('-','').isdigit() else 0,
-                                "家數差": float(count_diff) if count_diff.replace('-','').isdigit() else 0,
-                                "5日集中": float(con_5) if con_5.replace('-','').replace('.','').isdigit() else 0,
-                                "20日集中": float(con_20) if con_20.replace('-','').replace('.','').isdigit() else 0
+                                "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
+                                "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
+                                "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
+                                "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
                             })
-                            
+                        except Exception as parse_e:
+                            print(f"解析資料列錯誤: {parse_e}")
+                            continue
+
             except Exception as e:
-                print(f"表格讀取錯誤: {e}")
+                print(f"⚠️ 找不到表格或讀取超時: {e}")
 
     except Exception as e:
-        print(f"SeleniumBase 執行錯誤: {e}")
+        print(f"❌ 發生錯誤: {e}")
     
     finally:
         try:
@@ -1019,10 +1047,10 @@ if stock_input:
         if 'current_page' not in st.session_state:
             st.session_state.current_page = "K線"
             
-        # ✅ [NEW] 新增 "家數差" 分頁
+        # ✅ [NEW] 新增 "主力進出" 分頁
         selected_page = st.radio(
             "功能分頁", 
-            ["K線", "分點", "法人", "融資券", "大戶", "家數差"], 
+            ["K線", "分點", "法人", "融資券", "大戶", "主力進出"], 
             horizontal=True,
             label_visibility="collapsed",
             key="current_page"
@@ -1589,9 +1617,10 @@ if stock_input:
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
                     renderLightweightCharts(holder_payload, key="tab5_holder")
 
-        # ==================== Tab 6: 家數差 (Wantgoo) ====================
-        if selected_page == "家數差":
-            with st.spinner("正在讀取買賣家數差資料 (可能需要幾秒鐘繞過驗證)..."):
+        # ==================== Tab 6: 主力進出 (Wantgoo) ====================
+        if selected_page == "主力進出":
+            # 這裡呼叫整合好的爬蟲函式
+            with st.spinner("正在讀取主力進出資料 (可能需要幾秒鐘繞過驗證)..."):
                 wg_df = get_wantgoo_trend_data(stock_input)
             
             if wg_df is not None and not wg_df.empty:
@@ -1618,9 +1647,7 @@ if stock_input:
                     # 家數差數據
                     val_diff = row.get('家數差')
                     if not pd.isna(val_diff):
-                        # 邏輯：家數差 > 0 (買的人多，籌碼散) -> 綠色(壞) ? 
-                        # 或者：家數差 > 0 (紅色)? 這裡沿用 Wantgoo 習慣：正數紅色，負數綠色 (但需注意解讀)
-                        # 通常：家數差為負數代表籌碼集中(好)，為正數代表籌碼發散(壞)
+                        # 依照慣例：正數(紅) / 負數(綠)
                         color = COLOR_UP if val_diff > 0 else COLOR_DOWN
                         diff_hist.append({"time": row['DateStr'], "value": float(val_diff), "color": color})
 
@@ -1649,7 +1676,7 @@ if stock_input:
 
                 renderLightweightCharts(charts_payload_wg, key="tab6_wg")
 
-                st.markdown("#### 買賣家數差與籌碼集中度明細")
+                st.markdown("#### 主力進出與籌碼集中度明細")
                 # 顯示表格 (倒序)
                 display_wg = wg_df.sort_values("DateStr", ascending=False).reset_index(drop=True)
                 
@@ -1677,7 +1704,7 @@ if stock_input:
                     hide_index=True
                 )
             else:
-                st.warning("⚠️ 無法取得家數差資料，請稍後再試或確認該股票是否有資料。")
+                st.warning("⚠️ 無法取得資料，請稍後再試或確認該股票是否有資料。")
 
     else:
         st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
