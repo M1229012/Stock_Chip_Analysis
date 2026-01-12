@@ -13,4 +13,3 @@ numpy
 nest_asyncio
 seleniumbase
 pyvirtualdisplay
-Xvfb 
