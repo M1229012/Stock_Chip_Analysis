@@ -10,3 +10,4 @@ plotly>=5.20.0
 git+https://github.com/M1229012/streamlit-lightweight-charts
 pytz
 numpy
+nest_asyncio
