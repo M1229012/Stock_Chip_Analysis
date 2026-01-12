@@ -34,19 +34,24 @@ from streamlit_lightweight_charts import renderLightweightCharts
 # 應用 nest_asyncio 以解決 Colab/Streamlit 環境下的 Event Loop 問題
 nest_asyncio.apply()
 
-# ================= 0. 強制設定 Colab 時區為台灣 (整合您的設定) =================
+# ==========================================
+# 步驟 0: 強制設定 Colab 時區為台灣 (照您的指令轉為 Python 執行)
+# ==========================================
+print("正在設定時區為 Asia/Taipei...")
 try:
-    # 嘗試設定時區，如果是在 Windows/Mac 本機執行可能會失敗，這邊做個 try-catch
-    # 如果是 Colab 環境，這段會生效
     if os.path.exists('/etc/localtime'):
         os.system('rm /etc/localtime')
-        os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
+    os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
     
+    # 設定環境變數
     os.environ['TZ'] = 'Asia/Taipei'
     time.tzset()
+    
+    # 確認現在時間
     print(f"目前系統時間: {datetime.now()}")
 except Exception as e:
-    print(f"時區設定跳過 (非 Linux/Colab 環境): {e}")
+    print(f"時區設定可能有誤 (非 Linux 環境可忽略): {e}")
+
 
 # ================= 1. 系統設定 =================
 
@@ -434,23 +439,25 @@ def get_driver():
 # ✅ [NEW] Wantgoo 爬蟲函式 (完全依照您提供的程式碼邏輯)
 @st.cache_data(persist="disk", ttl=3600)
 def get_wantgoo_trend_data(stock_id):
-    # --- 設定目標網址 ---
-    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
-    
     # --- 啟動虛擬螢幕 (依照您的程式碼) ---
-    # 注意：在 st.cache_data 裡面開啟 display 務必要關閉
     try:
         display = Display(visible=0, size=(1920, 1080))
         display.start()
     except Exception as e:
         print(f"Virtual Display Start Error: {e}")
 
+    # --- 設定目標網址 ---
+    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+    
+    print("正在啟動反偵測瀏覽器 (UC Mode)...")
+
     result_data = []
 
     try:
         # ✅ 這裡完完全全照您的程式碼：使用 SB(uc=True, test=True, headless=False, locale_code="zh-TW")
-        # 雖然在無頭環境 headless=False 有點反直覺，但在 Colab + pyvirtualdisplay 下是可行的
+        # headless=False 在 Colab + pyvirtualdisplay 下是必須的，這樣才能騙過 Cloudflare
         with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb:
+            
             print(f"正在前往: {url}")
             sb.uc_open_with_reconnect(url, reconnect_time=3)
             
@@ -473,9 +480,12 @@ def get_wantgoo_trend_data(stock_id):
                 # 等待表格出現
                 sb.wait_for_element("main table", timeout=15)
                 
+                print("\n✅ 成功！(已校正時區) 資料如下：\n")
+                
+                # 這裡使用 find_elements 抓取所有行，以便後續繪圖使用
                 rows = sb.find_elements("main table tbody tr")
                 
-                for i, row in enumerate(rows): # 抓取全部資料，不僅限前5筆
+                for i, row in enumerate(rows):
                     cols = row.find_elements(by="tag name", value="td")
                     
                     if len(cols) >= 6:
@@ -485,20 +495,20 @@ def get_wantgoo_trend_data(stock_id):
                         con_5 = cols[4].text.strip()
                         con_20 = cols[5].text.strip()
                         
-                        # 為了要畫圖，必須把 date_val (如 01/12) 轉成 2026-01-12
-                        # 這裡加入日期處理邏輯
+                        # 解析數據存入 list 以供 DataFrame 使用
                         try:
-                            # 移除逗號
+                            # 移除逗號與百分比
                             buy_sell_cln = buy_sell.replace(',', '')
                             count_diff_cln = count_diff.replace(',', '')
                             con_5_cln = con_5.replace('%', '')
                             con_20_cln = con_20.replace('%', '')
 
+                            # 日期處理 (Wantgoo 為 MM/DD，需加上年份)
                             now = datetime.now()
                             dt_temp = datetime.strptime(date_val, "%m/%d")
                             year = now.year
                             
-                            # 簡單的跨年判斷：如果現在是 1月，但資料是 12月，則年份減 1
+                            # 簡單的跨年判斷
                             if now.month == 1 and dt_temp.month == 12:
                                 year -= 1
                             
@@ -511,12 +521,12 @@ def get_wantgoo_trend_data(stock_id):
                                 "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
                                 "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
                             })
-                        except Exception as parse_e:
-                            print(f"解析資料列錯誤: {parse_e}")
-                            continue
+                        except:
+                            pass
 
             except Exception as e:
                 print(f"⚠️ 找不到表格或讀取超時: {e}")
+                print("當前頁面文字片段:", sb.get_text("body")[:200])
 
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
@@ -526,6 +536,7 @@ def get_wantgoo_trend_data(stock_id):
             display.stop()
         except:
             pass
+        print("\n程式執行完畢")
 
     if result_data:
         return pd.DataFrame(result_data).sort_values("DateStr")
