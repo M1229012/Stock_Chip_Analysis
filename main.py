@@ -35,10 +35,11 @@ from streamlit_lightweight_charts import renderLightweightCharts
 nest_asyncio.apply()
 
 # ==========================================
-# 步驟 0: 強制設定 Colab 時區為台灣 (照您的指令轉為 Python 執行)
+# 步驟 0: 強制設定 Colab 時區為台灣 (轉為 Python 執行)
 # ==========================================
 print("正在設定時區為 Asia/Taipei...")
 try:
+    # 這裡對應您原本的 !rm /etc/localtime 和 !ln ...
     if os.path.exists('/etc/localtime'):
         os.system('rm /etc/localtime')
     os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
@@ -48,9 +49,9 @@ try:
     time.tzset()
     
     # 確認現在時間
-    print(f"目前系統時間: {datetime.now()}")
+    print(f"目前系統時間 (校正後): {datetime.now()}")
 except Exception as e:
-    print(f"時區設定可能有誤 (非 Linux 環境可忽略): {e}")
+    print(f"時區設定可能有誤 (非 Linux/Colab 環境可忽略): {e}")
 
 
 # ================= 1. 系統設定 =================
@@ -436,27 +437,26 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ [NEW] Wantgoo 爬蟲函式 (完全依照您提供的程式碼邏輯)
+# ✅ [NEW] Wantgoo 爬蟲函式 - 嚴格遵照您的程式碼
 @st.cache_data(persist="disk", ttl=3600)
 def get_wantgoo_trend_data(stock_id):
-    # --- 啟動虛擬螢幕 (依照您的程式碼) ---
-    try:
-        display = Display(visible=0, size=(1920, 1080))
-        display.start()
-    except Exception as e:
-        print(f"Virtual Display Start Error: {e}")
+    # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
+    
+    # --- 啟動虛擬螢幕 ---
+    display = Display(visible=0, size=(1920, 1080))
+    display.start()
 
     # --- 設定目標網址 ---
     url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
-    
-    print("正在啟動反偵測瀏覽器 (UC Mode)...")
 
+    print("正在啟動反偵測瀏覽器 (UC Mode)...")
+    
     result_data = []
 
     try:
-        # ✅ 這裡完完全全照您的程式碼：使用 SB(uc=True, test=True, headless=False, locale_code="zh-TW")
-        # headless=False 在 Colab + pyvirtualdisplay 下是必須的，這樣才能騙過 Cloudflare
-        with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb:
+        # 這裡可以加入 locale 設定，進一步告訴 Chrome 我們是繁體中文使用者
+        # ✅ [關鍵]: 這裡使用 headless=False，因為我們有 pyvirtualdisplay
+        with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb: 
             
             print(f"正在前往: {url}")
             sb.uc_open_with_reconnect(url, reconnect_time=3)
@@ -482,7 +482,7 @@ def get_wantgoo_trend_data(stock_id):
                 
                 print("\n✅ 成功！(已校正時區) 資料如下：\n")
                 
-                # 這裡使用 find_elements 抓取所有行，以便後續繪圖使用
+                # 這裡為了要能畫圖，我需要把 print 改成存入 list，但抓取邏輯完全一樣
                 rows = sb.find_elements("main table tbody tr")
                 
                 for i, row in enumerate(rows):
@@ -495,7 +495,7 @@ def get_wantgoo_trend_data(stock_id):
                         con_5 = cols[4].text.strip()
                         con_20 = cols[5].text.strip()
                         
-                        # 解析數據存入 list 以供 DataFrame 使用
+                        # 為了畫圖，這裡需要簡單清洗資料，但選取元素的方式與您的程式碼一模一樣
                         try:
                             # 移除逗號與百分比
                             buy_sell_cln = buy_sell.replace(',', '')
@@ -530,12 +530,9 @@ def get_wantgoo_trend_data(stock_id):
 
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
-    
+
     finally:
-        try:
-            display.stop()
-        except:
-            pass
+        display.stop()
         print("\n程式執行完畢")
 
     if result_data:
