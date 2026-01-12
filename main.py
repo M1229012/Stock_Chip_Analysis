@@ -35,7 +35,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 nest_asyncio.apply()
 
 # ==========================================
-# 步驟 0: 強制設定 Colab 時區為台灣 (轉為 Python 執行)
+# 步驟 0: 強制設定 Colab 時區為台灣
 # ==========================================
 print("正在設定時區為 Asia/Taipei...")
 try:
@@ -436,10 +436,10 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ [NEW] Wantgoo 爬蟲函式 - 嚴格遵照您的程式碼
+# ✅ [REVISED] Wantgoo 爬蟲函式 - 換個方式：使用 pandas.read_html 直接解析原始碼
 @st.cache_data(persist="disk", ttl=3600)
 def get_wantgoo_trend_data(stock_id):
-    # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
+    # --- 步驟 1: 執行爬蟲 ---
     
     # --- 啟動虛擬螢幕 ---
     display = Display(visible=0, size=(1920, 1080))
@@ -453,12 +453,11 @@ def get_wantgoo_trend_data(stock_id):
     result_data = []
 
     try:
-        # 這裡可以加入 locale 設定，進一步告訴 Chrome 我們是繁體中文使用者
-        # ✅ [關鍵]: 嚴格照抄您的代碼 headless=False
+        # ✅ 使用完全相同的 SB 設定
         with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb: 
             
             print(f"正在前往: {url}")
-            sb.uc_open_with_reconnect(url, reconnect_time=3)
+            sb.uc_open_with_reconnect(url, reconnect_time=5) # 稍微增加重連時間
             
             # --- 破解 Cloudflare ---
             print("正在等待 Cloudflare 驗證...")
@@ -472,61 +471,94 @@ def get_wantgoo_trend_data(stock_id):
             
             print(f"目前網頁標題: {sb.get_title()}")
 
-            # --- 抓取資料 ---
+            # --- 抓取資料 (改用更穩定的 read_html 方式) ---
             print("正在等待表格載入...")
             
             try:
-                # 等待表格出現
-                sb.wait_for_element("main table", timeout=15)
+                # 等待關鍵字出現，確保表格載入完成
+                sb.wait_for_text("家數差", timeout=15)
                 
-                print("\n✅ 成功！(已校正時區) 資料如下：\n")
+                print("\n✅ 成功！取得頁面原始碼，正在解析...\n")
                 
-                # 這裡為了要能畫圖，我需要把 print 改成存入 list，但抓取邏輯完全一樣
-                # 這裡改回抓取全部 rows，因為 K 線需要歷史資料，不只前 5 筆
-                rows = sb.find_elements("main table tbody tr")
+                # 直接獲取整個頁面 HTML，讓 Pandas 去解析表格
+                html = sb.get_page_source()
                 
-                for i, row in enumerate(rows):
-                    cols = row.find_elements(by="tag name", value="td")
-                    
-                    if len(cols) >= 6:
-                        date_val = cols[0].text.strip()
-                        buy_sell = cols[2].text.strip()
-                        count_diff = cols[3].text.strip()
-                        con_5 = cols[4].text.strip()
-                        con_20 = cols[5].text.strip()
-                        
-                        # 為了畫圖，這裡需要簡單清洗資料，但選取元素的方式與您的程式碼一模一樣
-                        try:
-                            # 移除逗號與百分比
-                            buy_sell_cln = buy_sell.replace(',', '')
-                            count_diff_cln = count_diff.replace(',', '')
-                            con_5_cln = con_5.replace('%', '')
-                            con_20_cln = con_20.replace('%', '')
+                # 使用 Pandas 讀取所有表格
+                dfs = pd.read_html(StringIO(html))
+                
+                target_df = None
+                # 尋找包含「家數差」欄位的表格
+                for df in dfs:
+                    if '家數差' in df.columns or df.astype(str).apply(lambda x: x.str.contains('家數差', na=False)).any().any():
+                        target_df = df
+                        break
+                
+                if target_df is not None:
+                    # 清理並正規化資料
+                    # 假設表格欄位順序相對固定，或透過欄位名稱對應
+                    # 若 read_html 抓到的 header 正確
+                    if '日期' in target_df.columns:
+                        for i, row in target_df.iterrows():
+                            try:
+                                date_val = str(row['日期']).strip()
+                                buy_sell = str(row['買賣超張數'] if '買賣超張數' in row else row.iloc[2]).strip()
+                                count_diff = str(row['家數差'] if '家數差' in row else row.iloc[3]).strip()
+                                con_5 = str(row['5日集中'] if '5日集中' in row else row.iloc[4]).strip()
+                                con_20 = str(row['20日集中'] if '20日集中' in row else row.iloc[5]).strip()
 
-                            # 日期處理 (Wantgoo 為 MM/DD，需加上年份)
-                            now = datetime.now()
-                            dt_temp = datetime.strptime(date_val, "%m/%d")
-                            year = now.year
-                            
-                            # 簡單的跨年判斷
-                            if now.month == 1 and dt_temp.month == 12:
-                                year -= 1
-                            
-                            date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
+                                # 清洗數據
+                                buy_sell_cln = buy_sell.replace(',', '')
+                                count_diff_cln = count_diff.replace(',', '')
+                                con_5_cln = con_5.replace('%', '')
+                                con_20_cln = con_20.replace('%', '')
 
-                            result_data.append({
-                                "DateStr": date_str,
-                                "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
-                                "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
-                                "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
-                                "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
-                            })
-                        except:
-                            pass
+                                # 日期處理
+                                now = datetime.now()
+                                dt_temp = datetime.strptime(date_val, "%m/%d")
+                                year = now.year
+                                if now.month == 1 and dt_temp.month == 12:
+                                    year -= 1
+                                date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
+
+                                result_data.append({
+                                    "DateStr": date_str,
+                                    "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
+                                    "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
+                                    "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
+                                    "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
+                                })
+                            except:
+                                continue
+                    else:
+                        # 如果沒有 header，嘗試用 index (Fallback)
+                        for i, row in target_df.iterrows():
+                            if len(row) >= 6:
+                                try:
+                                    date_val = str(row.iloc[0]).strip()
+                                    if '/' not in date_val: continue # 跳過標題列
+
+                                    buy_sell_cln = str(row.iloc[2]).replace(',', '')
+                                    count_diff_cln = str(row.iloc[3]).replace(',', '')
+                                    con_5_cln = str(row.iloc[4]).replace('%', '')
+                                    con_20_cln = str(row.iloc[5]).replace('%', '')
+
+                                    now = datetime.now()
+                                    dt_temp = datetime.strptime(date_val, "%m/%d")
+                                    year = now.year
+                                    if now.month == 1 and dt_temp.month == 12: year -= 1
+                                    date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
+
+                                    result_data.append({
+                                        "DateStr": date_str,
+                                        "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
+                                        "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
+                                        "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
+                                        "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
+                                    })
+                                except: pass
 
             except Exception as e:
                 print(f"⚠️ 找不到表格或讀取超時: {e}")
-                print("當前頁面文字片段:", sb.get_text("body")[:200])
 
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
@@ -664,7 +696,6 @@ def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
             row_str = row.astype(str).values
             if "買超券商" in row_str and "賣超券商" in row_str:
                 header_row = i
-
                 break
         if header_row == -1: return None, None, None, None, None, url
 
