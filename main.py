@@ -61,6 +61,7 @@ st.markdown("""
     .metric-item {
         text-align: center;
         width: 48%;
+        width: 48%;
         min-width: 100px;
     }
     .metric-label {
@@ -788,14 +789,16 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     if not out: return None
     return pd.DataFrame(out).sort_values("DateStr")
 
-@st.cache_data(ttl=21600)
+# ✅ [MODIFIED] 修改: 縮短 cache 時間(ttl=300) 以解決盤中資料不更新的問題
+@st.cache_data(ttl=300)
 def get_stock_price(stock_id, refresh_nonce=0):
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     df = None
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            temp_df = stock.history(period="2y")
+            # ✅ [MODIFIED] 修改: auto_adjust=False 以顯示原始K線形狀 (解決長相問題)
+            temp_df = stock.history(period="2y", auto_adjust=False)
             if not temp_df.empty:
                 df = temp_df
                 break
@@ -803,7 +806,13 @@ def get_stock_price(stock_id, refresh_nonce=0):
     if df is None or df.empty: return None
 
     try:
+        # ✅ [MODIFIED] 修改: 先轉時區再移除，解決今日資料顯示為昨日的問題
+        try:
+            df.index = df.index.tz_convert('Asia/Taipei')
+        except:
+            pass # 防止已經沒有時區資訊的狀況
         df.index = df.index.tz_localize(None)
+        
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
         df = calculate_technical_indicators(df)
         return df
