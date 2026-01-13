@@ -792,22 +792,127 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
 def get_stock_price(stock_id, refresh_nonce=0):
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     df = None
+    used_ticker = None
+
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            temp_df = stock.history(period="10y")
+            # ✅ 明確指定日K，避免某些環境下預設行為不一致
+            temp_df = stock.history(period="10y", interval="1d", auto_adjust=False, actions=False)
             if not temp_df.empty:
                 df = temp_df
+                used_ticker = ticker
                 break
-        except: continue
-    if df is None or df.empty: return None
+        except:
+            continue
+
+    if df is None or df.empty:
+        return None
 
     try:
-        df.index = df.index.tz_localize(None)
+        df = df.copy()
+
+        # ✅ [FIX] 正確處理時區：若 index 有 tz，先轉 Asia/Taipei 再去 tz；避免日期偏移/重複
+        try:
+            if getattr(df.index, "tz", None) is not None:
+                df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
+        except:
+            pass
+
+        df = df.sort_index()
+
+        # 先建立 DateStr
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
+
+        # ✅ [FIX] 去除同一天重複（保留最後一筆），避免 lightweight-charts time 覆蓋造成「看起來套到前一天」
+        df = df[~df['DateStr'].duplicated(keep="last")].copy()
+
+        # ✅ [FIX] 若最後一根日K疑似被 Yahoo 沿用/回填錯誤，改用 1 分K 重建當天 OHLC
+        # 條件：最後一日非常接近今天（台北）且 Open 等於前一日 Open（常見異常徵兆），或 Volume=0
+        try:
+            tz = pytz.timezone('Asia/Taipei')
+            today_tw = datetime.now(tz).date()
+
+            if len(df) >= 2:
+                last_row = df.iloc[-1]
+                prev_row = df.iloc[-2]
+
+                last_date_str = str(last_row['DateStr'])
+                last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
+
+                open_same_as_prev = False
+                vol_suspicious = False
+                ohlc_suspicious = False
+
+                try:
+                    open_same_as_prev = np.isclose(float(last_row['Open']), float(prev_row['Open']), rtol=0, atol=1e-12)
+                except:
+                    open_same_as_prev = False
+
+                try:
+                    vol_val = last_row.get('Volume', np.nan)
+                    vol_suspicious = pd.isna(vol_val) or float(vol_val) == 0.0
+                except:
+                    vol_suspicious = False
+
+                # 若 OHLC 完整等於前一日，更高度可疑（有時 Yahoo 會把整列沿用）
+                try:
+                    ohlc_suspicious = (
+                        np.isclose(float(last_row['Open']),  float(prev_row['Open']),  rtol=0, atol=1e-12) and
+                        np.isclose(float(last_row['High']),  float(prev_row['High']),  rtol=0, atol=1e-12) and
+                        np.isclose(float(last_row['Low']),   float(prev_row['Low']),   rtol=0, atol=1e-12) and
+                        np.isclose(float(last_row['Close']), float(prev_row['Close']), rtol=0, atol=1e-12)
+                    )
+                except:
+                    ohlc_suspicious = False
+
+                # 僅針對「最近 2 天內」的最後一根做修正，避免誤判歷史正常情況
+                if (today_tw - last_date).days in [0, 1, 2] and (open_same_as_prev or vol_suspicious or ohlc_suspicious) and used_ticker is not None:
+                    try:
+                        stock = yf.Ticker(used_ticker)
+                        intra = stock.history(period="7d", interval="1m", auto_adjust=False, actions=False)
+
+                        if intra is not None and not intra.empty:
+                            intra = intra.copy()
+
+                            # 轉台北時區後取日期
+                            try:
+                                if getattr(intra.index, "tz", None) is not None:
+                                    intra.index = intra.index.tz_convert("Asia/Taipei").tz_localize(None)
+                            except:
+                                pass
+
+                            intra = intra.sort_index()
+                            intra['DateStr'] = intra.index.strftime('%Y-%m-%d')
+
+                            day_df = intra[intra['DateStr'] == last_date_str]
+                            if not day_df.empty:
+                                # 用 1 分K 重建日K
+                                new_open = float(day_df['Open'].iloc[0])
+                                new_high = float(day_df['High'].max())
+                                new_low = float(day_df['Low'].min())
+                                new_close = float(day_df['Close'].iloc[-1])
+                                new_vol = float(day_df['Volume'].sum()) if 'Volume' in day_df.columns else float(last_row.get('Volume', 0))
+
+                                # 回填到最後一列（同一天）
+                                mask = df['DateStr'] == last_date_str
+                                if mask.any():
+                                    idx = df.index[mask][0]
+                                    df.at[idx, 'Open'] = new_open
+                                    df.at[idx, 'High'] = new_high
+                                    df.at[idx, 'Low'] = new_low
+                                    df.at[idx, 'Close'] = new_close
+                                    if 'Volume' in df.columns:
+                                        df.at[idx, 'Volume'] = new_vol
+                    except:
+                        pass
+        except:
+            pass
+
         df = calculate_technical_indicators(df)
         return df
-    except: return None
+    except:
+        return None
 
 # ✅ 獲取所有股票選單
 @st.cache_data
