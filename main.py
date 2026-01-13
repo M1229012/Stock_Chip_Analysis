@@ -775,102 +775,144 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     return pd.DataFrame(out).sort_values("DateStr")
 
 # ==============================================================================
-# ✅ [主要修正區塊] 股價抓取邏輯 (包含日K即時修正與分K功能)
+# ✅ [主要修正區塊] 股價抓取邏輯 (日K修正+雙重即時修正Fallback)
 # ==============================================================================
 
-@st.cache_data(ttl=60) # ✅ 日K 快取 60秒，確保盤中即時性
+@st.cache_data(ttl=60)  # ✅ 日K 快取 60秒
 def get_stock_price(stock_id, refresh_nonce=0):
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
-    df = None
-    
-    # 1. 用 Yahoo Finance 抓取歷史長資料
+    raw = None
+
+    # 1) Yahoo 抓長期日K
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            # ✅ 明確指定日K
-            temp_df = stock.history(period="10y", interval="1d", auto_adjust=False, actions=False)
-            if not temp_df.empty:
-                df = temp_df
+            temp = stock.history(period="10y", interval="1d", auto_adjust=False, actions=False)
+            if temp is not None and not temp.empty:
+                raw = temp.copy()
                 break
         except:
             continue
 
-    if df is None or df.empty:
+    if raw is None or raw.empty:
         return None
 
+    # 2) 統一時區（只在 index 有 tz 時轉）
     try:
-        df = df.copy()
-
-        # ✅ 處理時區
-        try:
-            if getattr(df.index, "tz", None) is not None:
-                df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
-        except:
-            pass
-
-        df = df.sort_index()
-        df['DateStr'] = df.index.strftime('%Y-%m-%d')
-
-        # ✅ 去除重複（保留最後一筆）
-        df = df[~df['DateStr'].duplicated(keep="last")].copy()
-
-        # --------------------------------------------------------------------------
-        # ✅ 強制使用 twstock (證交所官方即時資料) 修正最後一根 K 棒
-        #    這能解決 Yahoo 開盤價/收盤價不準或延遲的問題
-        # --------------------------------------------------------------------------
-        try:
-            realtime_data = twstock.realtime.get(stock_id)
-            
-            if realtime_data['success']:
-                rt = realtime_data['realtime']
-                
-                # 確保有成交價格 (避開暫停交易或盤前無數據)
-                if rt['latest_trade_price'] != '-' and rt['open'] != '-':
-                    latest_open = float(rt['open'])
-                    latest_high = float(rt['high'])
-                    latest_low = float(rt['low'])
-                    latest_close = float(rt['latest_trade_price'])
-                    latest_vol = float(rt['accumulate_trade_volume']) # 累積成交量(股)
-
-                    # 取得今天日期 (台北時間)
-                    tz_tw = pytz.timezone('Asia/Taipei')
-                    today_str = datetime.now(tz_tw).strftime('%Y-%m-%d')
-                    
-                    # 檢查 Yahoo 資料庫的最後一天是不是今天
-                    last_yf_date = df['DateStr'].iloc[-1]
-
-                    if last_yf_date == today_str:
-                        # 如果 Yahoo 已經有今天的列，直接覆蓋數值 (修正 Yahoo 誤差)
-                        idx = df.index[-1]
-                        df.at[idx, 'Open'] = latest_open
-                        df.at[idx, 'High'] = latest_high
-                        df.at[idx, 'Low'] = latest_low
-                        df.at[idx, 'Close'] = latest_close
-                        df.at[idx, 'Volume'] = latest_vol
-                    else:
-                        # 如果 Yahoo 還停在昨天，手動補上今天這一根
-                        new_idx = pd.to_datetime(today_str)
-                        new_row = pd.DataFrame({
-                            'Open': [latest_open],
-                            'High': [latest_high],
-                            'Low': [latest_low],
-                            'Close': [latest_close],
-                            'Volume': [latest_vol],
-                            'DateStr': [today_str]
-                        }, index=[new_idx])
-                        
-                        df = pd.concat([df, new_row])
-        except Exception as e:
-            pass
-        # --------------------------------------------------------------------------
-
-        # 重新計算技術指標
-        df = calculate_technical_indicators(df)
-        return df
+        if getattr(raw.index, "tz", None) is not None:
+            raw.index = raw.index.tz_convert("Asia/Taipei").tz_localize(None)
     except:
+        pass
+
+    raw = raw.sort_index()
+
+    # 3) 轉成表格並處理「同一天多筆」：避免 Open 被 snapshot(昨收代填)覆蓋
+    g = raw.reset_index().rename(columns={"index": "DT"})
+    g["DT"] = pd.to_datetime(g["DT"], errors="coerce")
+    g = g.dropna(subset=["DT"]).sort_values("DT")
+
+    # DateStr 用台北時間的日期切日（DT 已經是台北時區去掉 tz 的時間）
+    g["DateStr"] = g["DT"].dt.strftime("%Y-%m-%d")
+
+    rows = []
+    for d, sub in g.groupby("DateStr", sort=True):
+        sub = sub.sort_values("DT")
+
+        # ✅ Open：優先取「Volume > 0 的第一筆」(避免盤前/快照 Open=昨收)
+        sub_v = sub[sub["Volume"].fillna(0) > 0]
+        if not sub_v.empty and pd.notna(sub_v.iloc[0]["Open"]):
+            open_val = float(sub_v.iloc[0]["Open"])
+        else:
+            open_val = float(sub.iloc[0]["Open"]) if pd.notna(sub.iloc[0]["Open"]) else np.nan
+
+        high_val = float(sub["High"].max()) if sub["High"].notna().any() else np.nan
+        low_val  = float(sub["Low"].min())  if sub["Low"].notna().any()  else np.nan
+        close_val = float(sub["Close"].iloc[-1]) if pd.notna(sub["Close"].iloc[-1]) else np.nan
+
+        # ✅ Volume：同一天多筆通常是累積量，取最大值最合理
+        vol_val = float(sub["Volume"].max()) if sub["Volume"].notna().any() else np.nan
+
+        rows.append({
+            "DateStr": d,
+            "Open": open_val,
+            "High": high_val,
+            "Low": low_val,
+            "Close": close_val,
+            "Volume": vol_val
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
         return None
 
-# ✅ [NEW] 新增：抓取分時資料 (Intraday)
+    df.index = pd.to_datetime(df["DateStr"], errors="coerce")
+    df = df.dropna(subset=["DateStr"]).sort_values("DateStr").reset_index(drop=True)
+
+    # 4) 修正「今天」最後一根日K：先用 twstock.realtime，失敗再用 twstock.Stock 當月日資料 fallback
+    tz_tw = pytz.timezone("Asia/Taipei")
+    now_tw = datetime.now(tz_tw)
+    today_str = now_tw.strftime("%Y-%m-%d")
+
+    patched = False
+    latest_open, latest_high, latest_low, latest_close, latest_vol = np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # 4-1) realtime（盤中通常最好）
+    try:
+        realtime_data = twstock.realtime.get(stock_id)
+        if realtime_data and realtime_data.get("success"):
+            rt = realtime_data.get("realtime", {})
+            if rt.get("latest_trade_price") not in (None, "-") and rt.get("open") not in (None, "-"):
+                latest_open = float(rt["open"])
+                latest_high = float(rt["high"]) if rt.get("high") not in (None, "-") else np.nan
+                latest_low  = float(rt["low"])  if rt.get("low")  not in (None, "-") else np.nan
+                latest_close = float(rt["latest_trade_price"])
+                latest_vol = float(rt["accumulate_trade_volume"])  # 股
+
+                patched = True
+    except:
+        patched = False
+
+    # 4-2) fallback：不用 1分K，改抓 twstock.Stock 當月日資料（盤後也能拿到正確 Open）
+    if not patched:
+        try:
+            s = twstock.Stock(stock_id)
+            data = s.fetch(now_tw.year, now_tw.month)  # 取當月
+            if data:
+                last = data[-1]
+                last_date_str = last.date.strftime("%Y-%m-%d")
+                if last_date_str == today_str:
+                    latest_open = float(last.open)
+                    latest_high = float(last.high)
+                    latest_low  = float(last.low)
+                    latest_close = float(last.close)
+                    latest_vol = float(last.capacity)  # 股
+                    patched = True
+        except:
+            pass # 維持 Yahoo 原樣
+
+    if patched:
+        if not df.empty and df["DateStr"].iloc[-1] == today_str:
+            df.loc[df.index[-1], "Open"] = latest_open
+            if not pd.isna(latest_high): df.loc[df.index[-1], "High"] = latest_high
+            if not pd.isna(latest_low):  df.loc[df.index[-1], "Low"]  = latest_low
+            df.loc[df.index[-1], "Close"] = latest_close
+            df.loc[df.index[-1], "Volume"] = latest_vol
+        else:
+            new_row = pd.DataFrame([{
+                "DateStr": today_str,
+                "Open": latest_open,
+                "High": latest_high,
+                "Low": latest_low,
+                "Close": latest_close,
+                "Volume": latest_vol
+            }])
+            df = pd.concat([df, new_row], ignore_index=True)
+
+    # 5) 重算指標
+    df = calculate_technical_indicators(df)
+    return df
+
+# ✅ 抓取分時資料 (Intraday)
 @st.cache_data(ttl=60) # 分K快取設短一點
 def get_intraday_stock_price(stock_id, interval_str):
     # 對應 Yahoo 的 interval 格式
