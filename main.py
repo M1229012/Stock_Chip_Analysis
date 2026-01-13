@@ -848,8 +848,12 @@ def get_stock_price(stock_id, refresh_nonce=0):
     if df.empty:
         return None
 
+    # [FIX] 修正 ValueError 的地方
+    # 錯誤原因：當 'DateStr' 欄位被用來建立索引後，再用 'DateStr' 欄位名排序會產生歧義。
+    # 解決方法：直接對新建立的 DatetimeIndex 排序。
     df.index = pd.to_datetime(df["DateStr"], errors="coerce")
-    df = df.dropna(subset=["DateStr"]).sort_values("DateStr").reset_index(drop=True)
+    df = df[df.index.notna()] # 移除日期轉換失敗的列 (產生 NaT 的 index)
+    df = df.sort_index().reset_index(drop=True) # 對索引排序後重設索引
 
     # 4) 修正「今天」最後一根日K：先用 twstock.realtime，失敗再用 twstock.Stock 當月日資料 fallback
     tz_tw = pytz.timezone("Asia/Taipei")
