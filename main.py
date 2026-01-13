@@ -807,7 +807,10 @@ def get_stock_price(stock_id, refresh_nonce=0):
     raw = raw.sort_index()
 
     # 3) 轉成表格並處理「同一天多筆」：避免 Open 被 snapshot(昨收代填)覆蓋
-    g = raw.reset_index().rename(columns={"index": "DT"})
+    # [FIX] 確保 index reset 後欄位名稱正確 (yfinance index 預設為 'Date')
+    raw.index.name = "DT"
+    g = raw.reset_index()
+    
     g["DT"] = pd.to_datetime(g["DT"], errors="coerce")
     g = g.dropna(subset=["DT"]).sort_values("DT")
 
