@@ -61,7 +61,6 @@ st.markdown("""
     .metric-item {
         text-align: center;
         width: 48%;
-        width: 48%;
         min-width: 100px;
     }
     .metric-label {
@@ -789,16 +788,14 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     if not out: return None
     return pd.DataFrame(out).sort_values("DateStr")
 
-# ✅ [MODIFIED] 修改: 縮短 cache 時間(ttl=300) 以解決盤中資料不更新的問題
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=21600)
 def get_stock_price(stock_id, refresh_nonce=0):
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     df = None
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            # ✅ [MODIFIED] 修改: 抓取 10 年資料
-            temp_df = stock.history(period="10y", auto_adjust=False)
+            temp_df = stock.history(period="10y")
             if not temp_df.empty:
                 df = temp_df
                 break
@@ -806,59 +803,7 @@ def get_stock_price(stock_id, refresh_nonce=0):
     if df is None or df.empty: return None
 
     try:
-        # ✅ [MODIFIED] 強制時區處理：確保將 UTC 時間轉為 台北時間
-        # 這能解決伺服器時間 (UTC) 導致當日 K 棒被歸類到昨日，或開盤價錯亂的問題
-        if df.index.tz is not None:
-            df.index = df.index.tz_convert('Asia/Taipei')
-        else:
-            # 若 yfinance 回傳無時區 (naive)，通常是 UTC，需先定錨再轉
-            df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
-        
-        # ✅ [CRITICAL FIX] 移除時區並「正規化」時間（歸零時分秒）
-        # 這是解決「今日資料無法覆蓋」的關鍵。確保 yfinance 的日期和 twstock 產生的今日日期完全一致。
-        df.index = df.index.tz_localize(None).normalize()
-        
-        # ✅ [NEW] 去除重複索引 (以防 yfinance 回傳重複資料)
-        df = df[~df.index.duplicated(keep='last')]
-
-        # ✅ [NEW CRITICAL FIX] 嘗試從 twstock 抓取即時資料來修正「今日 K 棒」
-        # 這是為了解決 yfinance 在盤中或剛收盤時，有時會把昨日收盤價誤植為今日開盤價的已知問題
-        try:
-            realtime = twstock.realtime.get(stock_id)
-            if realtime['success']:
-                info = realtime['realtime']
-                
-                # 確保有最新成交價且不是 '-'
-                if info['latest_trade_price'] and info['latest_trade_price'] != '-':
-                    latest_close = float(info['latest_trade_price'])
-                    
-                    # 處理 Open/High/Low 可能為 '-' 的情況 (通常只在開盤瞬間或暫停交易時發生，改用 Close 補)
-                    latest_open = float(info['open']) if info['open'] != '-' else latest_close
-                    latest_high = float(info['high']) if info['high'] != '-' else latest_close
-                    latest_low = float(info['low']) if info['low'] != '-' else latest_close
-                    
-                    # twstock 累積成交量單位通常是張 (lots)，但有時會變，這裡假設是張，轉為股
-                    # 若為 '-' 則設為 0
-                    latest_vol = float(info['accumulate_trade_volume']) * 1000 if info['accumulate_trade_volume'] != '-' else 0
-                    
-                    # 取得今日日期 (台北時間) 並正規化
-                    now_dt = datetime.now(pytz.timezone('Asia/Taipei'))
-                    today_ts = pd.Timestamp(now_dt.date()) # 只取日期部分，確保是 00:00:00
-                    
-                    # ✅ 強制覆蓋或新增今日資料
-                    # 由於已經 normalize 索引，這裡會精準覆蓋 yfinance 的今日錯誤資料
-                    df.loc[today_ts, 'Open'] = latest_open
-                    df.loc[today_ts, 'High'] = latest_high
-                    df.loc[today_ts, 'Low'] = latest_low
-                    df.loc[today_ts, 'Close'] = latest_close
-                    df.loc[today_ts, 'Volume'] = latest_vol
-                    
-                    # 如果是新的一天，其他欄位補 0
-                    df = df.fillna(0)
-        except Exception as e:
-            # 若 twstock 失敗 (例如連線問題)，就退回使用 yfinance 原始資料
-            pass
-        
+        df.index = df.index.tz_localize(None)
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
         df = calculate_technical_indicators(df)
         return df
