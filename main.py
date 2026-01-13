@@ -349,7 +349,7 @@ def calculate_technical_indicators(df):
     
     return df
 
-# ✅ [NEW] 週期轉換函式 (日 -> 週/月)
+# ✅ 週期轉換函式 (日 -> 週/月)
 def resample_data(df, period):
     if period == '日K':
         return df
@@ -712,27 +712,19 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     if df.shape[1] < 18: return None
     
     # 欄位映射 (Index -> 上界張數)
-    # Col 3 (<1) -> 1
-    # Col 4 (1-5) -> 5
-    # Col 5 (5-10) -> 10
-    # ...
     col_map = {
         3: 1, 4: 5, 5: 10, 6: 15, 7: 20, 8: 30, 9: 40, 10: 50,
         11: 100, 12: 200, 13: 400, 14: 600, 15: 800, 16: 1000, 17: 99999999 # 1000以上
     }
     
     # 找出日期欄位索引 (通常是 Col 2，索引為 2)
-    # 我們遍歷每一列，嘗試解析日期
     out = []
     
-    # 從資料列開始 (跳過標題，如果 read_html 沒抓對標題)
-    # 假設前幾列可能是標題，找符合 YYYY-MM-DD 或 YYYYMMDD 的
     for i, row in df.iterrows():
         try:
             d_val = str(row.iloc[2]) # 假設日期在第 3 欄
             d_str = d_val.replace("/", "").replace("-", "")
             
-            # 簡單驗證日期格式
             if not re.match(r"^\d{8}$", d_str): continue
             
             date_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
@@ -744,7 +736,6 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 val_str = str(row.iloc[col_idx]).replace("%", "").replace(",", "")
                 val = float(val_str) if val_str != 'nan' else 0.0
                 
-                # 修正判斷邏輯：使用區間下界來判斷比較準確
                 lower = 0
                 if col_idx == 3: lower = 0
                 elif col_idx == 4: lower = 1
@@ -762,13 +753,9 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 elif col_idx == 16: lower = 800
                 elif col_idx == 17: lower = 1000
                 
-                # 散戶條件：持股 < 散戶門檻
-                # 只有當整個區間都在門檻之下才算 (即 上界 <= 門檻)
                 if upper <= retail_threshold:
                     retail_ratio += val
                 
-                # 大戶條件：持股 >= 大戶門檻
-                # 只有當整個區間都在門檻之上才算 (即 下界 >= 門檻)
                 if lower >= large_threshold:
                     large_ratio += val
             
@@ -777,7 +764,6 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
                 "日期": date_fmt,
                 "大戶持股(%)": round(large_ratio, 2),
                 "散戶持股(%)": round(retail_ratio, 2),
-                # 分級比例表沒有人數，設為 0
                 "大戶人數": 0,
                 "散戶人數": 0
             })
@@ -788,20 +774,23 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     if not out: return None
     return pd.DataFrame(out).sort_values("DateStr")
 
-@st.cache_data(ttl=21600)
+# ==============================================================================
+# ✅ [主要修正區塊] 股價抓取邏輯 (包含日K即時修正與分K功能)
+# ==============================================================================
+
+@st.cache_data(ttl=60) # ✅ 日K 快取 60秒，確保盤中即時性
 def get_stock_price(stock_id, refresh_nonce=0):
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     df = None
-    used_ticker = None
-
+    
+    # 1. 用 Yahoo Finance 抓取歷史長資料
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            # ✅ 明確指定日K，避免某些環境下預設行為不一致
+            # ✅ 明確指定日K
             temp_df = stock.history(period="10y", interval="1d", auto_adjust=False, actions=False)
             if not temp_df.empty:
                 df = temp_df
-                used_ticker = ticker
                 break
         except:
             continue
@@ -812,7 +801,7 @@ def get_stock_price(stock_id, refresh_nonce=0):
     try:
         df = df.copy()
 
-        # ✅ [FIX] 正確處理時區：若 index 有 tz，先轉 Asia/Taipei 再去 tz；避免日期偏移/重複
+        # ✅ 處理時區
         try:
             if getattr(df.index, "tz", None) is not None:
                 df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
@@ -820,95 +809,112 @@ def get_stock_price(stock_id, refresh_nonce=0):
             pass
 
         df = df.sort_index()
-
-        # 先建立 DateStr
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
 
-        # ✅ [FIX] 去除同一天重複（保留最後一筆），避免 lightweight-charts time 覆蓋造成「看起來套到前一天」
+        # ✅ 去除重複（保留最後一筆）
         df = df[~df['DateStr'].duplicated(keep="last")].copy()
 
-        # ✅ [FIX] 若最後一根日K疑似被 Yahoo 沿用/回填錯誤，改用 1 分K 重建當天 OHLC
-        # 條件：最後一日非常接近今天（台北）且 Open 等於前一日 Open（常見異常徵兆），或 Volume=0
+        # --------------------------------------------------------------------------
+        # ✅ 強制使用 twstock (證交所官方即時資料) 修正最後一根 K 棒
+        #    這能解決 Yahoo 開盤價/收盤價不準或延遲的問題
+        # --------------------------------------------------------------------------
         try:
-            tz = pytz.timezone('Asia/Taipei')
-            today_tw = datetime.now(tz).date()
+            realtime_data = twstock.realtime.get(stock_id)
+            
+            if realtime_data['success']:
+                rt = realtime_data['realtime']
+                
+                # 確保有成交價格 (避開暫停交易或盤前無數據)
+                if rt['latest_trade_price'] != '-' and rt['open'] != '-':
+                    latest_open = float(rt['open'])
+                    latest_high = float(rt['high'])
+                    latest_low = float(rt['low'])
+                    latest_close = float(rt['latest_trade_price'])
+                    latest_vol = float(rt['accumulate_trade_volume']) # 累積成交量(股)
 
-            if len(df) >= 2:
-                last_row = df.iloc[-1]
-                prev_row = df.iloc[-2]
+                    # 取得今天日期 (台北時間)
+                    tz_tw = pytz.timezone('Asia/Taipei')
+                    today_str = datetime.now(tz_tw).strftime('%Y-%m-%d')
+                    
+                    # 檢查 Yahoo 資料庫的最後一天是不是今天
+                    last_yf_date = df['DateStr'].iloc[-1]
 
-                last_date_str = str(last_row['DateStr'])
-                last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
-
-                open_same_as_prev = False
-                vol_suspicious = False
-                ohlc_suspicious = False
-
-                try:
-                    open_same_as_prev = np.isclose(float(last_row['Open']), float(prev_row['Open']), rtol=0, atol=1e-12)
-                except:
-                    open_same_as_prev = False
-
-                try:
-                    vol_val = last_row.get('Volume', np.nan)
-                    vol_suspicious = pd.isna(vol_val) or float(vol_val) == 0.0
-                except:
-                    vol_suspicious = False
-
-                # 若 OHLC 完整等於前一日，更高度可疑（有時 Yahoo 會把整列沿用）
-                try:
-                    ohlc_suspicious = (
-                        np.isclose(float(last_row['Open']),  float(prev_row['Open']),  rtol=0, atol=1e-12) and
-                        np.isclose(float(last_row['High']),  float(prev_row['High']),  rtol=0, atol=1e-12) and
-                        np.isclose(float(last_row['Low']),   float(prev_row['Low']),   rtol=0, atol=1e-12) and
-                        np.isclose(float(last_row['Close']), float(prev_row['Close']), rtol=0, atol=1e-12)
-                    )
-                except:
-                    ohlc_suspicious = False
-
-                # 僅針對「最近 2 天內」的最後一根做修正，避免誤判歷史正常情況
-                if (today_tw - last_date).days in [0, 1, 2] and (open_same_as_prev or vol_suspicious or ohlc_suspicious) and used_ticker is not None:
-                    try:
-                        stock = yf.Ticker(used_ticker)
-                        intra = stock.history(period="7d", interval="1m", auto_adjust=False, actions=False)
-
-                        if intra is not None and not intra.empty:
-                            intra = intra.copy()
-
-                            # 轉台北時區後取日期
-                            try:
-                                if getattr(intra.index, "tz", None) is not None:
-                                    intra.index = intra.index.tz_convert("Asia/Taipei").tz_localize(None)
-                            except:
-                                pass
-
-                            intra = intra.sort_index()
-                            intra['DateStr'] = intra.index.strftime('%Y-%m-%d')
-
-                            day_df = intra[intra['DateStr'] == last_date_str]
-                            if not day_df.empty:
-                                # 用 1 分K 重建日K
-                                new_open = float(day_df['Open'].iloc[0])
-                                new_high = float(day_df['High'].max())
-                                new_low = float(day_df['Low'].min())
-                                new_close = float(day_df['Close'].iloc[-1])
-                                new_vol = float(day_df['Volume'].sum()) if 'Volume' in day_df.columns else float(last_row.get('Volume', 0))
-
-                                # 回填到最後一列（同一天）
-                                mask = df['DateStr'] == last_date_str
-                                if mask.any():
-                                    idx = df.index[mask][0]
-                                    df.at[idx, 'Open'] = new_open
-                                    df.at[idx, 'High'] = new_high
-                                    df.at[idx, 'Low'] = new_low
-                                    df.at[idx, 'Close'] = new_close
-                                    if 'Volume' in df.columns:
-                                        df.at[idx, 'Volume'] = new_vol
-                    except:
-                        pass
-        except:
+                    if last_yf_date == today_str:
+                        # 如果 Yahoo 已經有今天的列，直接覆蓋數值 (修正 Yahoo 誤差)
+                        idx = df.index[-1]
+                        df.at[idx, 'Open'] = latest_open
+                        df.at[idx, 'High'] = latest_high
+                        df.at[idx, 'Low'] = latest_low
+                        df.at[idx, 'Close'] = latest_close
+                        df.at[idx, 'Volume'] = latest_vol
+                    else:
+                        # 如果 Yahoo 還停在昨天，手動補上今天這一根
+                        new_idx = pd.to_datetime(today_str)
+                        new_row = pd.DataFrame({
+                            'Open': [latest_open],
+                            'High': [latest_high],
+                            'Low': [latest_low],
+                            'Close': [latest_close],
+                            'Volume': [latest_vol],
+                            'DateStr': [today_str]
+                        }, index=[new_idx])
+                        
+                        df = pd.concat([df, new_row])
+        except Exception as e:
             pass
+        # --------------------------------------------------------------------------
 
+        # 重新計算技術指標
+        df = calculate_technical_indicators(df)
+        return df
+    except:
+        return None
+
+# ✅ [NEW] 新增：抓取分時資料 (Intraday)
+@st.cache_data(ttl=60) # 分K快取設短一點
+def get_intraday_stock_price(stock_id, interval_str):
+    # 對應 Yahoo 的 interval 格式
+    # Yahoo 限制: 1m(7天), 5m/15m/30m(60天), 60m(730天)
+    yahoo_interval_map = {
+        "1分K": "1m", "5分K": "5m", "15分K": "15m", "30分K": "30m", "60分K": "60m"
+    }
+    y_interval = yahoo_interval_map.get(interval_str, "60m")
+    
+    # 根據 interval 決定抓取天數 (period)
+    period = "60d" # 預設抓 60 天
+    if y_interval == "1m": period = "7d"
+    elif y_interval == "60m": period = "730d" # 1小時可以抓兩年
+    
+    tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
+    df = None
+    
+    for ticker in tickers_to_try:
+        try:
+            stock = yf.Ticker(ticker)
+            # 抓取分時資料
+            temp_df = stock.history(period=period, interval=y_interval, auto_adjust=False, actions=False)
+            if not temp_df.empty:
+                df = temp_df
+                break
+        except:
+            continue
+            
+    if df is None or df.empty:
+        return None
+        
+    try:
+        df = df.copy()
+        # 處理時區轉為台北時間
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
+        
+        df = df.sort_index()
+        
+        # 產生 DateStr (含時間，為了給圖表用)
+        # 格式: YYYY-MM-DD HH:MM
+        df['DateStr'] = df.index.strftime('%Y-%m-%d %H:%M')
+        
+        # 計算技術指標
         df = calculate_technical_indicators(df)
         return df
     except:
@@ -1008,55 +1014,50 @@ if stock_input:
     stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
 
     # ✅ 使用 session_state 的統計天數（由分點頁面控制）
-    # ✅ 關鍵：這裡直接讀取 st.session_state.days_label，如果 widget 有變動，streamlit 重新執行時這裡就會拿到新的值
     current_days_label = st.session_state.days_label
-    selected_days = days_map.get(current_days_label, 20) # [FIX] 將 fallback 改為 20
-    st.session_state.selected_days = selected_days # 同步更新
+    selected_days = days_map.get(current_days_label, 20) 
+    st.session_state.selected_days = selected_days 
 
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
     with st.spinner(f"正在分析 {stock_display} ..."):
         df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
         
+    # ✅ 獲取基礎日K資料 (包含 twstock 修正)
     df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
     
-    # ✅ [NEW] 預先定義 df_price 為日資料，確保所有分頁都能存取到基礎資料
+    # ✅ 預先定義 df_price 為日資料，確保所有分頁都能存取到基礎資料 (Tabs 2,3,4,5 使用)
     df_price = df_price_daily.copy() if df_price_daily is not None else None
     
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
-        #st.caption(f"資料來源：{target_url}")
 
-        # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
         if 'current_page' not in st.session_state:
             st.session_state.current_page = "K線"
             
-        # 使用水平 radio 模擬 tabs，並隱藏標題
-        # ✅ 搭配 CSS 使其看起來像 Material UI Tabs
         selected_page = st.radio(
             "功能分頁", 
             ["K線", "分點", "法人", "融資券", "大戶"], 
             horizontal=True,
             label_visibility="collapsed",
-            key="current_page" # 綁定 session_state，確保互動後停留在同一頁
+            key="current_page"
         )
-        # ✅ [FIX] 移除 st.divider()，解決那條長線的問題
-        # st.divider() 
 
-        # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
-        # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
-        # ✅ [REVERTED] 恢復 make_opts 到未嘗試縮放前的狀態 (移除 barSpacing/rightOffset/data_len)
-        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
+        # ✅ [MODIFIED] 支援分時圖設定的 make_opts
+        def make_opts(height, title=None, time_visible=True, scale_mode="normal", is_intraday=False):
+            # 若是分時K線，開啟時間顯示，並調整日期格式
+            date_format = "yyyy-MM-dd HH:mm" if is_intraday else "yyyy年MM月dd日"
+            
             opts = {
                 "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
-                "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
+                "localization": {"locale": "zh-TW", "dateFormat": date_format},
                 "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
                 "timeScale": {
                     "borderColor": "rgba(197, 203, 206, 0.8)", 
                     "visible": time_visible, 
-                    "timeVisible": False,
+                    "timeVisible": is_intraday, # 關鍵：分時圖要顯示時間
+                    "secondsVisible": False
                 },
-                # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
                 "crosshair": {
                     "mode": 1,
@@ -1064,13 +1065,12 @@ if stock_input:
                     "horzLine": {
                         "visible": True, 
                         "labelVisible": True,
-                        "labelBackgroundColor": '#1E88E5' # ✅ [FIX] 改為更亮的藍色以提高對比度
+                        "labelBackgroundColor": '#1E88E5'
                     }
                 },
                 "height": height,
             }
             if scale_mode == "rsi":
-                # ✅ [FIX] RSI 模式下也要保留 minimumWidth，並將 visible 設為 True (否則無法對齊)
                 opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
             if title:
                 opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
@@ -1079,14 +1079,22 @@ if stock_input:
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
-            # ✅ [NEW] 將 K 線週期選擇器移至此處 (均線選擇器的上方)
-            kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
+            # ✅ 新增 分時 選項
+            kline_period = st.selectbox("K 線週期", ["5分K", "15分K", "30分K", "60分K", "日K", "週K", "月K"], index=4)
             
-            # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
-            if df_price_daily is not None:
-                df_price = resample_data(df_price_daily, kline_period)
+            # 判斷是否為分時模式
+            is_intraday = "分K" in kline_period
+            
+            # 根據選擇載入資料
+            target_df = None
+            if is_intraday:
+                target_df = get_intraday_stock_price(stock_input, kline_period)
+                st.caption(f"⚠️ 分時資料來源為 Yahoo Finance，通常有 15-20 分鐘延遲。")
+            else:
+                # 日/週/月 走原本邏輯 (包含 twstock 修正)
+                if df_price_daily is not None:
+                    target_df = resample_data(df_price_daily, kline_period)
 
-            # ✅ [FIX] 改用 st.multiselect 取代多個 Checkbox
             ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
             ma_default = ["MA5", "MA10", "MA20", "MA60"]
             
@@ -1104,27 +1112,39 @@ if stock_input:
             show_ma240 = "MA240" in selected_mas
             show_bb = "BB" in selected_mas
             
-            if df_price is not None and not df_price.empty:
+            if target_df is not None and not target_df.empty:
                 charts_payload = []
-                plot_df = df_price.copy()
+                plot_df = target_df.copy()
                 plot_df.index.name = None
-                plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
-                plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+                
+                # ✅ 處理時間格式：若是分時圖，轉成 Timestamp (秒)，避免圖表時間軸錯亂
+                # 若是日線，維持 DateStr (YYYY-MM-DD)
+                def get_time_val(row):
+                    if is_intraday:
+                        try:
+                            # 將字串轉回 datetime 再轉 timestamp
+                            dt = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
+                            return int(dt.timestamp()) # 回傳秒數
+                        except:
+                            return row['DateStr']
+                    else:
+                        return row['DateStr']
 
                 candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
                 for i, row in plot_df.iterrows():
+                    t_val = get_time_val(row)
+                    
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
-                        candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-                    if show_ma5 and not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
-                    if show_ma10 and not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
-                    if show_ma20 and not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
-                    if show_ma60 and not pd.isna(row['MA60']): ma60_data.append({"time": row['DateStr'], "value": float(row['MA60'])})
-                    if show_ma120 and not pd.isna(row['MA120']): ma120_data.append({"time": row['DateStr'], "value": float(row['MA120'])})
-                    if show_ma240 and not pd.isna(row['MA240']): ma240_data.append({"time": row['DateStr'], "value": float(row['MA240'])})
-                    if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": row['DateStr'], "value": float(row['BB_Up'])})
-                    if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
+                        candlestick_data.append({"time": t_val, "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                    if show_ma5 and not pd.isna(row['MA5']): ma5_data.append({"time": t_val, "value": float(row['MA5'])})
+                    if show_ma10 and not pd.isna(row['MA10']): ma10_data.append({"time": t_val, "value": float(row['MA10'])})
+                    if show_ma20 and not pd.isna(row['MA20']): ma20_data.append({"time": t_val, "value": float(row['MA20'])})
+                    if show_ma60 and not pd.isna(row['MA60']): ma60_data.append({"time": t_val, "value": float(row['MA60'])})
+                    if show_ma120 and not pd.isna(row['MA120']): ma120_data.append({"time": t_val, "value": float(row['MA120'])})
+                    if show_ma240 and not pd.isna(row['MA240']): ma240_data.append({"time": t_val, "value": float(row['MA240'])})
+                    if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": t_val, "value": float(row['BB_Up'])})
+                    if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": t_val, "value": float(row['BB_Low'])})
 
-                # ✅ [FIX] 禁用固定標籤
                 ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
                 main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}}]
                 if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
@@ -1137,23 +1157,22 @@ if stock_input:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
                 
-                # ✅ [MODIFIED] 移除 data_len
-                charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
+                # ✅ 傳入 is_intraday 參數
+                charts_payload.append({"chart": make_opts(400, "股價", True, is_intraday=is_intraday), "series": main_series})
 
                 vol_data = []
                 for i, row in plot_df.iterrows():
-                    if not pd.isna(row['Volume']): vol_data.append({"time": row['DateStr'], "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
-                # ✅ [FIX] 禁用固定標籤
-                charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
+                    t_val = get_time_val(row)
+                    if not pd.isna(row['Volume']): vol_data.append({"time": t_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
+                charts_payload.append({"chart": make_opts(150, "成交量", False, is_intraday=is_intraday), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
-                # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
                 k_data, d_data = [], []
                 if 'K' in plot_df.columns:
                     for i, row in plot_df.iterrows():
-                        if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
-                        if not pd.isna(row['D']): d_data.append({"time": row['DateStr'], "value": float(row['D'])})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
+                        t_val = get_time_val(row)
+                        if not pd.isna(row['K']): k_data.append({"time": t_val, "value": float(row['K'])})
+                        if not pd.isna(row['D']): d_data.append({"time": t_val, "value": float(row['D'])})
+                    charts_payload.append({"chart": make_opts(150, "KD", False, is_intraday=is_intraday), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
@@ -1161,11 +1180,11 @@ if stock_input:
                 dif_data, dea_data, hist_data = [], [], []
                 if 'DIF' in plot_df.columns:
                     for i, row in plot_df.iterrows():
-                        if not pd.isna(row['DIF']): dif_data.append({"time": row['DateStr'], "value": float(row['DIF'])})
-                        if not pd.isna(row['DEA']): dea_data.append({"time": row['DateStr'], "value": float(row['DEA'])})
-                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": row['DateStr'], "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
+                        t_val = get_time_val(row)
+                        if not pd.isna(row['DIF']): dif_data.append({"time": t_val, "value": float(row['DIF'])})
+                        if not pd.isna(row['DEA']): dea_data.append({"time": t_val, "value": float(row['DEA'])})
+                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": t_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
+                    charts_payload.append({"chart": make_opts(150, "MACD", False, is_intraday=is_intraday), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1174,18 +1193,20 @@ if stock_input:
                 rsi_data, rsi_80, rsi_20 = [], [], []
                 if 'RSI' in plot_df.columns:
                     for i, row in plot_df.iterrows():
+                        t_val = get_time_val(row)
                         if not pd.isna(row['RSI']): 
-                            rsi_data.append({"time": row['DateStr'], "value": float(row['RSI'])})
-                            rsi_80.append({"time": row['DateStr'], "value": 80})
-                            rsi_20.append({"time": row['DateStr'], "value": 20})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
+                            rsi_data.append({"time": t_val, "value": float(row['RSI'])})
+                            rsi_80.append({"time": t_val, "value": 80})
+                            rsi_20.append({"time": t_val, "value": 20})
+                    charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi", is_intraday=is_intraday), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
                         {"type": "Line", "data": rsi_20, "options": {"color": "green", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}}
                     ]})
                 
                 renderLightweightCharts(charts_payload, key="tab1_kline")
+            else:
+                st.error("⚠️ 無法取得 K 線資料")
 
         # ==================== Tab 2: 分點 ====================
         if selected_page == "分點":
@@ -1201,11 +1222,6 @@ if stock_input:
             # --- 右側：排行表 (優先處理以捕捉事件，但不調用 rerun) ---
             with col_table:
                 # ✅ [LAYOUT CHANGE] 將統計天數選單移至此處 (右側欄位上方)
-                # 使用 key="days_label" 直接綁定到 st.session_state.days_label
-                # 這樣修改時 Streamlit 會自動 rerun，並且保留在當前分頁
-                
-                # ✅ [FIX] 強制設定 index 為 "20日" (索引為 3)，讓預設選單正確顯示
-                # ["1日", "5日", "10日", "20日", ...] -> 20日是 index 3
                 default_index = 3 
                 try:
                     default_index = list(days_map.keys()).index(st.session_state.days_label)
@@ -1372,7 +1388,6 @@ if stock_input:
                     main_chart_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                     main_chart_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
-                    # ✅ [MODIFIED] 移除 data_len
                     charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True), "series": main_chart_series})
                     
                     if '買賣超_Final' in plot_df.columns:
@@ -1438,7 +1453,6 @@ if stock_input:
             main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
             main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
-            # ✅ [MODIFIED] 移除 data_len
             charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '外資買賣超' in plot_df.columns:
@@ -1517,7 +1531,6 @@ if stock_input:
             main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
             main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
-            # ✅ [MODIFIED] 移除 data_len
             charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '融資餘額' in plot_df.columns:
@@ -1713,7 +1726,6 @@ if stock_input:
                     ]
                     
                     # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
-                    # ✅ [MODIFIED] 移除 data_len
                     holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
                     holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
