@@ -470,7 +470,7 @@ def get_institutional_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取融資融券資料
+# ✅ [FIX] 爬取融資融券資料 (確認函式存在)
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
@@ -506,7 +506,7 @@ def get_margin_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ [FIX] 將 get_real_data_matrix 移到最上方
+# ✅ 將 get_real_data_matrix 移到最上方
 @st.cache_data(persist="disk", ttl=604800)
 def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
     driver = get_driver()
@@ -959,9 +959,14 @@ def get_intraday_stock_price(stock_id, interval_str):
         
     try:
         df = df.copy()
-        # 處理時區轉為台北時間
-        if getattr(df.index, "tz", None) is not None:
-            df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
+        
+        # ✅ [FIX] 強制處理時區：Yahoo 分時資料可能是 UTC 或 Naive，統一轉為 Asia/Taipei
+        if df.index.tz is None:
+             # 若 Yahoo 給的是 Naive，通常預設為 UTC (yfinance 特性)
+             df.index = df.index.tz_localize("UTC")
+        
+        # 轉為台北時間
+        df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
         
         df = df.sort_index()
         
