@@ -35,7 +35,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 nest_asyncio.apply()
 
 # ==========================================
-# 步驟 0: 強制設定 Colab 時區為台灣
+# 步驟 0: 強制設定 Colab 時區為台灣 (照您的代碼移植)
 # ==========================================
 print("正在設定時區為 Asia/Taipei...")
 try:
@@ -436,10 +436,10 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ [REVISED] Wantgoo 爬蟲函式 - 換個方式：使用 pandas.read_html 直接解析原始碼
+# ✅ [NEW] Wantgoo 爬蟲函式 - 嚴格遵照您的程式碼
 @st.cache_data(persist="disk", ttl=3600)
 def get_wantgoo_trend_data(stock_id):
-    # --- 步驟 1: 執行爬蟲 ---
+    # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
     
     # --- 啟動虛擬螢幕 ---
     display = Display(visible=0, size=(1920, 1080))
@@ -453,11 +453,12 @@ def get_wantgoo_trend_data(stock_id):
     result_data = []
 
     try:
-        # ✅ 使用完全相同的 SB 設定
+        # 這裡可以加入 locale 設定，進一步告訴 Chrome 我們是繁體中文使用者
+        # ✅ [關鍵]: 嚴格照抄您的代碼 headless=False
         with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb: 
             
             print(f"正在前往: {url}")
-            sb.uc_open_with_reconnect(url, reconnect_time=5) # 稍微增加重連時間
+            sb.uc_open_with_reconnect(url, reconnect_time=3)
             
             # --- 破解 Cloudflare ---
             print("正在等待 Cloudflare 驗證...")
@@ -471,94 +472,62 @@ def get_wantgoo_trend_data(stock_id):
             
             print(f"目前網頁標題: {sb.get_title()}")
 
-            # --- 抓取資料 (改用更穩定的 read_html 方式) ---
+            # --- 抓取資料 ---
             print("正在等待表格載入...")
             
             try:
-                # 等待關鍵字出現，確保表格載入完成
-                sb.wait_for_text("家數差", timeout=15)
+                # 等待表格出現
+                sb.wait_for_element("main table", timeout=15)
                 
-                print("\n✅ 成功！取得頁面原始碼，正在解析...\n")
+                print("\n✅ 成功！(已校正時區) 資料如下：\n")
                 
-                # 直接獲取整個頁面 HTML，讓 Pandas 去解析表格
-                html = sb.get_page_source()
+                # 這裡為了要能畫圖，我需要把 print 改成存入 list，但抓取邏輯完全一樣
+                # 您的程式碼只抓前5筆，但我需要抓全部來畫圖，這是唯一的小改動，其餘邏輯一模一樣
+                rows = sb.find_elements("main table tbody tr")
                 
-                # 使用 Pandas 讀取所有表格
-                dfs = pd.read_html(StringIO(html))
-                
-                target_df = None
-                # 尋找包含「家數差」欄位的表格
-                for df in dfs:
-                    if '家數差' in df.columns or df.astype(str).apply(lambda x: x.str.contains('家數差', na=False)).any().any():
-                        target_df = df
-                        break
-                
-                if target_df is not None:
-                    # 清理並正規化資料
-                    # 假設表格欄位順序相對固定，或透過欄位名稱對應
-                    # 若 read_html 抓到的 header 正確
-                    if '日期' in target_df.columns:
-                        for i, row in target_df.iterrows():
-                            try:
-                                date_val = str(row['日期']).strip()
-                                buy_sell = str(row['買賣超張數'] if '買賣超張數' in row else row.iloc[2]).strip()
-                                count_diff = str(row['家數差'] if '家數差' in row else row.iloc[3]).strip()
-                                con_5 = str(row['5日集中'] if '5日集中' in row else row.iloc[4]).strip()
-                                con_20 = str(row['20日集中'] if '20日集中' in row else row.iloc[5]).strip()
+                for i, row in enumerate(rows):
+                    cols = row.find_elements(by="tag name", value="td")
+                    
+                    if len(cols) >= 6:
+                        # 嚴格遵照您的程式碼取值
+                        date_val = cols[0].text.strip()
+                        buy_sell = cols[2].text.strip()
+                        count_diff = cols[3].text.strip()
+                        con_5 = cols[4].text.strip()
+                        con_20 = cols[5].text.strip()
+                        
+                        # 為了畫圖，這裡需要簡單清洗資料
+                        try:
+                            # 移除逗號與百分比
+                            buy_sell_cln = buy_sell.replace(',', '')
+                            count_diff_cln = count_diff.replace(',', '')
+                            con_5_cln = con_5.replace('%', '')
+                            con_20_cln = con_20.replace('%', '')
 
-                                # 清洗數據
-                                buy_sell_cln = buy_sell.replace(',', '')
-                                count_diff_cln = count_diff.replace(',', '')
-                                con_5_cln = con_5.replace('%', '')
-                                con_20_cln = con_20.replace('%', '')
+                            # 日期處理 (Wantgoo 為 MM/DD，需加上年份)
+                            now = datetime.now()
+                            dt_temp = datetime.strptime(date_val, "%m/%d")
+                            year = now.year
+                            
+                            # 簡單的跨年判斷
+                            if now.month == 1 and dt_temp.month == 12:
+                                year -= 1
+                            
+                            date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
 
-                                # 日期處理
-                                now = datetime.now()
-                                dt_temp = datetime.strptime(date_val, "%m/%d")
-                                year = now.year
-                                if now.month == 1 and dt_temp.month == 12:
-                                    year -= 1
-                                date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
-
-                                result_data.append({
-                                    "DateStr": date_str,
-                                    "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
-                                    "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
-                                    "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
-                                    "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
-                                })
-                            except:
-                                continue
-                    else:
-                        # 如果沒有 header，嘗試用 index (Fallback)
-                        for i, row in target_df.iterrows():
-                            if len(row) >= 6:
-                                try:
-                                    date_val = str(row.iloc[0]).strip()
-                                    if '/' not in date_val: continue # 跳過標題列
-
-                                    buy_sell_cln = str(row.iloc[2]).replace(',', '')
-                                    count_diff_cln = str(row.iloc[3]).replace(',', '')
-                                    con_5_cln = str(row.iloc[4]).replace('%', '')
-                                    con_20_cln = str(row.iloc[5]).replace('%', '')
-
-                                    now = datetime.now()
-                                    dt_temp = datetime.strptime(date_val, "%m/%d")
-                                    year = now.year
-                                    if now.month == 1 and dt_temp.month == 12: year -= 1
-                                    date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
-
-                                    result_data.append({
-                                        "DateStr": date_str,
-                                        "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
-                                        "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
-                                        "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
-                                        "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
-                                    })
-                                except: pass
+                            result_data.append({
+                                "DateStr": date_str,
+                                "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
+                                "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
+                                "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
+                                "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
+                            })
+                        except:
+                            pass
 
             except Exception as e:
                 print(f"⚠️ 找不到表格或讀取超時: {e}")
+                print("當前頁面文字片段:", sb.get_text("body")[:200])
 
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
@@ -1170,7 +1139,7 @@ if stock_input:
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
 
                 ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}}]
+                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
                 if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
                 if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                 if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
