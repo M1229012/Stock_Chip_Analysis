@@ -797,8 +797,8 @@ def get_stock_price(stock_id, refresh_nonce=0):
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            # ✅ [MODIFIED] 修改: auto_adjust=False 以顯示原始K線形狀 (解決長相問題)
-            temp_df = stock.history(period="2y", auto_adjust=False)
+            # ✅ [MODIFIED] 修改: 抓取 5 年資料
+            temp_df = stock.history(period="5y", auto_adjust=False)
             if not temp_df.empty:
                 df = temp_df
                 break
@@ -806,12 +806,19 @@ def get_stock_price(stock_id, refresh_nonce=0):
     if df is None or df.empty: return None
 
     try:
-        # ✅ [MODIFIED] 修改: 先轉時區再移除，解決今日資料顯示為昨日的問題
-        try:
+        # ✅ [MODIFIED] 強制時區處理：確保將 UTC 時間轉為 台北時間
+        # 這能解決伺服器時間 (UTC) 導致當日 K 棒被歸類到昨日，或開盤價錯亂的問題
+        if df.index.tz is not None:
             df.index = df.index.tz_convert('Asia/Taipei')
-        except:
-            pass # 防止已經沒有時區資訊的狀況
+        else:
+            # 若 yfinance 回傳無時區 (naive)，通常是 UTC，需先定錨再轉
+            df.index = df.index.tz_localize('UTC').tz_convert('Asia/Taipei')
+        
+        # 移除時區資訊，變成單純的 datetime
         df.index = df.index.tz_localize(None)
+        
+        # ✅ [NEW] 去除重複索引 (以防 yfinance 回傳重複資料)
+        df = df[~df.index.duplicated(keep='last')]
         
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
         df = calculate_technical_indicators(df)
