@@ -797,8 +797,8 @@ def get_stock_price(stock_id, refresh_nonce=0):
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            # ✅ [MODIFIED] 修改: 抓取 5 年資料
-            temp_df = stock.history(period="5y", auto_adjust=False)
+            # ✅ [MODIFIED] 修改: 抓取 10 年資料
+            temp_df = stock.history(period="10y", auto_adjust=False)
             if not temp_df.empty:
                 df = temp_df
                 break
@@ -819,6 +819,38 @@ def get_stock_price(stock_id, refresh_nonce=0):
         
         # ✅ [NEW] 去除重複索引 (以防 yfinance 回傳重複資料)
         df = df[~df.index.duplicated(keep='last')]
+
+        # ✅ [NEW CRITICAL FIX] 嘗試從 twstock 抓取即時資料來修正「今日 K 棒」
+        # 這是為了解決 yfinance 在盤中或剛收盤時，有時會把昨日收盤價誤植為今日開盤價的已知問題
+        try:
+            realtime = twstock.realtime.get(stock_id)
+            if realtime['success']:
+                info = realtime['realtime']
+                # 確保有開盤價且不是 '-' (尚未開盤或異常)
+                if info['open'] not in ['-', ''] and info['latest_trade_price'] not in ['-', '']:
+                    latest_open = float(info['open'])
+                    latest_high = float(info['high'])
+                    latest_low = float(info['low'])
+                    latest_close = float(info['latest_trade_price'])
+                    # twstock 累積成交量單位通常是張 (lots) 或 股? 
+                    # 根據經驗 twstock 'accumulate_trade_volume' 單位是張 (1000股)
+                    # yfinance volume 單位是股
+                    latest_vol = float(info['accumulate_trade_volume']) * 1000 
+                    
+                    # 取得今日日期 (台北時間)
+                    now_dt = datetime.now(pytz.timezone('Asia/Taipei'))
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    today_ts = pd.Timestamp(today_str)
+                    
+                    # 更新或新增今日資料
+                    df.loc[today_ts, 'Open'] = latest_open
+                    df.loc[today_ts, 'High'] = latest_high
+                    df.loc[today_ts, 'Low'] = latest_low
+                    df.loc[today_ts, 'Close'] = latest_close
+                    df.loc[today_ts, 'Volume'] = latest_vol
+        except Exception as e:
+            # 若 twstock 失敗 (例如連線問題)，就退回使用 yfinance 原始資料
+            pass
         
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
         df = calculate_technical_indicators(df)
