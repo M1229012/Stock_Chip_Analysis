@@ -20,38 +20,9 @@ import shutil
 import twstock
 import copy
 import numpy as np
-import os
-import subprocess
-
-# ✅ [NEW] 新增 SeleniumBase 相關引用
-import nest_asyncio
-from seleniumbase import SB
-from pyvirtualdisplay import Display
 
 # ✅ TradingView 圖表套件
 from streamlit_lightweight_charts import renderLightweightCharts
-
-# 應用 nest_asyncio 以解決 Colab/Streamlit 環境下的 Event Loop 問題
-nest_asyncio.apply()
-
-# ==========================================
-# 步驟 0: 強制設定 Colab 時區為台灣 (照您的代碼移植)
-# ==========================================
-print("正在設定時區為 Asia/Taipei...")
-try:
-    if os.path.exists('/etc/localtime'):
-        os.system('rm /etc/localtime')
-    os.system('ln -s /usr/share/zoneinfo/Asia/Taipei /etc/localtime')
-    
-    # 設定環境變數
-    os.environ['TZ'] = 'Asia/Taipei'
-    time.tzset()
-    
-    # 確認現在時間
-    print(f"目前系統時間: {datetime.now()}")
-except Exception as e:
-    print(f"時區設定訊息: {e}")
-
 
 # ================= 1. 系統設定 =================
 
@@ -436,110 +407,6 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# ✅ [NEW] Wantgoo 爬蟲函式 - 嚴格遵照您的程式碼
-@st.cache_data(persist="disk", ttl=3600)
-def get_wantgoo_trend_data(stock_id):
-    # --- 步驟 1: 執行爬蟲 (照抄您的邏輯) ---
-    
-    # --- 啟動虛擬螢幕 ---
-    display = Display(visible=0, size=(1920, 1080))
-    display.start()
-
-    # --- 設定目標網址 ---
-    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
-
-    print("正在啟動反偵測瀏覽器 (UC Mode)...")
-    
-    result_data = []
-
-    try:
-        # 這裡可以加入 locale 設定，進一步告訴 Chrome 我們是繁體中文使用者
-        # ✅ [關鍵]: 嚴格照抄您的代碼 headless=False
-        with SB(uc=True, test=True, headless=False, locale_code="zh-TW") as sb: 
-            
-            print(f"正在前往: {url}")
-            sb.uc_open_with_reconnect(url, reconnect_time=3)
-            
-            # --- 破解 Cloudflare ---
-            print("正在等待 Cloudflare 驗證...")
-            for _ in range(3):
-                if "Just a moment" in sb.get_title() or "Access denied" in sb.get_title():
-                    print("偵測到驗證頁面，正在嘗試繞過...")
-                    sb.uc_gui_click_captcha()
-                    sb.sleep(5)
-                else:
-                    break
-            
-            print(f"目前網頁標題: {sb.get_title()}")
-
-            # --- 抓取資料 ---
-            print("正在等待表格載入...")
-            
-            try:
-                # 等待表格出現
-                sb.wait_for_element("main table", timeout=15)
-                
-                print("\n✅ 成功！(已校正時區) 資料如下：\n")
-                
-                # 這裡為了要能畫圖，我需要把 print 改成存入 list，但抓取邏輯完全一樣
-                # 您的程式碼只抓前5筆，但我需要抓全部來畫圖，這是唯一的小改動，其餘邏輯一模一樣
-                rows = sb.find_elements("main table tbody tr")
-                
-                for i, row in enumerate(rows):
-                    cols = row.find_elements(by="tag name", value="td")
-                    
-                    if len(cols) >= 6:
-                        # 嚴格遵照您的程式碼取值
-                        date_val = cols[0].text.strip()
-                        buy_sell = cols[2].text.strip()
-                        count_diff = cols[3].text.strip()
-                        con_5 = cols[4].text.strip()
-                        con_20 = cols[5].text.strip()
-                        
-                        # 為了畫圖，這裡需要簡單清洗資料
-                        try:
-                            # 移除逗號與百分比
-                            buy_sell_cln = buy_sell.replace(',', '')
-                            count_diff_cln = count_diff.replace(',', '')
-                            con_5_cln = con_5.replace('%', '')
-                            con_20_cln = con_20.replace('%', '')
-
-                            # 日期處理 (Wantgoo 為 MM/DD，需加上年份)
-                            now = datetime.now()
-                            dt_temp = datetime.strptime(date_val, "%m/%d")
-                            year = now.year
-                            
-                            # 簡單的跨年判斷
-                            if now.month == 1 and dt_temp.month == 12:
-                                year -= 1
-                            
-                            date_str = f"{year}-{dt_temp.month:02d}-{dt_temp.day:02d}"
-
-                            result_data.append({
-                                "DateStr": date_str,
-                                "買賣超": float(buy_sell_cln) if buy_sell_cln.replace('-','').isdigit() else 0,
-                                "家數差": float(count_diff_cln) if count_diff_cln.replace('-','').isdigit() else 0,
-                                "5日集中": float(con_5_cln) if con_5_cln.replace('-','').replace('.','').isdigit() else 0,
-                                "20日集中": float(con_20_cln) if con_20_cln.replace('-','').replace('.','').isdigit() else 0
-                            })
-                        except:
-                            pass
-
-            except Exception as e:
-                print(f"⚠️ 找不到表格或讀取超時: {e}")
-                print("當前頁面文字片段:", sb.get_text("body")[:200])
-
-    except Exception as e:
-        print(f"❌ 發生錯誤: {e}")
-
-    finally:
-        display.stop()
-        print("\n程式執行完畢")
-
-    if result_data:
-        return pd.DataFrame(result_data).sort_values("DateStr")
-    return None
-
 def calculate_date_range(stock_id, days):
     try:
         adj_days = days
@@ -638,6 +505,87 @@ def get_margin_data(stock_id, start_date, end_date):
     finally:
         driver.quit()
     return None
+
+# ✅ [NEW] WantGoo 主力進出動向 (買賣超 / 家數差 / 5日集中 / 20日集中)
+@st.cache_data(persist="disk", ttl=21600)
+def get_wantgoo_main_trend(stock_id: str, refresh_nonce=0):
+    driver = get_driver()
+    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+    table_xpath = "/html/body/div[1]/main/div/div[4]/div[1]/table"
+
+    try:
+        driver.get(url)
+
+        WebDriverWait(driver, 12).until(
+            EC.presence_of_element_located((By.XPATH, table_xpath))
+        )
+
+        table_elem = driver.find_element(By.XPATH, table_xpath)
+        table_html = table_elem.get_attribute("outerHTML")
+
+        tables = pd.read_html(StringIO(table_html))
+        if not tables:
+            return None, url
+
+        df = tables[0].copy()
+        df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
+
+        rename_map = {
+            "日期": "日期",
+            "收盤價": "收盤價",
+            "買賣超": "買賣超",
+            "買賣超(張)": "買賣超",
+            "家數差": "家數差",
+            "買賣家數差": "家數差",
+            "5日集中": "5日集中度",
+            "5日集中度": "5日集中度",
+            "20日集中": "20日集中度",
+            "20日集中度": "20日集中度",
+        }
+        for k, v in rename_map.items():
+            if k in df.columns and v not in df.columns:
+                df = df.rename(columns={k: v})
+
+        need_cols = ["日期", "收盤價", "買賣超", "家數差", "5日集中度", "20日集中度"]
+        if not all(c in df.columns for c in need_cols) and df.shape[1] >= 6:
+            df = df.iloc[:, :6].copy()
+            df.columns = need_cols
+        else:
+            df = df[[c for c in need_cols if c in df.columns]].copy()
+            if df.shape[1] < 6:
+                return None, url
+
+        df["DateStr"] = pd.to_datetime(df["日期"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df = df.dropna(subset=["DateStr"])
+
+        for col in ["收盤價", "買賣超", "家數差"]:
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.replace(",", "", regex=False)
+                .str.replace("+", "", regex=False)
+                .str.replace("nan", "", regex=False)
+            )
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        for col in ["5日集中度", "20日集中度"]:
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.replace("%", "", regex=False)
+                .str.replace(",", "", regex=False)
+                .str.replace("+", "", regex=False)
+                .str.replace("nan", "", regex=False)
+            )
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+        df = df.sort_values("DateStr", ascending=True).reset_index(drop=True)
+        return df, url
+
+    except:
+        return None, url
+    finally:
+        driver.quit()
 
 # ✅ [FIX] 將 get_real_data_matrix 移到最上方
 @st.cache_data(persist="disk", ttl=604800)
@@ -1036,9 +984,10 @@ if stock_input:
     stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
 
     # ✅ 使用 session_state 的統計天數（由分點頁面控制）
+    # ✅ 關鍵：這裡直接讀取 st.session_state.days_label，如果 widget 有變動，streamlit 重新執行時這裡就會拿到新的值
     current_days_label = st.session_state.days_label
-    selected_days = days_map.get(current_days_label, 20)
-    st.session_state.selected_days = selected_days
+    selected_days = days_map.get(current_days_label, 20) # [FIX] 將 fallback 改為 20
+    st.session_state.selected_days = selected_days # 同步更新
 
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
@@ -1052,19 +1001,27 @@ if stock_input:
     
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
+        #st.caption(f"資料來源：{target_url}")
 
+        # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
         if 'current_page' not in st.session_state:
             st.session_state.current_page = "K線"
             
-        # ✅ [NEW] 新增 "主力進出" 分頁
+        # 使用水平 radio 模擬 tabs，並隱藏標題
+        # ✅ 搭配 CSS 使其看起來像 Material UI Tabs
         selected_page = st.radio(
             "功能分頁", 
-            ["K線", "分點", "法人", "融資券", "大戶", "主力進出"], 
+            ["K線", "分點", "法人", "融資券", "大戶", "主力"], 
             horizontal=True,
             label_visibility="collapsed",
-            key="current_page"
+            key="current_page" # 綁定 session_state，確保互動後停留在同一頁
         )
+        # ✅ [FIX] 移除 st.divider()，解決那條長線的問題
+        # st.divider() 
 
+        # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
+        # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
+        # ✅ [REVERTED] 恢復 make_opts 到未嘗試縮放前的狀態 (移除 barSpacing/rightOffset/data_len)
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             opts = {
                 "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
@@ -1075,6 +1032,7 @@ if stock_input:
                     "visible": time_visible, 
                     "timeVisible": False,
                 },
+                # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
                 "crosshair": {
                     "mode": 1,
@@ -1082,12 +1040,13 @@ if stock_input:
                     "horzLine": {
                         "visible": True, 
                         "labelVisible": True,
-                        "labelBackgroundColor": '#1E88E5'
+                        "labelBackgroundColor": '#1E88E5' # ✅ [FIX] 改為更亮的藍色以提高對比度
                     }
                 },
                 "height": height,
             }
             if scale_mode == "rsi":
+                # ✅ [FIX] RSI 模式下也要保留 minimumWidth，並將 visible 設為 True (否則無法對齊)
                 opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
             if title:
                 opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
@@ -1096,11 +1055,14 @@ if stock_input:
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
+            # ✅ [NEW] 將 K 線週期選擇器移至此處 (均線選擇器的上方)
             kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
             
+            # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
             if df_price_daily is not None:
                 df_price = resample_data(df_price_daily, kline_period)
 
+            # ✅ [FIX] 改用 st.multiselect 取代多個 Checkbox
             ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
             ma_default = ["MA5", "MA10", "MA20", "MA60"]
             
@@ -1138,8 +1100,9 @@ if stock_input:
                     if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": row['DateStr'], "value": float(row['BB_Up'])})
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
 
+                # ✅ [FIX] 禁用固定標籤
                 ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
+                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}}]
                 if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
                 if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                 if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
@@ -1150,18 +1113,22 @@ if stock_input:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
                 
+                # ✅ [MODIFIED] 移除 data_len
                 charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
                 vol_data = []
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Volume']): vol_data.append({"time": row['DateStr'], "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
+                # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
                 k_data, d_data = [], []
                 if 'K' in plot_df.columns:
                     for i, row in plot_df.iterrows():
                         if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": row['DateStr'], "value": float(row['D'])})
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1173,6 +1140,7 @@ if stock_input:
                         if not pd.isna(row['DIF']): dif_data.append({"time": row['DateStr'], "value": float(row['DIF'])})
                         if not pd.isna(row['DEA']): dea_data.append({"time": row['DateStr'], "value": float(row['DEA'])})
                         if not pd.isna(row['MACD_Hist']): hist_data.append({"time": row['DateStr'], "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
@@ -1186,6 +1154,7 @@ if stock_input:
                             rsi_data.append({"time": row['DateStr'], "value": float(row['RSI'])})
                             rsi_80.append({"time": row['DateStr'], "value": 80})
                             rsi_20.append({"time": row['DateStr'], "value": 20})
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
@@ -1196,13 +1165,23 @@ if stock_input:
 
         # ==================== Tab 2: 分點 ====================
         if selected_page == "分點":
+            # ✅ [LAYOUT CHANGE] 改為左圖右表 (Left: Charts, Right: Tables)
             col_chart, col_table = st.columns([3, 1])
+            
+            # 初始化 session_state
             if "active_broker" not in st.session_state:
                 st.session_state.active_broker = None
             if "last_buy" not in st.session_state: st.session_state.last_buy = None
             if "last_sell" not in st.session_state: st.session_state.last_sell = None
 
+            # --- 右側：排行表 (優先處理以捕捉事件，但不調用 rerun) ---
             with col_table:
+                # ✅ [LAYOUT CHANGE] 將統計天數選單移至此處 (右側欄位上方)
+                # 使用 key="days_label" 直接綁定到 st.session_state.days_label
+                # 這樣修改時 Streamlit 會自動 rerun，並且保留在當前分頁
+                
+                # ✅ [FIX] 強制設定 index 為 "20日" (索引為 3)，讓預設選單正確顯示
+                # ["1日", "5日", "10日", "20日", ...] -> 20日是 index 3
                 default_index = 3 
                 try:
                     default_index = list(days_map.keys()).index(st.session_state.days_label)
@@ -1223,11 +1202,14 @@ if stock_input:
                 sel_sell = None
                 
                 with t1: 
+                    # ✅ 捕捉點擊事件
                     sel_buy = render_broker_table(df_buy, sum_buy, COLOR_UP, "🔴 買超前 15 大", key_id="buy_table")
                         
                 with t2: 
+                    # ✅ 捕捉點擊事件
                     sel_sell = render_broker_table(df_sell, sum_sell, COLOR_DOWN, "🟢 賣超前 15 大", key_id="sell_table")
                 
+                # ✅ 判斷是否有新的選取 (使用 last_buy/sell 避免衝突)
                 if sel_buy and sel_buy != st.session_state.last_buy:
                     st.session_state.active_broker = sel_buy
                     st.session_state.last_buy = sel_buy
@@ -1235,8 +1217,11 @@ if stock_input:
                     st.session_state.active_broker = sel_sell
                     st.session_state.last_sell = sel_sell
 
+            # --- 左側：圖表區 (讀取更新後的 active_broker) ---
             with col_chart:
                 c1, c2 = st.columns([1, 2])
+                
+                # ✅ 決定目標券商 (從點擊狀態或預設第一筆)
                 target_broker = st.session_state.active_broker
                 if not target_broker:
                     brokers_list = list(dict.fromkeys(df_buy['broker'].tolist() + df_sell['broker'].tolist()))
@@ -1245,7 +1230,9 @@ if stock_input:
                         st.session_state.active_broker = target_broker
                 
                 if target_broker:
+                    # 顯示標題
                     st.markdown(f"### 目前檢視：{target_broker}")
+                
                     merged_df = None
                     target_key = normalize_name(target_broker)
                     broker_params = None
@@ -1261,6 +1248,7 @@ if stock_input:
                         long_start_date = df_price['DateStr'].iloc[0] 
                         long_end_date = df_price['DateStr'].iloc[-1] 
                         broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
+                        # ✅ 加入 selected_days 到 key 中，確保天數切換時會重新爬取
                         merged_key = (stock_input, broker_key, st.session_state.refresh_nonce, selected_days)
 
                         if st.session_state.get('merged_key') != merged_key:
@@ -1288,11 +1276,19 @@ if stock_input:
                     if '買賣超_Final' in plot_df.columns: plot_df['cumulative_chip'] = plot_df['買賣超_Final'].fillna(0).cumsum()
 
                     candlestick_data = []
+                    # ✅ [NEW] 準備均線數據
                     ma5_data, ma10_data, ma20_data = [], [], []
+                    
+                    # ✅ [關鍵修改] 構建 K 線數據，加入「區間凸顯」邏輯
+                    # rank_start_date 和 rank_end_date 為當前統計區間
                     
                     for i, row in plot_df.iterrows():
                         if not pd.isna(row['Open']):
+                            
+                            # 判斷當前日期是否在選定的統計區間內
                             is_in_range = rank_start_date <= row['DateStr'] <= rank_end_date
+                            
+                            # 基礎數據結構
                             item = {
                                 "time": row['DateStr'],
                                 "open": float(row['Open']),
@@ -1300,11 +1296,16 @@ if stock_input:
                                 "low": float(row['Low']),
                                 "close": float(row['Close'])
                             }
+                            
+                            # ✅ [修正] 顏色邏輯：區間內正常亮色，區間外變淡 (使用 rgba 透明度)
+                            # 使用 rgba 可以讓顏色變淺，而非變灰
                             if row['Close'] >= row['Open']:
                                 base_color = COLOR_UP
+                                # 淡紅色: 239, 83, 80, 0.3
                                 fade_color = 'rgba(239, 83, 80, 0.3)'
                             else:
                                 base_color = COLOR_DOWN
+                                # 淡綠色: 38, 166, 154, 0.3
                                 fade_color = 'rgba(38, 166, 154, 0.3)'
 
                             if is_in_range:
@@ -1312,20 +1313,24 @@ if stock_input:
                                 item["borderColor"] = base_color
                                 item["wickColor"] = base_color
                             else:
+                                # 區間外的顏色 (變淺/半透明)
                                 item["color"] = fade_color
                                 item["borderColor"] = fade_color
                                 item["wickColor"] = fade_color
                                 
                             candlestick_data.append(item)
                             
+                            # ✅ 收集均線數據
                             if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
                             if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
                             if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
                     
+                    # ✅ [修正] 移除舊的直方圖遮罩，改回使用 Candlestick
                     main_chart_series = []
                     main_chart_series.append({
                         "type": "Candlestick",
                         "data": candlestick_data,
+                        # 選項中的顏色會被 data 中的個別顏色覆蓋，但還是留著當預設值
                         "options": {
                             "upColor": COLOR_UP, 
                             "downColor": COLOR_DOWN, 
@@ -1337,11 +1342,13 @@ if stock_input:
                         }
                     })
                     
+                    # ✅ [NEW] 加入均線到圖表
                     ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
                     main_chart_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
                     main_chart_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
                     main_chart_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
+                    # ✅ [MODIFIED] 移除 data_len
                     charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True), "series": main_chart_series})
                     
                     if '買賣超_Final' in plot_df.columns:
@@ -1351,6 +1358,7 @@ if stock_input:
                             is_in_range = rank_start_date <= row['DateStr'] <= rank_end_date
                             
                             if not pd.isna(val): 
+                                # ✅ [修正] 副圖（分點買賣超）也套用變淺邏輯
                                 if val > 0:
                                     c = COLOR_UP if is_in_range else 'rgba(239, 83, 80, 0.3)'
                                 else:
@@ -1361,6 +1369,7 @@ if stock_input:
                             cum_val = row.get('cumulative_chip')
                             if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
                         
+                        # ✅ [FIX] 禁用固定標籤
                         charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (淺色為統計區間外)", False), "series": [
                             {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1382,37 +1391,42 @@ if stock_input:
                 plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
                 plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
                 plot_df['cum_dealer'] = plot_df['自營商買賣超'].cumsum()
+                # ✅ [NEW] 計算三大法人合計買賣超 與 累積
                 plot_df['total_inst'] = plot_df['外資買賣超'] + plot_df['投信買賣超'] + plot_df['自營商買賣超']
                 plot_df['cum_total'] = plot_df['total_inst'].cumsum()
 
             charts_payload_inst = []
             candlestick_data = []
+            # ✅ [NEW] 準備均線數據
             ma5_data, ma10_data, ma20_data = [], [], []
             
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                # ✅ 收集均線數據
                 if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
                 if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
                 if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
 
+            # ✅ [NEW] 整合 K 線與均線
             ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
             main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
             main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
             main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
             main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
+            # ✅ [MODIFIED] 移除 data_len
             charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '外資買賣超' in plot_df.columns:
                 f_hist, f_line = [], []
                 t_hist, t_line = [], []
                 d_hist, d_line = [], []
-                total_line, total_hist = [], []
+                total_line, total_hist = [], [] # ✅ [NEW] 合計累積線與合計買賣柱
                 for i, row in plot_df.iterrows():
                     f_val, f_cum = row['外資買賣超'], row['cum_foreign']
                     t_val, t_cum = row['投信買賣超'], row['cum_trust']
                     d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
-                    total_val, total_cum = row['total_inst'], row['cum_total']
+                    total_val, total_cum = row['total_inst'], row['cum_total'] # ✅ [NEW]
                     
                     f_hist.append({"time": row['DateStr'], "value": float(f_val), "color": COLOR_UP if f_val>0 else COLOR_DOWN})
                     f_line.append({"time": row['DateStr'], "value": float(f_cum)})
@@ -1420,14 +1434,18 @@ if stock_input:
                     t_line.append({"time": row['DateStr'], "value": float(t_cum)})
                     d_hist.append({"time": row['DateStr'], "value": float(d_val), "color": COLOR_UP if d_val>0 else COLOR_DOWN})
                     d_line.append({"time": row['DateStr'], "value": float(d_cum)})
+                    
+                    # ✅ [NEW]
                     total_hist.append({"time": row['DateStr'], "value": float(total_val), "color": COLOR_UP if total_val>0 else COLOR_DOWN})
                     total_line.append({"time": row['DateStr'], "value": float(total_cum)})
 
+                # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
                 charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
                     {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 
+                # 下方維持不變，顯示個別法人詳情，禁用固定標籤
                 charts_payload_inst.append({"chart": make_opts(150, "外資", False), "series": [
                     {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": f_line, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1458,20 +1476,24 @@ if stock_input:
 
             charts_payload_margin = []
             candlestick_data = []
+            # ✅ [NEW] 準備均線數據
             ma5_data, ma10_data, ma20_data = [], [], []
 
             for i, row in plot_df.iterrows():
                 if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                # ✅ 收集均線數據
                 if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
                 if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
                 if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
 
+            # ✅ [NEW] 整合 K 線與均線
             ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
             main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
             main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
             main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
             main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
 
+            # ✅ [MODIFIED] 移除 data_len
             charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": main_series})
 
             if '融資餘額' in plot_df.columns:
@@ -1483,19 +1505,25 @@ if stock_input:
                     val_sd = row.get('融券增減')
                     if not pd.isna(val_mb): ml_bal.append({"time": row['DateStr'], "value": float(val_mb)})
                     if not pd.isna(val_md): 
+                        # ✅ [FIX] 增加用紅(COLOR_UP), 減少用綠(COLOR_DOWN)
                         color = COLOR_UP if val_md > 0 else (COLOR_DOWN if val_md < 0 else "gray")
                         ml_diff.append({"time": row['DateStr'], "value": float(val_md), "color": color})
                     if not pd.isna(val_sb): ms_bal.append({"time": row['DateStr'], "value": float(val_sb)})
                     if not pd.isna(val_sd): 
+                        # ✅ [FIX] 增加用紅(COLOR_UP), 減少用綠(COLOR_DOWN)
                         color = COLOR_UP if val_sd > 0 else (COLOR_DOWN if val_sd < 0 else "gray")
                         ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
 
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload_margin.append({"chart": make_opts(150, "融資", False), "series": [
                     {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
+                # ✅ [FIX] 禁用固定標籤
                 charts_payload_margin.append({"chart": make_opts(150, "融券", False), "series": [
                     {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ms_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
 
@@ -1503,23 +1531,38 @@ if stock_input:
             
             if margin_df is not None and not margin_df.empty:
                 st.markdown("#### 近 10 日融資融券詳細數據")
+                
+                # 1. 排序並取最後 10 筆 (最新的在最後) -> 反轉 (最新的在最前)
                 display_margin = margin_df.sort_values("DateStr").tail(10).iloc[::-1]
+                
+                # 2. 移除 DateStr 欄位 (只留: 日期, 融資餘額, 融資增減, 融券餘額, 融券增減)
                 display_margin = display_margin[['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']]
+                
+                # 3. 設定樣式 (增紅減綠)
                 def highlight_margin(df):
                     attr = pd.DataFrame('', index=df.index, columns=df.columns)
-                    c_up = f'color: {COLOR_UP}'   
-                    c_down = f'color: {COLOR_DOWN}'
+                    c_up = f'color: {COLOR_UP}'   # 紅
+                    c_down = f'color: {COLOR_DOWN}' # 綠
+                    
+                    # 融資增減
                     mask_m_up = df['融資增減'] > 0
                     mask_m_down = df['融資增減'] < 0
                     attr.loc[mask_m_up, ['融資增減']] = c_up
                     attr.loc[mask_m_down, ['融資增減']] = c_down
+                    
+                    # 融券增減
                     mask_s_up = df['融券增減'] > 0
                     mask_s_down = df['融券增減'] < 0
                     attr.loc[mask_s_up, ['融券增減']] = c_up
                     attr.loc[mask_s_down, ['融券增減']] = c_down
+                    
                     return attr
 
-                st.dataframe(display_margin.style.apply(highlight_margin, axis=None), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    display_margin.style.apply(highlight_margin, axis=None), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
 
         # ==================== Tab 5: 大戶 (集保分佈) ====================
         if selected_page == "大戶":
@@ -1527,16 +1570,21 @@ if stock_input:
             if "retail_lot" not in st.session_state: st.session_state.retail_lot = 50
             if "large_lot" not in st.session_state: st.session_state.large_lot = 400
 
+            # ✅ [FIX] 動態過濾選項 (UI 防呆)
+            # 大戶選項：必須 > 散戶
             valid_large_opts = [x for x in LOT_CHOICES if x > st.session_state.retail_lot]
-            if not valid_large_opts: valid_large_opts = [1000] 
+            if not valid_large_opts: valid_large_opts = [1000] # Fallback
             
+            # 散戶選項：必須 < 大戶
             valid_retail_opts = [x for x in LOT_CHOICES if x < st.session_state.large_lot]
-            if not valid_retail_opts: valid_retail_opts = [10] 
+            if not valid_retail_opts: valid_retail_opts = [10] # Fallback
 
             c1, c2 = st.columns(2)
             with c1:
+                # 若當前值不在有效列表內，重置為列表第一個
                 current_large = st.session_state.large_lot
                 if current_large not in valid_large_opts: current_large = valid_large_opts[0]
+                
                 st.session_state.large_lot = st.selectbox(
                     "大戶持股標準 (>= 張)", 
                     options=valid_large_opts, 
@@ -1547,6 +1595,7 @@ if stock_input:
             with c2:
                 current_retail = st.session_state.retail_lot
                 if current_retail not in valid_retail_opts: current_retail = valid_retail_opts[0]
+                
                 st.session_state.retail_lot = st.selectbox(
                     "散戶持股標準 (< 張)", 
                     options=valid_retail_opts, 
@@ -1554,56 +1603,75 @@ if stock_input:
                     key="sb_retail"
                 )
 
+            # ✅ [FIX] 呼叫正確的函式名稱
             raw_holder_df = get_shareholding_data(stock_input)
             
             if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
                 st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
             else:
+                # 使用 分級比例表 進行計算
                 df_ratio = raw_holder_df.get("ratio")
                 holder_df = process_shareholding_df(df_ratio, st.session_state.large_lot, st.session_state.retail_lot)
                 
                 if holder_df is not None and not holder_df.empty:
                     display_df = holder_df.copy()
+                    # 計算增減 (與前一週比較)
                     display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
                     display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
                     
+                    # 倒序顯示 (最新的在上面)
                     display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
                     
+                    # ✅ [FIX] 修正樣式邏輯：根據增減欄位來決定持股欄位的顏色
                     def highlight_changes(df):
                         attr = pd.DataFrame('', index=df.index, columns=df.columns)
-                        c_up = f'color: {COLOR_UP}'
-                        c_down = f'color: {COLOR_DOWN}'
+                        c_up = f'color: {COLOR_UP}'   # 紅
+                        c_down = f'color: {COLOR_DOWN}' # 綠
+                        
+                        # 大戶邏輯
                         mask_up = df['大戶增減'] > 0
                         mask_down = df['大戶增減'] < 0
                         attr.loc[mask_up, ['大戶持股(%)', '大戶增減']] = c_up
                         attr.loc[mask_down, ['大戶持股(%)', '大戶增減']] = c_down
+                        
+                        # 散戶邏輯
                         mask_up_r = df['散戶增減'] > 0
                         mask_down_r = df['散戶增減'] < 0
                         attr.loc[mask_up_r, ['散戶持股(%)', '散戶增減']] = c_up
                         attr.loc[mask_down_r, ['散戶持股(%)', '散戶增減']] = c_down
+                        
                         return attr
 
                     st.markdown("#### 集保戶股權分散表")
+                    # ✅ [FIX] hide_index=True 隱藏左側索引
                     st.dataframe(
                         display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']]
-                        .style.apply(highlight_changes, axis=None)
+                        .style.apply(highlight_changes, axis=None) # 全表套用樣式函式
                         .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
                         use_container_width=True, 
                         height=400,
                         hide_index=True
                     )
                     
+                    # =========================================================
+                    # ✅ [主要修改] 股價只顯示集保日期存在的資料點
+                    # =========================================================
+                    
+                    # 準備合併
                     df_price_daily['_dt'] = pd.to_datetime(df_price_daily['DateStr'])
                     holder_df['_dt'] = pd.to_datetime(holder_df['DateStr'])
                     
+                    # 排序
                     holder_df = holder_df.sort_values('_dt')
                     df_price_daily = df_price_daily.sort_values('_dt')
                     
+                    # ✅ [FIX] 改為以「holder_df (集保數據)」為主表，去抓對應的股價
+                    # 這樣圖表就只會顯示集保分佈表有的日期
                     chart_df = pd.merge_asof(
                         holder_df,
-                        df_price_daily[['_dt', 'Close']], 
+                        df_price_daily[['_dt', 'Close']], # 只取需要的股價欄位
                         on='_dt',
-                        direction='backward' 
+                        direction='backward' # 若當天無股價，找前一天的
                     )
                     
                     l_data, r_data, p_data = [], [], []
@@ -1614,11 +1682,14 @@ if stock_input:
                         
                     holder_payload = []
                     holder_series = [
+                        # ✅ [FIX] 禁用固定標籤
                         {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{st.session_state.large_lot})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
                         {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{st.session_state.retail_lot})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
                         {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} 
                     ]
                     
+                    # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
+                    # ✅ [MODIFIED] 移除 data_len
                     holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
                     holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
@@ -1626,94 +1697,216 @@ if stock_input:
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
                     renderLightweightCharts(holder_payload, key="tab5_holder")
 
-        # ==================== Tab 6: 主力進出 (Wantgoo) ====================
-        if selected_page == "主力進出":
-            # 這裡呼叫整合好的爬蟲函式
-            with st.spinner("正在讀取主力進出資料 (可能需要幾秒鐘繞過驗證)..."):
-                wg_df = get_wantgoo_trend_data(stock_input)
-            
-            if wg_df is not None and not wg_df.empty:
-                # 合併股價資料
-                plot_df = df_price.copy()
-                plot_df.index.name = None 
-                
-                plot_df = pd.merge(plot_df, wg_df, on='DateStr', how='left')
-                
-                # 繪圖數據準備
-                charts_payload_wg = []
-                candlestick_data = []
-                diff_hist = []
-                con5_line, con20_line = [], []
-                ma5_data = []
+        # ==================== Tab 6: 主力 (WantGoo 主力進出動向) ====================
+        if selected_page == "主力":
+            st.subheader("📌 主力進出動向 (WantGoo)")
 
-                for i, row in plot_df.iterrows():
-                    if not pd.isna(row['Open']): 
-                        candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-                    
-                    if not pd.isna(row['MA5']): 
-                        ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
+            with st.spinner("正在爬取 WantGoo 主力進出動向 ..."):
+                major_df, major_url = get_wantgoo_main_trend(stock_input, st.session_state.refresh_nonce)
 
-                    # 家數差數據
-                    val_diff = row.get('家數差')
-                    if not pd.isna(val_diff):
-                        # 依照慣例：正數(紅) / 負數(綠)
-                        color = COLOR_UP if val_diff > 0 else COLOR_DOWN
-                        diff_hist.append({"time": row['DateStr'], "value": float(val_diff), "color": color})
+            if major_df is None or major_df.empty:
+                st.warning("⚠️ 無法取得 WantGoo 主力進出動向資料（可能是網站暫時阻擋或頁面結構異動）。")
+            else:
+                # 只用 WantGoo 有的日期來畫（視覺上更像 WantGoo）
+                chart_df = major_df.copy()
 
-                    val_c5 = row.get('5日集中')
-                    val_c20 = row.get('20日集中')
-                    if not pd.isna(val_c5): con5_line.append({"time": row['DateStr'], "value": float(val_c5)})
-                    if not pd.isna(val_c20): con20_line.append({"time": row['DateStr'], "value": float(val_c20)})
+                # 合併日K的 OHLC（用 yfinance 資料）
+                if df_price_daily is not None and not df_price_daily.empty:
+                    price_cols = ["DateStr", "Open", "High", "Low", "Close"]
+                    base_price = df_price_daily[price_cols].copy()
+                    chart_df = pd.merge(chart_df, base_price, on="DateStr", how="left")
 
-                # 1. 主圖：K線 + MA5
-                ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
-                main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
-                
-                charts_payload_wg.append({"chart": make_opts(400, "股價", True), "series": main_series})
+                # 如果拿不到 OHLC，就改用收盤價畫線（保底）
+                has_ohlc = all(c in chart_df.columns for c in ["Open", "High", "Low", "Close"]) and chart_df[["Open","High","Low","Close"]].notna().any().all()
 
-                # 2. 副圖：家數差
-                charts_payload_wg.append({"chart": make_opts(150, "買賣家數差", False), "series": [
-                    {"type": "Histogram", "data": diff_hist, "options": {"title": "家數差", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                ]})
+                major_payload = []
 
-                # 3. 副圖：集中度
-                charts_payload_wg.append({"chart": make_opts(150, "籌碼集中度(%)", False), "series": [
-                    {"type": "Line", "data": con5_line, "options": {"title": "5日集中", "color": "#FFD700", "lineWidth": 1, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": con20_line, "options": {"title": "20日集中", "color": "#00FFFF", "lineWidth": 1, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                ]})
+                if has_ohlc:
+                    chart_df2 = chart_df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+                    chart_df2 = chart_df2.sort_values("DateStr").reset_index(drop=True)
 
-                renderLightweightCharts(charts_payload_wg, key="tab6_wg")
+                    # 1) K線
+                    candlestick_data = []
+                    for _, row in chart_df2.iterrows():
+                        candlestick_data.append({
+                            "time": row["DateStr"],
+                            "open": float(row["Open"]),
+                            "high": float(row["High"]),
+                            "low": float(row["Low"]),
+                            "close": float(row["Close"])
+                        })
 
-                st.markdown("#### 主力進出與籌碼集中度明細")
-                # 顯示表格 (倒序)
-                display_wg = wg_df.sort_values("DateStr", ascending=False).reset_index(drop=True)
-                
-                # 樣式設定
-                def highlight_wg(df):
-                    attr = pd.DataFrame('', index=df.index, columns=df.columns)
-                    c_up = f'color: {COLOR_UP}'
-                    c_down = f'color: {COLOR_DOWN}'
-                    
-                    mask_up = df['家數差'] > 0
-                    mask_down = df['家數差'] < 0
-                    attr.loc[mask_up, ['家數差']] = c_up
-                    attr.loc[mask_down, ['家數差']] = c_down
-                    
-                    mask_up_5 = df['5日集中'] > 0
-                    mask_down_5 = df['5日集中'] < 0
-                    attr.loc[mask_up_5, ['5日集中']] = c_up
-                    attr.loc[mask_down_5, ['5日集中']] = c_down
-                    
+                    major_payload.append({
+                        "chart": make_opts(400, "主力進出動向", True),
+                        "series": [{
+                            "type": "Candlestick",
+                            "data": candlestick_data,
+                            "options": {
+                                "upColor": COLOR_UP,
+                                "downColor": COLOR_DOWN,
+                                "borderUpColor": COLOR_UP,
+                                "borderDownColor": COLOR_DOWN,
+                                "wickUpColor": COLOR_UP,
+                                "wickDownColor": COLOR_DOWN,
+                                "lastValueVisible": False,
+                                "priceLineVisible": False
+                            }
+                        }]
+                    })
+
+                    plot_df2 = chart_df2
+                else:
+                    # 保底：用 WantGoo 的收盤價畫線
+                    chart_df2 = chart_df.sort_values("DateStr").reset_index(drop=True)
+                    close_line = [{"time": r["DateStr"], "value": float(r["收盤價"])} for _, r in chart_df2.iterrows()]
+
+                    major_payload.append({
+                        "chart": make_opts(400, "主力進出動向", True),
+                        "series": [{
+                            "type": "Line",
+                            "data": close_line,
+                            "options": {
+                                "title": "收盤價",
+                                "color": "white",
+                                "lineWidth": 2,
+                                "priceScaleId": "right",
+                                "priceLineVisible": False,
+                                "crosshairMarkerVisible": True,
+                                "lastValueVisible": False
+                            }
+                        }]
+                    })
+                    plot_df2 = chart_df2
+
+                # 2) 主力買賣超
+                net_data = []
+                for _, row in plot_df2.iterrows():
+                    v = float(row["買賣超"])
+                    net_data.append({
+                        "time": row["DateStr"],
+                        "value": v,
+                        "color": COLOR_UP if v >= 0 else COLOR_DOWN
+                    })
+
+                major_payload.append({
+                    "chart": make_opts(200, "主力買賣超", False),
+                    "series": [{
+                        "type": "Histogram",
+                        "data": net_data,
+                        "options": {
+                            "title": "買賣超",
+                            "priceScaleId": "right",
+                            "priceLineVisible": False,
+                            "crosshairMarkerVisible": True,
+                            "lastValueVisible": False
+                        }
+                    }]
+                })
+
+                # 3) 買賣家數差
+                house_data = []
+                for _, row in plot_df2.iterrows():
+                    v = float(row["家數差"])
+                    house_data.append({
+                        "time": row["DateStr"],
+                        "value": v,
+                        "color": COLOR_UP if v >= 0 else COLOR_DOWN
+                    })
+
+                major_payload.append({
+                    "chart": make_opts(200, "買賣家數差", False),
+                    "series": [{
+                        "type": "Histogram",
+                        "data": house_data,
+                        "options": {
+                            "title": "家數差",
+                            "priceScaleId": "right",
+                            "priceLineVisible": False,
+                            "crosshairMarkerVisible": True,
+                            "lastValueVisible": False
+                        }
+                    }]
+                })
+
+                # 4) 5日/20日集中度
+                c5_data, c20_data = [], []
+                for _, row in plot_df2.iterrows():
+                    c5_data.append({"time": row["DateStr"], "value": float(row["5日集中度"])})
+                    c20_data.append({"time": row["DateStr"], "value": float(row["20日集中度"])})
+
+                conc_opts = make_opts(180, "集中度(%)", False)
+                conc_opts["rightPriceScale"] = {"visible": True, "autoScale": True, "mode": 0, "minimumWidth": 75}
+
+                major_payload.append({
+                    "chart": conc_opts,
+                    "series": [
+                        {
+                            "type": "Line",
+                            "data": c5_data,
+                            "options": {
+                                "title": "5日集中度",
+                                "color": "orange",
+                                "lineWidth": 2,
+                                "priceScaleId": "right",
+                                "priceLineVisible": False,
+                                "crosshairMarkerVisible": True,
+                                "lastValueVisible": False
+                            }
+                        },
+                        {
+                            "type": "Line",
+                            "data": c20_data,
+                            "options": {
+                                "title": "20日集中度",
+                                "color": "cyan",
+                                "lineWidth": 2,
+                                "priceScaleId": "right",
+                                "priceLineVisible": False,
+                                "crosshairMarkerVisible": True,
+                                "lastValueVisible": False
+                            }
+                        },
+                    ]
+                })
+
+                renderLightweightCharts(major_payload, key="tab6_major_trend")
+
+                st.markdown("#### 主力進出動向明細 (最新在上)")
+                show_df = major_df.copy().sort_values("DateStr", ascending=False).reset_index(drop=True)
+
+                def style_major_table(df):
+                    attr = pd.DataFrame("", index=df.index, columns=df.columns)
+                    c_up = f"color: {COLOR_UP}; font-weight: bold"
+                    c_down = f"color: {COLOR_DOWN}; font-weight: bold"
+
+                    if "買賣超" in df.columns:
+                        attr.loc[df["買賣超"] > 0, ["買賣超"]] = c_up
+                        attr.loc[df["買賣超"] < 0, ["買賣超"]] = c_down
+                    if "家數差" in df.columns:
+                        attr.loc[df["家數差"] > 0, ["家數差"]] = c_up
+                        attr.loc[df["家數差"] < 0, ["家數差"]] = c_down
+                    if "5日集中度" in df.columns:
+                        attr.loc[df["5日集中度"] > 0, ["5日集中度"]] = c_up
+                        attr.loc[df["5日集中度"] < 0, ["5日集中度"]] = c_down
+                    if "20日集中度" in df.columns:
+                        attr.loc[df["20日集中度"] > 0, ["20日集中度"]] = c_up
+                        attr.loc[df["20日集中度"] < 0, ["20日集中度"]] = c_down
                     return attr
 
                 st.dataframe(
-                    display_wg.style.apply(highlight_wg, axis=None).format("{:.2f}", subset=['5日集中', '20日集中']),
+                    show_df[["日期", "收盤價", "買賣超", "家數差", "5日集中度", "20日集中度"]]
+                    .style.apply(style_major_table, axis=None)
+                    .format({
+                        "收盤價": "{:.2f}",
+                        "買賣超": "{:.0f}",
+                        "家數差": "{:.0f}",
+                        "5日集中度": "{:.2f}%",
+                        "20日集中度": "{:.2f}%"
+                    }),
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    height=520
                 )
-            else:
-                st.warning("⚠️ 無法取得資料，請稍後再試或確認該股票是否有資料。")
 
     else:
         st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
