@@ -470,7 +470,7 @@ def get_institutional_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取融資融券資料
+# ✅ 爬取融資融券資料 (完全複製您的版本)
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
@@ -1055,17 +1055,37 @@ if stock_input:
                 plot_df = plot_df.sort_values("DateStr").reset_index(drop=True)
 
                 candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
+                
+                # ✅ [FIX] 判斷是否為分時資料 (Intraday)
+                is_intraday = kline_period in ["5分", "15分", "30分", "60分"]
+                
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
-                        candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
-                    if show_ma5 and not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
-                    if show_ma10 and not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
-                    if show_ma20 and not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
-                    if show_ma60 and not pd.isna(row['MA60']): ma60_data.append({"time": row['DateStr'], "value": float(row['MA60'])})
-                    if show_ma120 and not pd.isna(row['MA120']): ma120_data.append({"time": row['DateStr'], "value": float(row['MA120'])})
-                    if show_ma240 and not pd.isna(row['MA240']): ma240_data.append({"time": row['DateStr'], "value": float(row['MA240'])})
-                    if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": row['DateStr'], "value": float(row['BB_Up'])})
-                    if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": row['DateStr'], "value": float(row['BB_Low'])})
+                        # ✅ [FIX] 如果是分時資料，時間必須轉為 Unix Timestamp (秒) 才能正確顯示
+                        if is_intraday:
+                            try:
+                                # 解析字串並轉為時間戳記
+                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
+                                time_val = int(dt_obj.timestamp())
+                            except:
+                                time_val = row['DateStr']
+                        else:
+                            # 日K/週K/月K 使用字串即可
+                            time_val = row['DateStr']
+                            
+                        candlestick_data.append({"time": time_val, "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                    
+                    # 處理均線與指標
+                    t_val = time_val # 使用相同的時間格式
+                    
+                    if show_ma5 and not pd.isna(row['MA5']): ma5_data.append({"time": t_val, "value": float(row['MA5'])})
+                    if show_ma10 and not pd.isna(row['MA10']): ma10_data.append({"time": t_val, "value": float(row['MA10'])})
+                    if show_ma20 and not pd.isna(row['MA20']): ma20_data.append({"time": t_val, "value": float(row['MA20'])})
+                    if show_ma60 and not pd.isna(row['MA60']): ma60_data.append({"time": t_val, "value": float(row['MA60'])})
+                    if show_ma120 and not pd.isna(row['MA120']): ma120_data.append({"time": t_val, "value": float(row['MA120'])})
+                    if show_ma240 and not pd.isna(row['MA240']): ma240_data.append({"time": t_val, "value": float(row['MA240'])})
+                    if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": t_val, "value": float(row['BB_Up'])})
+                    if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": t_val, "value": float(row['BB_Low'])})
 
                 # ✅ [FIX] 禁用固定標籤
                 ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
@@ -1085,7 +1105,17 @@ if stock_input:
 
                 vol_data = []
                 for i, row in plot_df.iterrows():
-                    if not pd.isna(row['Volume']): vol_data.append({"time": row['DateStr'], "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
+                    # ✅ [FIX] 同樣處理成交量的時間格式
+                    if is_intraday:
+                        try:
+                            dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
+                            time_val = int(dt_obj.timestamp())
+                        except:
+                            time_val = row['DateStr']
+                    else:
+                        time_val = row['DateStr']
+                        
+                    if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
                 charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
@@ -1093,8 +1123,18 @@ if stock_input:
                 k_data, d_data = [], []
                 if 'K' in plot_df.columns:
                     for i, row in plot_df.iterrows():
-                        if not pd.isna(row['K']): k_data.append({"time": row['DateStr'], "value": float(row['K'])})
-                        if not pd.isna(row['D']): d_data.append({"time": row['DateStr'], "value": float(row['D'])})
+                        # ✅ [FIX] 處理 KD 指標時間
+                        if is_intraday:
+                            try:
+                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
+                                time_val = int(dt_obj.timestamp())
+                            except:
+                                time_val = row['DateStr']
+                        else:
+                            time_val = row['DateStr']
+                            
+                        if not pd.isna(row['K']): k_data.append({"time": time_val, "value": float(row['K'])})
+                        if not pd.isna(row['D']): d_data.append({"time": time_val, "value": float(row['D'])})
                     # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
@@ -1104,9 +1144,19 @@ if stock_input:
                 dif_data, dea_data, hist_data = [], [], []
                 if 'DIF' in plot_df.columns:
                     for i, row in plot_df.iterrows():
-                        if not pd.isna(row['DIF']): dif_data.append({"time": row['DateStr'], "value": float(row['DIF'])})
-                        if not pd.isna(row['DEA']): dea_data.append({"time": row['DateStr'], "value": float(row['DEA'])})
-                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": row['DateStr'], "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
+                        # ✅ [FIX] 處理 MACD 指標時間
+                        if is_intraday:
+                            try:
+                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
+                                time_val = int(dt_obj.timestamp())
+                            except:
+                                time_val = row['DateStr']
+                        else:
+                            time_val = row['DateStr']
+                            
+                        if not pd.isna(row['DIF']): dif_data.append({"time": time_val, "value": float(row['DIF'])})
+                        if not pd.isna(row['DEA']): dea_data.append({"time": time_val, "value": float(row['DEA'])})
+                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": time_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
                     # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
@@ -1117,10 +1167,20 @@ if stock_input:
                 rsi_data, rsi_80, rsi_20 = [], [], []
                 if 'RSI' in plot_df.columns:
                     for i, row in plot_df.iterrows():
+                        # ✅ [FIX] 處理 RSI 指標時間
+                        if is_intraday:
+                            try:
+                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
+                                time_val = int(dt_obj.timestamp())
+                            except:
+                                time_val = row['DateStr']
+                        else:
+                            time_val = row['DateStr']
+                            
                         if not pd.isna(row['RSI']): 
-                            rsi_data.append({"time": row['DateStr'], "value": float(row['RSI'])})
-                            rsi_80.append({"time": row['DateStr'], "value": 80})
-                            rsi_20.append({"time": row['DateStr'], "value": 20})
+                            rsi_data.append({"time": time_val, "value": float(row['RSI'])})
+                            rsi_80.append({"time": time_val, "value": 80})
+                            rsi_20.append({"time": time_val, "value": 20})
                     # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
