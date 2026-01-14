@@ -788,6 +788,7 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
     if not out: return None
     return pd.DataFrame(out).sort_values("DateStr")
 
+# ✅ [MODIFIED] 將 Stock Price 恢復為 10 年
 @st.cache_data(ttl=21600)
 def get_stock_price(stock_id, refresh_nonce=0):
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
@@ -795,7 +796,7 @@ def get_stock_price(stock_id, refresh_nonce=0):
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            temp_df = stock.history(period="2y")
+            temp_df = stock.history(period="10y") # 修正回 10年
             if not temp_df.empty:
                 df = temp_df
                 break
