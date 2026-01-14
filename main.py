@@ -470,17 +470,14 @@ def get_institutional_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取融資融券資料 (已修正)
+# ✅ 爬取融資融券資料
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
     try:
         driver.get(url)
-        # ✅ [FIX] 修正融資券抓取錯誤：改用相對路徑搜尋，避免網站改版導致 XPath 失效
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '融資餘額')]"))
-        )
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
         html = driver.page_source
         tables = pd.read_html(StringIO(html))
         
@@ -503,8 +500,7 @@ def get_margin_data(stock_id, start_date, end_date):
                 
                 clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
                 return clean_df.dropna(subset=['DateStr'])
-    except Exception as e:
-        # st.error(f"Margin error: {e}") # Debug 用
+    except:
         pass
     finally:
         driver.quit()
