@@ -470,14 +470,17 @@ def get_institutional_data(stock_id, start_date, end_date):
         driver.quit()
     return None
 
-# ✅ 爬取融資融券資料
+# ✅ 爬取融資融券資料 (已修正)
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
     driver = get_driver()
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
     try:
         driver.get(url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[8]/td[1]")))
+        # ✅ [FIX] 修正融資券抓取錯誤：改用相對路徑搜尋，避免網站改版導致 XPath 失效
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '融資餘額')]"))
+        )
         html = driver.page_source
         tables = pd.read_html(StringIO(html))
         
@@ -500,7 +503,8 @@ def get_margin_data(stock_id, start_date, end_date):
                 
                 clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
                 return clean_df.dropna(subset=['DateStr'])
-    except:
+    except Exception as e:
+        # st.error(f"Margin error: {e}") # Debug 用
         pass
     finally:
         driver.quit()
@@ -809,6 +813,45 @@ def get_stock_price(stock_id, refresh_nonce=0):
         return df
     except: return None
 
+# ✅ [NEW] 獲取分時 K 線資料 (5m, 15m, 30m, 60m)
+@st.cache_data(ttl=300) # 快取時間短一點，因為是盤中資料
+def get_intraday_data(stock_id, interval):
+    tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
+    df = None
+    
+    # Mapping selector to yfinance interval
+    interval_map = {
+        "5分": "5m",
+        "15分": "15m",
+        "30分": "30m",
+        "60分": "60m"
+    }
+    yf_interval = interval_map.get(interval)
+    if not yf_interval: return None
+
+    for ticker in tickers_to_try:
+        try:
+            stock = yf.Ticker(ticker)
+            # intraday data only available for last 60 days
+            temp_df = stock.history(period="60d", interval=yf_interval)
+            if not temp_df.empty:
+                df = temp_df
+                break
+        except: continue
+        
+    if df is None or df.empty: return None
+
+    try:
+        # 分時資料需要保留時間資訊
+        # yfinance index usually is tz-aware
+        if df.index.tz is not None:
+             df.index = df.index.tz_convert('Asia/Taipei').tz_localize(None)
+        
+        df['DateStr'] = df.index.strftime('%Y-%m-%d %H:%M')
+        df = calculate_technical_indicators(df)
+        return df
+    except: return None
+
 # ✅ 獲取所有股票選單
 @st.cache_data
 def get_all_stock_options():
@@ -949,7 +992,8 @@ if stock_input:
                 "timeScale": {
                     "borderColor": "rgba(197, 203, 206, 0.8)", 
                     "visible": time_visible, 
-                    "timeVisible": False,
+                    "timeVisible": True, # 分時資料需要顯示時間
+                    "secondsVisible": False
                 },
                 # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
@@ -974,12 +1018,21 @@ if stock_input:
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
-            # ✅ [NEW] 將 K 線週期選擇器移至此處 (均線選擇器的上方)
-            kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K"])
+            # ✅ [NEW] 將 K 線週期選擇器移至此處，並加入分時選項
+            kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
             
-            # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料
-            if df_price_daily is not None:
-                df_price = resample_data(df_price_daily, kline_period)
+            # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料或抓取分時資料
+            plot_df = None
+            if kline_period in ["日K", "週K", "月K"]:
+                if df_price_daily is not None:
+                    plot_df = resample_data(df_price_daily, kline_period)
+            else:
+                # 抓取分時資料
+                with st.spinner(f"正在載入 {kline_period} 資料..."):
+                    plot_df = get_intraday_data(stock_input, kline_period)
+                    if plot_df is None:
+                        st.warning("⚠️ 無法取得分時資料（可能是週末或資料源暫時無法存取）")
+                        plot_df = df_price_daily.copy() # Fallback
 
             # ✅ [FIX] 改用 st.multiselect 取代多個 Checkbox
             ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
@@ -999,12 +1052,11 @@ if stock_input:
             show_ma240 = "MA240" in selected_mas
             show_bb = "BB" in selected_mas
             
-            if df_price is not None and not df_price.empty:
+            if plot_df is not None and not plot_df.empty:
                 charts_payload = []
-                plot_df = df_price.copy()
                 plot_df.index.name = None
-                plot_df["Date"] = pd.to_datetime(plot_df["DateStr"], errors="coerce")
-                plot_df = plot_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+                # 分時資料的 DateStr 已經包含時間，且是排序好的字串
+                plot_df = plot_df.sort_values("DateStr").reset_index(drop=True)
 
                 candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
                 for i, row in plot_df.iterrows():
@@ -1383,7 +1435,13 @@ if stock_input:
         if selected_page == "融資券":
             long_start_date = df_price['DateStr'].iloc[0] 
             long_end_date = df_price['DateStr'].iloc[-1] 
-            margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
+            
+            with st.spinner("正在爬取融資券資料..."):
+                margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
+            
+            if margin_df is None or margin_df.empty:
+                st.warning("⚠️ 查無融資融券資料，可能來源網站無資料或暫時無法連線。")
+            
             plot_df = df_price.copy()
             plot_df.index.name = None 
             if margin_df is not None:
