@@ -795,7 +795,7 @@ def get_stock_price(stock_id, refresh_nonce=0):
     for ticker in tickers_to_try:
         try:
             stock = yf.Ticker(ticker)
-            temp_df = stock.history(period="10y")
+            temp_df = stock.history(period="2y")
             if not temp_df.empty:
                 df = temp_df
                 break
@@ -1489,8 +1489,11 @@ if stock_input:
 
         # ==================== Tab 4: 融資券 ====================
         if selected_page == "融資券":
-            long_start_date = df_price['DateStr'].iloc[0] 
-            long_end_date = df_price['DateStr'].iloc[-1] 
+            # ✅ [FIX] 限制融資券爬取範圍為最近 2 年
+            end_dt = datetime.now()
+            start_dt = end_dt - timedelta(days=730) # 2 years
+            long_start_date = start_dt.strftime('%Y-%m-%d')
+            long_end_date = end_dt.strftime('%Y-%m-%d')
             
             with st.spinner("正在爬取融資券資料..."):
                 margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
