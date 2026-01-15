@@ -849,6 +849,72 @@ def get_intraday_data(stock_id, interval):
         return df
     except: return None
 
+# ✅ [NEW] 抓取神秘金字塔排行 (Norawy StockHoldersTopWeek)
+@st.cache_data(ttl=21600)
+def get_norway_rank_data():
+    driver = get_driver()
+    url = "https://norway.twsthr.info/StockHoldersTopWeek.aspx"
+    
+    try:
+        driver.get(url)
+        # 等待表格載入
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//table[contains(., '大股東持有張數增減')]"))
+        )
+        
+        # 使用 pandas 讀取 HTML 表格
+        html = driver.page_source
+        dfs = pd.read_html(StringIO(html))
+        
+        # 尋找包含目標資料的表格
+        target_df = None
+        for df in dfs:
+            # 檢查是否有特定欄位名稱
+            if "股票代號/名稱" in str(df.columns) or "類別" in str(df.columns):
+                target_df = df
+                break
+        
+        if target_df is None and len(dfs) > 0:
+             # Fallback: 嘗試取最大的表格
+             target_df = max(dfs, key=len)
+
+        if target_df is not None:
+            # 清理資料：取前 100 名
+            # 假設第一欄是 # 或排名
+            if len(target_df) > 100:
+                target_df = target_df.head(100)
+                
+            # 整理欄位 (簡單處理，轉成字串顯示)
+            target_df = target_df.astype(str)
+            
+            # ✅ [FIX] 嘗試分離代號與名稱 (例如 "3006晶豪科" -> "3006 晶豪科")
+            # 假設第二欄 (index 1 or 2) 是 股票代號/名稱
+            # 根據網頁結構，通常是第 3 欄 (index 2)
+            
+            # 自動偵測包含代號的欄位
+            code_col = None
+            for col in target_df.columns:
+                if target_df[col].astype(str).str.contains(r'\d{4}', regex=True).any():
+                    code_col = col
+                    break
+            
+            if code_col:
+                # 建立一個乾淨的 display_name 欄位供顯示與點擊用
+                def clean_stock_str(s):
+                    # 移除前面的排名數字 (如果有)
+                    s = re.sub(r'^\d+\s*', '', str(s))
+                    return s
+                
+                target_df['Display_Stock'] = target_df[code_col].apply(clean_stock_str)
+            
+            return target_df
+
+    except Exception:
+        return None
+    finally:
+        driver.quit()
+    return None
+
 # ✅ 獲取所有股票選單
 @st.cache_data
 def get_all_stock_options():
@@ -938,7 +1004,82 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
 
     st.caption(f"🕒 資料抓取時間: {current_time}")
 
-if stock_input:
+# ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "K線"
+
+# ✅ [NEW] 新增 "類股排行" 選項
+selected_page = st.radio(
+    "功能分頁", 
+    ["K線", "分點", "法人", "融資券", "大戶", "類股排行"], 
+    horizontal=True,
+    label_visibility="collapsed",
+    key="current_page"
+)
+
+# ==================== Tab 6: 類股排行 (新增功能) ====================
+if selected_page == "類股排行":
+    st.subheader("🏆 大股東持股排行榜 (Top 100)")
+    
+    with st.spinner("正在爬取神秘金字塔排行資料..."):
+        rank_df = get_norway_rank_data()
+    
+    if rank_df is not None and not rank_df.empty:
+        # 顯示 Dataframe 並啟用選取功能
+        # event = st.dataframe(
+        #     rank_df,
+        #     use_container_width=True,
+        #     hide_index=True,
+        #     on_select="rerun",
+        #     selection_mode="single-row"
+        # )
+        
+        # ✅ [FIX] 使用新的 st.dataframe 參數來捕捉點擊
+        # 這裡需要過濾顯示的欄位，避免太多雜訊
+        # 假設 'Display_Stock' 是我們生成的欄位
+        
+        # 將 DataFrame 顯示出來
+        event = st.dataframe(
+            rank_df, 
+            use_container_width=True, 
+            hide_index=True,
+            on_select="rerun", 
+            selection_mode="single-row"
+        )
+        
+        # 處理點擊事件
+        if len(event.selection.rows) > 0:
+            selected_row_idx = event.selection.rows[0]
+            # 取得該列的股票代號資訊
+            # 假設我們可以用 'Display_Stock' 或直接找包含代號的欄位
+            # 這裡簡單起見，嘗試從第二欄 (通常是代號名稱) 抓取
+            try:
+                # 取得選中列的第二個欄位值 (通常是 2330台積電)
+                raw_stock_str = rank_df.iloc[selected_row_idx, 2] # Index 2 Usually Stock Name
+                
+                # 提取代號 (4碼數字)
+                match = re.search(r'(\d{4})', str(raw_stock_str))
+                if match:
+                    code = match.group(1)
+                    # 在 all_stocks 中尋找完整名稱以符合 selectbox 格式
+                    found = False
+                    for s in all_stocks:
+                        if s.startswith(code):
+                            st.session_state.stock_selector = s
+                            st.session_state.current_page = "K線" # 跳轉回 K線
+                            st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                            found = True
+                            break
+                    
+                    if found:
+                        st.rerun()
+            except:
+                pass
+    else:
+        st.warning("⚠️ 無法取得排行資料，請稍後再試。")
+
+elif stock_input:
+    # ... (其餘原有的股票顯示邏輯，只有當不是 "類股排行" 時才執行) ...
     stock_name = get_stock_name(stock_input)
     stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
 
@@ -950,6 +1091,10 @@ if stock_input:
 
     rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
     
+    # 只有在需要個別股票資料的分頁才執行這些爬蟲，節省資源
+    df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = None, None, None, None, None, None
+    
+    # ✅ 預先抓取基本資料 (除了類股排行外都共用)
     with st.spinner(f"正在分析 {stock_display} ..."):
         df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
         
@@ -962,21 +1107,8 @@ if stock_input:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         #st.caption(f"資料來源：{target_url}")
 
-        # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁，這樣才能將狀態綁定在 session_state 中
-        if 'current_page' not in st.session_state:
-            st.session_state.current_page = "K線"
-            
-        # 使用水平 radio 模擬 tabs，並隱藏標題
-        # ✅ 搭配 CSS 使其看起來像 Material UI Tabs
-        selected_page = st.radio(
-            "功能分頁", 
-            ["K線", "分點", "法人", "融資券", "大戶"], 
-            horizontal=True,
-            label_visibility="collapsed",
-            key="current_page" # 綁定 session_state，確保互動後停留在同一頁
-        )
-        # ✅ [FIX] 移除 st.divider()，解決那條長線的問題
-        # st.divider() 
+        # ... (選單已移至上方，這裡不需要再次呼叫 st.radio) ...
+        # 這裡直接使用 selected_page 變數判斷
 
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
