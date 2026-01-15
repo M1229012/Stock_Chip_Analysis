@@ -1173,7 +1173,7 @@ elif selected_page == "多股比較":
             chart_height = 500
         else:
             cols_per_row = 2
-            chart_height = 400
+            chart_height = 200
         
         # Calculate needed rows
         rows = math.ceil(num_stocks / cols_per_row)
