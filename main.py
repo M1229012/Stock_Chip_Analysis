@@ -1174,6 +1174,7 @@ elif selected_page == "多股比較":
             chart_height = 500
         else:
             cols_per_row = 2
+            # ✅ [MODIFIED] Changed to 400 per user request
             chart_height = 400
         
         # Calculate needed rows
@@ -1207,11 +1208,12 @@ elif selected_page == "多股比較":
                                     })
                                 if not pd.isna(row['MA5']): ma5.append({"time": row['DateStr'], "value": row['MA5']})
                                 if not pd.isna(row['MA20']): ma20.append({"time": row['DateStr'], "value": row['MA20']})
-                                
+                            
+                            # ✅ [FIX] Remove horizontal dashed lines (priceLineVisible, lastValueVisible) for MAs
                             main_series = [
                                 {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
-                                {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1}},
-                                {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1}}
+                                {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
+                                {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
                             payload = [{"chart": make_opts(chart_height, display_title, False), "series": main_series}]
@@ -1220,11 +1222,14 @@ elif selected_page == "多股比較":
                             sub_data = []
                             sub_series = []
                             
+                            # ✅ [FIX] Remove horizontal dashed lines for Sub-charts
+                            common_opts = {"lastValueVisible": False, "priceLineVisible": False}
+                            
                             if indicator_type == "成交量":
                                 for _, row in df.iterrows():
                                      if not pd.isna(row['Volume']):
                                          sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
-                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right"}}]
+                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", **common_opts}}]
                                 
                             elif indicator_type in ["KD", "MACD", "RSI"]:
                                  # Reuse existing indicators in df
@@ -1234,14 +1239,14 @@ elif selected_page == "多股比較":
                                          if not pd.isna(row['K']): k.append({"time": row['DateStr'], "value": row['K']})
                                          if not pd.isna(row['D']): d.append({"time": row['DateStr'], "value": row['D']})
                                      sub_series = [
-                                         {"type": "Line", "data": k, "options": {"color": "orange", "lineWidth": 1}},
-                                         {"type": "Line", "data": d, "options": {"color": "cyan", "lineWidth": 1}}
+                                         {"type": "Line", "data": k, "options": {"color": "orange", "lineWidth": 1, **common_opts}},
+                                         {"type": "Line", "data": d, "options": {"color": "cyan", "lineWidth": 1, **common_opts}}
                                      ]
                                  elif indicator_type == "RSI":
                                      rsi = []
                                      for _, row in df.iterrows():
                                          if not pd.isna(row['RSI']): rsi.append({"time": row['DateStr'], "value": row['RSI']})
-                                     sub_series = [{"type": "Line", "data": rsi, "options": {"color": "#AB47BC", "lineWidth": 1}}]
+                                     sub_series = [{"type": "Line", "data": rsi, "options": {"color": "#AB47BC", "lineWidth": 1, **common_opts}}]
                                  elif indicator_type == "MACD":
                                      dif, dea, hist = [], [], []
                                      for _, row in df.iterrows():
@@ -1249,9 +1254,9 @@ elif selected_page == "多股比較":
                                          if not pd.isna(row['DEA']): dea.append({"time": row['DateStr'], "value": row['DEA']})
                                          if not pd.isna(row['MACD_Hist']): hist.append({"time": row['DateStr'], "value": row['MACD_Hist'], "color": COLOR_UP if row['MACD_Hist'] >= 0 else COLOR_DOWN})
                                      sub_series = [
-                                         {"type": "Histogram", "data": hist, "options": {}},
-                                         {"type": "Line", "data": dif, "options": {"color": "#FFD700", "lineWidth": 1}},
-                                         {"type": "Line", "data": dea, "options": {"color": "#00FFFF", "lineWidth": 1}}
+                                         {"type": "Histogram", "data": hist, "options": {**common_opts}},
+                                         {"type": "Line", "data": dif, "options": {"color": "#FFD700", "lineWidth": 1, **common_opts}},
+                                         {"type": "Line", "data": dea, "options": {"color": "#00FFFF", "lineWidth": 1, **common_opts}}
                                      ]
 
                             elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
@@ -1275,8 +1280,8 @@ elif selected_page == "多股比較":
                                         line_data.append({"time": row['DateStr'], "value": cum_val})
                                         
                                     sub_series = [
-                                        {"type": "Histogram", "data": bar_data, "options": {"priceScaleId": "right"}},
-                                        {"type": "Line", "data": line_data, "options": {"color": "white", "lineWidth": 2, "priceScaleId": "left"}}
+                                        {"type": "Histogram", "data": bar_data, "options": {"priceScaleId": "right", **common_opts}},
+                                        {"type": "Line", "data": line_data, "options": {"color": "white", "lineWidth": 2, "priceScaleId": "left", **common_opts}}
                                     ]
                             
                             if sub_series:
@@ -1325,8 +1330,37 @@ elif stock_input:
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
         # ✅ [REVERTED] 恢復 make_opts 到未嘗試縮放前的狀態 (移除 barSpacing/rightOffset/data_len)
-        def make_opts_orig(height, title=None, time_visible=True, scale_mode="normal"): # Rename to avoid conflict if needed, or reuse global make_opts
-             return make_opts(height, title, time_visible, scale_mode) # Just delegate to global function
+        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
+            opts = {
+                "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
+                "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
+                "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
+                "timeScale": {
+                    "borderColor": "rgba(197, 203, 206, 0.8)", 
+                    "visible": time_visible, 
+                    "timeVisible": True, # 分時資料需要顯示時間
+                    "secondsVisible": False
+                },
+                # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
+                "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
+                "crosshair": {
+                    "mode": 1,
+                    "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
+                    "horzLine": {
+                        "visible": True, 
+                        "labelVisible": True,
+                        "labelBackgroundColor": '#1E88E5' # ✅ [FIX] 改為更亮的藍色以提高對比度
+                    }
+                },
+                "height": height,
+            }
+            if scale_mode == "rsi":
+                # ✅ [FIX] RSI 模式下也要保留 minimumWidth，並將 visible 設為 True (否則無法對齊)
+                opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
+            if title:
+                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
+            
+            return opts
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
