@@ -927,6 +927,10 @@ def get_norway_rank_data():
             result_df = raw_data.iloc[:, col_indices]
             result_df.columns = final_cols
             
+            # ✅ [FIX] 轉換數值以利顏色樣式 (先去除所有非數字字元，只保留 . -)
+            # 但先轉為字串比較安全，因為要套用 style
+            result_df = result_df.astype(str)
+            
             return result_df
 
     except Exception:
@@ -1048,8 +1052,25 @@ if selected_page == "類股排行":
     if rank_df is not None and not rank_df.empty:
         rank_df = rank_df.reset_index(drop=True)
         
+        # ✅ [NEW] 樣式函式：漲紅跌綠
+        def highlight_val(val):
+            try:
+                # 移除可能的非數字字元 (例如 %)
+                clean_val = str(val).replace('%', '').replace(',', '').strip()
+                v = float(clean_val)
+                if v > 0:
+                    return f'color: {COLOR_UP}' # 紅
+                elif v < 0:
+                    return f'color: {COLOR_DOWN}' # 綠
+            except:
+                pass
+            return ''
+            
+        # 套用樣式 (排除第一欄股票名稱)
+        styled_df = rank_df.style.map(highlight_val, subset=rank_df.columns[1:])
+        
         event = st.dataframe(
-            rank_df, 
+            styled_df, # 使用有樣式的 DF
             use_container_width=True, 
             hide_index=True,
             on_select="rerun", 
