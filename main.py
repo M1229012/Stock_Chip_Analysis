@@ -862,50 +862,56 @@ def get_norway_rank_data():
             EC.presence_of_element_located((By.XPATH, "//table[contains(., '大股東持有張數增減')]"))
         )
         
-        # 使用 pandas 讀取 HTML 表格
+        # ✅ [FIX] 使用 header=1 讀取，直接使用第二列作為欄位名稱，避免 MultiIndex 亂碼
         html = driver.page_source
-        dfs = pd.read_html(StringIO(html))
+        dfs = pd.read_html(StringIO(html), header=1)
         
-        # 尋找包含目標資料的表格
         target_df = None
         for df in dfs:
-            # 檢查是否有特定欄位名稱
-            if "股票代號/名稱" in str(df.columns) or "類別" in str(df.columns):
+            # 檢查是否有特定欄位名稱 (關鍵字比對)
+            cols = str(df.columns)
+            if "名稱" in cols or "總增減" in cols:
                 target_df = df
                 break
         
         if target_df is None and len(dfs) > 0:
-             # Fallback: 嘗試取最大的表格
              target_df = max(dfs, key=len)
 
         if target_df is not None:
             # 清理資料：取前 100 名
-            # 假設第一欄是 # 或排名
             if len(target_df) > 100:
                 target_df = target_df.head(100)
-                
-            # 整理欄位 (簡單處理，轉成字串顯示)
+            
             target_df = target_df.astype(str)
             
-            # ✅ [FIX] 嘗試分離代號與名稱 (例如 "3006晶豪科" -> "3006 晶豪科")
-            # 假設第二欄 (index 1 or 2) 是 股票代號/名稱
-            # 根據網頁結構，通常是第 3 欄 (index 2)
+            # ✅ [FIX] 嚴格篩選欄位：只保留指定內容
+            # 1. 股票代號/名稱 (通常包含 '名稱' 字樣)
+            # 2. 日期欄位 (通常是數字，例如 '20251205' 或 '1212')
+            # 3. 總增減
+            # 4. 上週持有%
             
-            # 自動偵測包含代號的欄位
-            code_col = None
+            keep_cols = []
+            
+            # 建立欄位對應
             for col in target_df.columns:
-                if target_df[col].astype(str).str.contains(r'\d{4}', regex=True).any():
-                    code_col = col
-                    break
-            
-            if code_col:
-                # 建立一個乾淨的 display_name 欄位供顯示與點擊用
-                def clean_stock_str(s):
-                    # 移除前面的排名數字 (如果有)
-                    s = re.sub(r'^\d+\s*', '', str(s))
-                    return s
+                c_str = str(col).strip()
                 
-                target_df['Display_Stock'] = target_df[code_col].apply(clean_stock_str)
+                # 保留條件
+                is_name = "名稱" in c_str or "代號" in c_str
+                is_date = re.match(r'^\d+$', c_str) # 純數字標題通常是日期
+                is_total = "總增減" in c_str
+                is_pct = "持有%" in c_str
+                
+                # 排除條件 (類別、走勢、其他 Unnamed)
+                is_category = "類別" in c_str
+                is_trend = "走勢" in c_str
+                is_unnamed = "Unnamed" in c_str or "nan" == c_str
+                
+                if (is_name or is_date or is_total or is_pct) and not (is_category or is_trend or is_unnamed):
+                    keep_cols.append(col)
+            
+            # 篩選 DataFrame
+            target_df = target_df[keep_cols]
             
             return target_df
 
@@ -1025,20 +1031,7 @@ if selected_page == "類股排行":
         rank_df = get_norway_rank_data()
     
     if rank_df is not None and not rank_df.empty:
-        # 顯示 Dataframe 並啟用選取功能
-        # event = st.dataframe(
-        #     rank_df,
-        #     use_container_width=True,
-        #     hide_index=True,
-        #     on_select="rerun",
-        #     selection_mode="single-row"
-        # )
-        
-        # ✅ [FIX] 使用新的 st.dataframe 參數來捕捉點擊
-        # 這裡需要過濾顯示的欄位，避免太多雜訊
-        # 假設 'Display_Stock' 是我們生成的欄位
-        
-        # 將 DataFrame 顯示出來
+        # ✅ [FIX] 顯示 Dataframe 並啟用選取功能
         event = st.dataframe(
             rank_df, 
             use_container_width=True, 
@@ -1050,29 +1043,36 @@ if selected_page == "類股排行":
         # 處理點擊事件
         if len(event.selection.rows) > 0:
             selected_row_idx = event.selection.rows[0]
-            # 取得該列的股票代號資訊
-            # 假設我們可以用 'Display_Stock' 或直接找包含代號的欄位
-            # 這裡簡單起見，嘗試從第二欄 (通常是代號名稱) 抓取
             try:
-                # 取得選中列的第二個欄位值 (通常是 2330台積電)
-                raw_stock_str = rank_df.iloc[selected_row_idx, 2] # Index 2 Usually Stock Name
+                # 取得選中列的資料
+                # 我們需要找到哪一欄是股票名稱 (包含代號)
+                row_data = rank_df.iloc[selected_row_idx]
+                stock_str = ""
                 
-                # 提取代號 (4碼數字)
-                match = re.search(r'(\d{4})', str(raw_stock_str))
-                if match:
-                    code = match.group(1)
-                    # 在 all_stocks 中尋找完整名稱以符合 selectbox 格式
-                    found = False
-                    for s in all_stocks:
-                        if s.startswith(code):
-                            st.session_state.stock_selector = s
-                            st.session_state.current_page = "K線" # 跳轉回 K線
-                            st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
-                            found = True
-                            break
-                    
-                    if found:
-                        st.rerun()
+                # 自動尋找包含 4 碼代號的欄位
+                for val in row_data:
+                    val_str = str(val)
+                    if re.search(r'\d{4}', val_str):
+                        stock_str = val_str
+                        break
+                
+                if stock_str:
+                    # 提取代號 (4碼數字)
+                    match = re.search(r'(\d{4})', stock_str)
+                    if match:
+                        code = match.group(1)
+                        # 在 all_stocks 中尋找完整名稱
+                        found = False
+                        for s in all_stocks:
+                            if s.startswith(code):
+                                st.session_state.stock_selector = s
+                                st.session_state.current_page = "K線" # 跳轉回 K線
+                                st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                                found = True
+                                break
+                        
+                        if found:
+                            st.rerun()
             except:
                 pass
     else:
