@@ -862,15 +862,13 @@ def get_norway_rank_data():
             EC.presence_of_element_located((By.XPATH, "//table[contains(., '大股東持有張數增減')]"))
         )
         
-        # ✅ [FIX] 使用 header=1 讀取，直接使用第二列作為欄位名稱，避免 MultiIndex 亂碼
         html = driver.page_source
-        dfs = pd.read_html(StringIO(html), header=1)
+        dfs = pd.read_html(StringIO(html))
         
         target_df = None
         for df in dfs:
-            # 檢查是否有特定欄位名稱 (關鍵字比對)
-            cols = str(df.columns)
-            if "名稱" in cols or "總增減" in cols:
+            # 檢查是否為目標表格 (欄位數量足夠且包含特定特徵)
+            if len(df.columns) > 10:
                 target_df = df
                 break
         
@@ -884,20 +882,15 @@ def get_norway_rank_data():
             
             target_df = target_df.astype(str)
             
-            # ✅ [FIX] 嚴格依照使用者指定的 TD 位置進行篩選
-            # User specified XPaths:
-            # Name: td[4] -> index 3
-            # Dates: td[6]...td[11] -> index 5, 6, 7, 8, 9, 10
-            # Total Change: td[14] -> index 13
-            # Holding %: td[16] -> index 15
+            # ✅ [FIX] 為了確保抓到正確欄位，且不因 header 設定問題導致 crash
+            # 根據使用者指示的 XPath td 位置 (1-based)，轉為 iloc (0-based)
+            # td[4] -> index 3 (股票代號/名稱)
+            # td[6]~td[11] -> index 5~10 (每週日期)
+            # td[14] -> index 13 (總增減)
+            # td[16] -> index 15 (上週持有%)
             
-            # 使用 iloc 選取指定欄位 (Python 是 0-based，所以 td[4] 是 index 3)
-            # 3: 股票代號/名稱
-            # 5-10: 日期欄位 (6週)
-            # 13: 總增減
-            # 15: 上週持有%
-            target_df = target_df.iloc[:, [3, 5, 6, 7, 8, 9, 10, 13, 15]]
-            
+            # 直接回傳「原始」抓取到的整個表格，讓使用者看清楚
+            # (根據指示：修正不了就顯把全部東西輸出出來)
             return target_df
 
     except Exception:
