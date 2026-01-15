@@ -884,34 +884,19 @@ def get_norway_rank_data():
             
             target_df = target_df.astype(str)
             
-            # ✅ [FIX] 嚴格篩選欄位：只保留指定內容
-            # 1. 股票代號/名稱 (通常包含 '名稱' 字樣)
-            # 2. 日期欄位 (通常是數字，例如 '20251205' 或 '1212')
-            # 3. 總增減
-            # 4. 上週持有%
+            # ✅ [FIX] 嚴格依照使用者指定的 TD 位置進行篩選
+            # User specified XPaths:
+            # Name: td[4] -> index 3
+            # Dates: td[6]...td[11] -> index 5, 6, 7, 8, 9, 10
+            # Total Change: td[14] -> index 13
+            # Holding %: td[16] -> index 15
             
-            keep_cols = []
-            
-            # 建立欄位對應
-            for col in target_df.columns:
-                c_str = str(col).strip()
-                
-                # 保留條件
-                is_name = "名稱" in c_str or "代號" in c_str
-                is_date = re.match(r'^\d+$', c_str) # 純數字標題通常是日期
-                is_total = "總增減" in c_str
-                is_pct = "持有%" in c_str
-                
-                # 排除條件 (類別、走勢、其他 Unnamed)
-                is_category = "類別" in c_str
-                is_trend = "走勢" in c_str
-                is_unnamed = "Unnamed" in c_str or "nan" == c_str
-                
-                if (is_name or is_date or is_total or is_pct) and not (is_category or is_trend or is_unnamed):
-                    keep_cols.append(col)
-            
-            # 篩選 DataFrame
-            target_df = target_df[keep_cols]
+            # 使用 iloc 選取指定欄位 (Python 是 0-based，所以 td[4] 是 index 3)
+            # 3: 股票代號/名稱
+            # 5-10: 日期欄位 (6週)
+            # 13: 總增減
+            # 15: 上週持有%
+            target_df = target_df.iloc[:, [3, 5, 6, 7, 8, 9, 10, 13, 15]]
             
             return target_df
 
@@ -1027,8 +1012,8 @@ selected_page = st.radio(
 if selected_page == "類股排行":
     st.subheader("🏆 大股東持股排行榜 (Top 100)")
     
-    with st.spinner("正在爬取神秘金字塔排行資料..."):
-        rank_df = get_norway_rank_data()
+    # ✅ [FIX] 移除 st.spinner，直接執行
+    rank_df = get_norway_rank_data()
     
     if rank_df is not None and not rank_df.empty:
         # ✅ [FIX] 顯示 Dataframe 並啟用選取功能
@@ -1044,17 +1029,8 @@ if selected_page == "類股排行":
         if len(event.selection.rows) > 0:
             selected_row_idx = event.selection.rows[0]
             try:
-                # 取得選中列的資料
-                # 我們需要找到哪一欄是股票名稱 (包含代號)
-                row_data = rank_df.iloc[selected_row_idx]
-                stock_str = ""
-                
-                # 自動尋找包含 4 碼代號的欄位
-                for val in row_data:
-                    val_str = str(val)
-                    if re.search(r'\d{4}', val_str):
-                        stock_str = val_str
-                        break
+                # 取得選中列的資料 (第一欄就是股票名稱/代號)
+                stock_str = str(rank_df.iloc[selected_row_idx, 0])
                 
                 if stock_str:
                     # 提取代號 (4碼數字)
