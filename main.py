@@ -927,6 +927,10 @@ def get_norway_rank_data():
             result_df = raw_data.iloc[:, col_indices]
             result_df.columns = final_cols
             
+            # ✅ [FIX] 轉換數值以利顏色樣式 (先去除所有非數字字元，只保留 . -)
+            # 但先轉為字串比較安全，因為要套用 style
+            result_df = result_df.astype(str)
+            
             return result_df
 
     except Exception:
@@ -951,13 +955,23 @@ def get_stock_name(stock_id):
         return ""
     except: return ""
 
-# ================= 4. 介面邏輯 =================
-
-# ✅ [FIX] 移除標題中的 (TradingView 風格)
 st.title(f"📊 籌碼K線")
 
 tz = pytz.timezone('Asia/Taipei')
 current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+
+# ✅ [FIX] 類股排行點擊後的跳轉：必須在任何 widget 建立前套用
+if "__jump_stock_code" in st.session_state:
+    code = st.session_state.pop("__jump_stock_code")
+    # 找到 selectbox 對應的選項字串（例如 "3006 晶豪科"）
+    for s in get_all_stock_options():
+        if s.startswith(code):
+            st.session_state["stock_selector"] = s
+            break
+
+if "__jump_page" in st.session_state:
+    st.session_state["current_page"] = st.session_state.pop("__jump_page")
+
 
 if "search_counts" not in st.session_state:
     st.session_state.search_counts = {}
@@ -1085,17 +1099,15 @@ if selected_page == "類股排行":
                 match = re.search(r'(\d{4})', stock_str)
                 if match:
                     code = match.group(1)
-                    # 在 all_stocks 中尋找完整名稱
-                    for s in all_stocks:
-                        if s.startswith(code):
-                            # ✅ 強制更新 session_state 內的 selectbox key
-                            st.session_state.stock_selector = s 
-                            # ✅ 強制切換分頁
-                            st.session_state.current_page = "K線"
-                            # ✅ 更新搜尋次數
-                            st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
-                            # ✅ 立即刷新頁面
-                            st.rerun()
+                    
+                    # ✅ [FIX] 改用暫存變數控制跳轉，避免在 widget 建立後修改 key 導致失效
+                    st.session_state["__jump_stock_code"] = code
+                    st.session_state["__jump_page"] = "K線"
+                    
+                    # 更新搜尋次數 (這不是 widget key，可以直接改)
+                    st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                    
+                    st.rerun()
 
     else:
         st.warning("⚠️ 無法取得排行資料，請稍後再試。")
