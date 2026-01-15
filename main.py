@@ -862,36 +862,72 @@ def get_norway_rank_data():
             EC.presence_of_element_located((By.XPATH, "//table[contains(., '大股東持有張數增減')]"))
         )
         
+        # ✅ [FIX] 使用 header=None 讀取，避免 MultiIndex 亂碼，改用 iloc 指定索引
         html = driver.page_source
-        dfs = pd.read_html(StringIO(html))
+        dfs = pd.read_html(StringIO(html), header=None)
         
         target_df = None
         for df in dfs:
-            # 檢查是否為目標表格 (欄位數量足夠且包含特定特徵)
-            if len(df.columns) > 10:
-                target_df = df
-                break
+            # 檢查是否有足夠的欄位與列數 (目標表格通常很大)
+            if len(df.columns) > 10 and len(df) > 20:
+                # 簡單判斷：看是否包含 "大股東持有" 字樣
+                if df.apply(lambda x: x.astype(str).str.contains('大股東持有').any()).any():
+                    target_df = df
+                    break
         
         if target_df is None and len(dfs) > 0:
              target_df = max(dfs, key=len)
 
         if target_df is not None:
             # 清理資料：取前 100 名
-            if len(target_df) > 100:
-                target_df = target_df.head(100)
+            # 我們需要找到 Header 所在的那一列，以及 Data 開始的那一列
             
-            target_df = target_df.astype(str)
+            # 1. 找 Header 列 (包含日期的那列，例如 '20251205')
+            header_idx = -1
+            data_start_idx = -1
             
-            # ✅ [FIX] 為了確保抓到正確欄位，且不因 header 設定問題導致 crash
-            # 根據使用者指示的 XPath td 位置 (1-based)，轉為 iloc (0-based)
-            # td[4] -> index 3 (股票代號/名稱)
-            # td[6]~td[11] -> index 5~10 (每週日期)
-            # td[14] -> index 13 (總增減)
-            # td[16] -> index 15 (上週持有%)
+            for idx, row in target_df.iterrows():
+                row_str = row.astype(str).values
+                # 檢查是否為資料列 (第3欄 - index 3 是代號，例如 '3006晶豪科')
+                if re.search(r'\d{4}', str(row[3])):
+                    data_start_idx = idx
+                    break
             
-            # 直接回傳「原始」抓取到的整個表格，讓使用者看清楚
-            # (根據指示：修正不了就顯把全部東西輸出出來)
-            return target_df
+            # 如果找不到資料列，就回傳 None
+            if data_start_idx == -1: return None
+            
+            # Header 通常在資料列的前面幾列
+            # 我們往回找包含日期的列 (通常是 index 5-10)
+            for idx in range(max(0, data_start_idx - 5), data_start_idx):
+                row = target_df.iloc[idx]
+                # 檢查第 5 欄是否像日期 (純數字且長度 >= 4)
+                if re.match(r'^\d{4,}$', str(row[5])):
+                    header_idx = idx
+                    break
+            
+            # 擷取資料 (從 data_start_idx 開始，取 100 筆)
+            raw_data = target_df.iloc[data_start_idx:data_start_idx+100].copy()
+            
+            # 準備欄位名稱
+            # 3: 名稱, 5~10: 日期, 13: 總增減, 15: 上週%
+            col_indices = [3, 5, 6, 7, 8, 9, 10, 13, 15]
+            
+            final_cols = ["股票代號/名稱"]
+            if header_idx != -1:
+                # 從 header row 抓取日期
+                date_headers = target_df.iloc[header_idx, 5:11].tolist()
+                final_cols.extend([str(d) for d in date_headers])
+            else:
+                # 抓不到就用預設
+                final_cols.extend([f"Date_{i}" for i in range(1, 7)])
+                
+            final_cols.extend(["總增減", "上週持有%"])
+            
+            # 篩選欄位
+            result_df = raw_data.iloc[:, col_indices]
+            result_df.columns = final_cols
+            
+            return result_df
 
     except Exception:
         return None
