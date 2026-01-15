@@ -1168,12 +1168,12 @@ elif selected_page == "多股比較":
         if num_stocks == 1:
             cols_per_row = 1
             chart_height = 600
-        elif num_stocks <= 4:
+        elif num_stocks == 2:
+            cols_per_row = 2
+            chart_height = 500
+        else:
             cols_per_row = 2
             chart_height = 400
-        else:
-            cols_per_row = 2 # 2 columns even for 5-6 stocks for better visibility
-            chart_height = 350
         
         # Calculate needed rows
         rows = math.ceil(num_stocks / cols_per_row)
@@ -1284,7 +1284,7 @@ elif selected_page == "多股比較":
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
-                            renderLightweightCharts(payload, key=f"compare_{i}_{code}")
+                            renderLightweightCharts(payload, key=f"compare_{idx}_{code}")
                         else:
                             st.warning(f"⚠️ {code} 無資料")
 
