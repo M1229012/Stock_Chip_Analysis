@@ -379,6 +379,37 @@ def resample_data(df, period):
     resampled = calculate_technical_indicators(resampled)
     return resampled
 
+# ✅ [FIX] Move make_opts to Global Scope to avoid NameError
+def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
+    opts = {
+        "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
+        "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
+        "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
+        "timeScale": {
+            "borderColor": "rgba(197, 203, 206, 0.8)", 
+            "visible": time_visible, 
+            "timeVisible": True, # 分時資料需要顯示時間
+            "secondsVisible": False
+        },
+        "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
+        "crosshair": {
+            "mode": 1,
+            "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
+            "horzLine": {
+                "visible": True, 
+                "labelVisible": True,
+                "labelBackgroundColor": '#1E88E5'
+            }
+        },
+        "height": height,
+    }
+    if scale_mode == "rsi":
+        opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
+    if title:
+        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
+    
+    return opts
+
 # ================= 3. 爬蟲核心 =================
 
 @st.cache_resource
@@ -1054,8 +1085,8 @@ if selected_page == "類股排行":
     # ✅ [FIX] 移除 st.spinner，直接執行
     rank_df = get_norway_rank_data()
     
-    # ✅ [FIX] 重設索引並加入 KEY，確保選取功能正常運作
     if rank_df is not None and not rank_df.empty:
+        # ✅ [FIX] 重設索引並加入 KEY，確保選取功能正常運作
         rank_df = rank_df.reset_index(drop=True)
         
         # ✅ [NEW] 樣式函式：漲紅跌綠
@@ -1128,122 +1159,134 @@ elif selected_page == "多股比較":
             ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超"]
         )
     
-    # Create grid
-    row1 = st.columns(2)
-    row2 = st.columns(2)
-    row3 = st.columns(2)
-    grid_slots = row1 + row2 + row3
-    
     # Process each stock
     valid_stocks = [s.strip() for s in stock_inputs if s.strip()]
+    num_stocks = len(valid_stocks)
     
-    for i, slot in enumerate(grid_slots):
-        if i < len(valid_stocks):
-            code = valid_stocks[i]
-            name = get_stock_name(code)
-            display_title = f"{code} {name}" if name else code
-            
-            with slot:
-                st.caption(f"🔹 {display_title}")
-                # Fetch Data
-                df = get_stock_price(code, st.session_state.refresh_nonce)
-                
-                if df is not None and not df.empty:
-                    # Prepare Data
-                    chart_data = []
-                    ma5, ma20 = [], []
+    if num_stocks > 0:
+        # Determine grid cols and height
+        if num_stocks == 1:
+            cols_per_row = 1
+            chart_height = 600
+        elif num_stocks <= 4:
+            cols_per_row = 2
+            chart_height = 400
+        else:
+            cols_per_row = 2 # 2 columns even for 5-6 stocks for better visibility
+            chart_height = 350
+        
+        # Calculate needed rows
+        rows = math.ceil(num_stocks / cols_per_row)
+        
+        for r in range(rows):
+            cols = st.columns(cols_per_row)
+            for c in range(cols_per_row):
+                idx = r * cols_per_row + c
+                if idx < num_stocks:
+                    code = valid_stocks[idx]
+                    name = get_stock_name(code)
+                    display_title = f"{code} {name}" if name else code
                     
-                    # 1. Main Chart (K-Line + MA)
-                    for _, row in df.iterrows():
-                        if not pd.isna(row['Open']):
-                            chart_data.append({
-                                "time": row['DateStr'], 
-                                "open": row['Open'], "high": row['High'], 
-                                "low": row['Low'], "close": row['Close']
-                            })
-                        if not pd.isna(row['MA5']): ma5.append({"time": row['DateStr'], "value": row['MA5']})
-                        if not pd.isna(row['MA20']): ma20.append({"time": row['DateStr'], "value": row['MA20']})
+                    with cols[c]:
+                        # Fetch Data
+                        df = get_stock_price(code, st.session_state.refresh_nonce)
                         
-                    main_series = [
-                        {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
-                        {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1}},
-                        {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1}}
-                    ]
-                    
-                    payload = [{"chart": make_opts(250, display_title, False), "series": main_series}]
-                    
-                    # 2. Sub Chart
-                    sub_data = []
-                    sub_series = []
-                    
-                    if indicator_type == "成交量":
-                        for _, row in df.iterrows():
-                             if not pd.isna(row['Volume']):
-                                 sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
-                        sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right"}}]
-                        
-                    elif indicator_type in ["KD", "MACD", "RSI"]:
-                         # Reuse existing indicators in df
-                         if indicator_type == "KD":
-                             k, d = [], []
-                             for _, row in df.iterrows():
-                                 if not pd.isna(row['K']): k.append({"time": row['DateStr'], "value": row['K']})
-                                 if not pd.isna(row['D']): d.append({"time": row['DateStr'], "value": row['D']})
-                             sub_series = [
-                                 {"type": "Line", "data": k, "options": {"color": "orange", "lineWidth": 1}},
-                                 {"type": "Line", "data": d, "options": {"color": "cyan", "lineWidth": 1}}
-                             ]
-                         elif indicator_type == "RSI":
-                             rsi = []
-                             for _, row in df.iterrows():
-                                 if not pd.isna(row['RSI']): rsi.append({"time": row['DateStr'], "value": row['RSI']})
-                             sub_series = [{"type": "Line", "data": rsi, "options": {"color": "#AB47BC", "lineWidth": 1}}]
-                         elif indicator_type == "MACD":
-                             dif, dea, hist = [], [], []
-                             for _, row in df.iterrows():
-                                 if not pd.isna(row['DIF']): dif.append({"time": row['DateStr'], "value": row['DIF']})
-                                 if not pd.isna(row['DEA']): dea.append({"time": row['DateStr'], "value": row['DEA']})
-                                 if not pd.isna(row['MACD_Hist']): hist.append({"time": row['DateStr'], "value": row['MACD_Hist'], "color": COLOR_UP if row['MACD_Hist'] >= 0 else COLOR_DOWN})
-                             sub_series = [
-                                 {"type": "Histogram", "data": hist, "options": {}},
-                                 {"type": "Line", "data": dif, "options": {"color": "#FFD700", "lineWidth": 1}},
-                                 {"type": "Line", "data": dea, "options": {"color": "#00FFFF", "lineWidth": 1}}
-                             ]
-
-                    elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
-                        # Need extra fetch
-                        s_date = df['DateStr'].iloc[0]
-                        e_date = df['DateStr'].iloc[-1]
-                        inst_df = get_institutional_data(code, s_date, e_date)
-                        if inst_df is not None:
-                            # Merge
-                            m_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
-                            col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超"}
-                            target_col = col_map[indicator_type]
+                        if df is not None and not df.empty:
+                            # Prepare Data
+                            chart_data = []
+                            ma5, ma20 = [], []
                             
-                            bar_data = []
-                            line_data = []
-                            cum_val = 0
-                            for _, row in m_df.iterrows():
-                                val = row[target_col]
-                                cum_val += val
-                                bar_data.append({"time": row['DateStr'], "value": val, "color": COLOR_UP if val > 0 else COLOR_DOWN})
-                                line_data.append({"time": row['DateStr'], "value": cum_val})
+                            # 1. Main Chart (K-Line + MA)
+                            for _, row in df.iterrows():
+                                if not pd.isna(row['Open']):
+                                    chart_data.append({
+                                        "time": row['DateStr'], 
+                                        "open": row['Open'], "high": row['High'], 
+                                        "low": row['Low'], "close": row['Close']
+                                    })
+                                if not pd.isna(row['MA5']): ma5.append({"time": row['DateStr'], "value": row['MA5']})
+                                if not pd.isna(row['MA20']): ma20.append({"time": row['DateStr'], "value": row['MA20']})
                                 
-                            sub_series = [
-                                {"type": "Histogram", "data": bar_data, "options": {"priceScaleId": "right"}},
-                                {"type": "Line", "data": line_data, "options": {"color": "white", "lineWidth": 2, "priceScaleId": "left"}}
+                            main_series = [
+                                {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
+                                {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1}},
+                                {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1}}
                             ]
-                    
-                    if sub_series:
-                        # Append sub chart
-                        chart_opts = make_opts(150, indicator_type, True)
-                        if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
-                        payload.append({"chart": chart_opts, "series": sub_series})
-                    
-                    renderLightweightCharts(payload, key=f"compare_{i}_{code}")
-                else:
-                    st.warning("無資料")
+                            
+                            payload = [{"chart": make_opts(chart_height, display_title, False), "series": main_series}]
+                            
+                            # 2. Sub Chart
+                            sub_data = []
+                            sub_series = []
+                            
+                            if indicator_type == "成交量":
+                                for _, row in df.iterrows():
+                                     if not pd.isna(row['Volume']):
+                                         sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
+                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right"}}]
+                                
+                            elif indicator_type in ["KD", "MACD", "RSI"]:
+                                 # Reuse existing indicators in df
+                                 if indicator_type == "KD":
+                                     k, d = [], []
+                                     for _, row in df.iterrows():
+                                         if not pd.isna(row['K']): k.append({"time": row['DateStr'], "value": row['K']})
+                                         if not pd.isna(row['D']): d.append({"time": row['DateStr'], "value": row['D']})
+                                     sub_series = [
+                                         {"type": "Line", "data": k, "options": {"color": "orange", "lineWidth": 1}},
+                                         {"type": "Line", "data": d, "options": {"color": "cyan", "lineWidth": 1}}
+                                     ]
+                                 elif indicator_type == "RSI":
+                                     rsi = []
+                                     for _, row in df.iterrows():
+                                         if not pd.isna(row['RSI']): rsi.append({"time": row['DateStr'], "value": row['RSI']})
+                                     sub_series = [{"type": "Line", "data": rsi, "options": {"color": "#AB47BC", "lineWidth": 1}}]
+                                 elif indicator_type == "MACD":
+                                     dif, dea, hist = [], [], []
+                                     for _, row in df.iterrows():
+                                         if not pd.isna(row['DIF']): dif.append({"time": row['DateStr'], "value": row['DIF']})
+                                         if not pd.isna(row['DEA']): dea.append({"time": row['DateStr'], "value": row['DEA']})
+                                         if not pd.isna(row['MACD_Hist']): hist.append({"time": row['DateStr'], "value": row['MACD_Hist'], "color": COLOR_UP if row['MACD_Hist'] >= 0 else COLOR_DOWN})
+                                     sub_series = [
+                                         {"type": "Histogram", "data": hist, "options": {}},
+                                         {"type": "Line", "data": dif, "options": {"color": "#FFD700", "lineWidth": 1}},
+                                         {"type": "Line", "data": dea, "options": {"color": "#00FFFF", "lineWidth": 1}}
+                                     ]
+
+                            elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
+                                # Need extra fetch
+                                s_date = df['DateStr'].iloc[0]
+                                e_date = df['DateStr'].iloc[-1]
+                                inst_df = get_institutional_data(code, s_date, e_date)
+                                if inst_df is not None:
+                                    # Merge
+                                    m_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
+                                    col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超"}
+                                    target_col = col_map[indicator_type]
+                                    
+                                    bar_data = []
+                                    line_data = []
+                                    cum_val = 0
+                                    for _, row in m_df.iterrows():
+                                        val = row[target_col]
+                                        cum_val += val
+                                        bar_data.append({"time": row['DateStr'], "value": val, "color": COLOR_UP if val > 0 else COLOR_DOWN})
+                                        line_data.append({"time": row['DateStr'], "value": cum_val})
+                                        
+                                    sub_series = [
+                                        {"type": "Histogram", "data": bar_data, "options": {"priceScaleId": "right"}},
+                                        {"type": "Line", "data": line_data, "options": {"color": "white", "lineWidth": 2, "priceScaleId": "left"}}
+                                    ]
+                            
+                            if sub_series:
+                                # Append sub chart
+                                chart_opts = make_opts(150, indicator_type, True)
+                                if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
+                                payload.append({"chart": chart_opts, "series": sub_series})
+                            
+                            renderLightweightCharts(payload, key=f"compare_{i}_{code}")
+                        else:
+                            st.warning(f"⚠️ {code} 無資料")
 
 
 elif stock_input:
@@ -1281,37 +1324,8 @@ elif stock_input:
         # 共用 opts (crosshair: horzLine.labelVisible=True -> 右側顯示價格)
         # [FIX] 調整 labelBackgroundColor 為亮色 (#4c525e)
         # ✅ [REVERTED] 恢復 make_opts 到未嘗試縮放前的狀態 (移除 barSpacing/rightOffset/data_len)
-        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
-            opts = {
-                "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
-                "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
-                "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
-                "timeScale": {
-                    "borderColor": "rgba(197, 203, 206, 0.8)", 
-                    "visible": time_visible, 
-                    "timeVisible": True, # 分時資料需要顯示時間
-                    "secondsVisible": False
-                },
-                # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
-                "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
-                "crosshair": {
-                    "mode": 1,
-                    "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
-                    "horzLine": {
-                        "visible": True, 
-                        "labelVisible": True,
-                        "labelBackgroundColor": '#1E88E5' # ✅ [FIX] 改為更亮的藍色以提高對比度
-                    }
-                },
-                "height": height,
-            }
-            if scale_mode == "rsi":
-                # ✅ [FIX] RSI 模式下也要保留 minimumWidth，並將 visible 設為 True (否則無法對齊)
-                opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
-            if title:
-                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
-            
-            return opts
+        def make_opts_orig(height, title=None, time_visible=True, scale_mode="normal"): # Rename to avoid conflict if needed, or reuse global make_opts
+             return make_opts(height, title, time_visible, scale_mode) # Just delegate to global function
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
