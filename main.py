@@ -994,26 +994,22 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
 
     sorted_stocks = sorted(all_stocks, key=get_sort_key)
     
-    # ✅ [FIX START] 修正股票選擇器重置問題
-    # 檢查是否有上次選過的股票紀錄
-    target_index = 0
-    current_selection = st.session_state.get("stock_selector")
-    
-    if current_selection and current_selection in sorted_stocks:
-        # 如果有上次的選擇，使用該選擇的索引
-        target_index = sorted_stocks.index(current_selection)
-    else:
-        # 第一次執行或找不到時，預設找 2313
+    # ✅ [FIX] 移除 target_index 計算與 index 參數，改為初始化 session_state
+    if "stock_selector" not in st.session_state:
+        # 預設找 2313
+        default_index = 0
         for idx, s in enumerate(sorted_stocks):
             if s.startswith("2313"):
-                target_index = idx
+                default_index = idx
                 break
+        if sorted_stocks:
+            st.session_state["stock_selector"] = sorted_stocks[default_index]
                 
     # 加上 key 參數以保持狀態
     stock_selection = st.selectbox(
         "搜尋股票", 
         options=sorted_stocks, 
-        index=target_index, 
+        # index=target_index,  <-- REMOVE THIS
         placeholder="請輸入股票代號...",
         key="stock_selector"
     )
