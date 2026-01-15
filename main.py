@@ -927,10 +927,6 @@ def get_norway_rank_data():
             result_df = raw_data.iloc[:, col_indices]
             result_df.columns = final_cols
             
-            # ✅ [FIX] 轉換數值以利顏色樣式 (先去除所有非數字字元，只保留 . -)
-            # 但先轉為字串比較安全，因為要套用 style
-            result_df = result_df.astype(str)
-            
             return result_df
 
     except Exception:
@@ -1081,29 +1077,26 @@ if selected_page == "類股排行":
         # 處理點擊事件
         if len(event.selection.rows) > 0:
             selected_row_idx = event.selection.rows[0]
-            try:
-                # 取得選中列的資料 (第一欄就是股票名稱/代號)
-                stock_str = str(rank_df.iloc[selected_row_idx, 0])
-                
-                if stock_str:
-                    # 提取代號 (4碼數字)
-                    match = re.search(r'(\d{4})', stock_str)
-                    if match:
-                        code = match.group(1)
-                        # 在 all_stocks 中尋找完整名稱
-                        found = False
-                        for s in all_stocks:
-                            if s.startswith(code):
-                                st.session_state.stock_selector = s
-                                st.session_state.current_page = "K線" # 跳轉回 K線
-                                st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
-                                found = True
-                                break
-                        
-                        if found:
+            # 取得選中列的資料 (第一欄就是股票名稱/代號)
+            stock_str = str(rank_df.iloc[selected_row_idx, 0])
+            
+            if stock_str:
+                # 提取代號 (4碼數字)
+                match = re.search(r'(\d{4})', stock_str)
+                if match:
+                    code = match.group(1)
+                    # 在 all_stocks 中尋找完整名稱
+                    for s in all_stocks:
+                        if s.startswith(code):
+                            # ✅ 強制更新 session_state 內的 selectbox key
+                            st.session_state.stock_selector = s 
+                            # ✅ 強制切換分頁
+                            st.session_state.current_page = "K線"
+                            # ✅ 更新搜尋次數
+                            st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                            # ✅ 立即刷新頁面
                             st.rerun()
-            except:
-                pass
+
     else:
         st.warning("⚠️ 無法取得排行資料，請稍後再試。")
 
