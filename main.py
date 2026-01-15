@@ -868,7 +868,7 @@ def get_norway_rank_data():
         
         target_df = None
         for df in dfs:
-            # 檢查是否有足夠的欄位與列數 (目標表格通常很大)
+            # 檢查是否為目標表格 (欄位數量足夠且包含特定特徵)
             if len(df.columns) > 10 and len(df) > 20:
                 # 簡單判斷：看是否包含 "大股東持有" 字樣
                 if df.apply(lambda x: x.astype(str).str.contains('大股東持有').any()).any():
@@ -1044,14 +1044,17 @@ if selected_page == "類股排行":
     # ✅ [FIX] 移除 st.spinner，直接執行
     rank_df = get_norway_rank_data()
     
+    # ✅ [FIX] 重設索引並加入 KEY，確保選取功能正常運作
     if rank_df is not None and not rank_df.empty:
-        # ✅ [FIX] 顯示 Dataframe 並啟用選取功能
+        rank_df = rank_df.reset_index(drop=True)
+        
         event = st.dataframe(
             rank_df, 
             use_container_width=True, 
             hide_index=True,
             on_select="rerun", 
-            selection_mode="single-row"
+            selection_mode="single-row",
+            key="rank_table" # 關鍵修正：加入固定 Key
         )
         
         # 處理點擊事件
