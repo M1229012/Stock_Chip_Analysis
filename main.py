@@ -391,7 +391,8 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             "timeVisible": True, # 分時資料需要顯示時間
             "secondsVisible": False
         },
-        "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
+        # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
+        "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
         "crosshair": {
             "mode": 1,
             "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
@@ -1173,8 +1174,8 @@ elif selected_page == "多股比較":
             chart_height = 500
         else:
             cols_per_row = 2
-            # ✅ [MODIFIED] Changed to 100 per user request
-            chart_height = 100
+            # ✅ [MODIFIED] Changed to 250 per user request to fix 'cut off' issue
+            chart_height = 250
         
         # Calculate needed rows
         rows = math.ceil(num_stocks / cols_per_row)
