@@ -1070,17 +1070,16 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "K線"
 
-# ✅ [NEW] 新增 "類股排行" 選項
 selected_page = st.radio(
     "功能分頁", 
-    ["K線", "分點", "法人", "融資券", "大戶", "類股排行", "多股比較"], 
+    ["K線", "分點", "法人", "融資券", "大戶", "大戶增減排行", "多股比較"], 
     horizontal=True,
     label_visibility="collapsed",
     key="current_page"
 )
 
-# ==================== Tab 6: 類股排行 (新增功能) ====================
-if selected_page == "類股排行":
+# ==================== Tab 6: 大戶增減排行 (新增功能) ====================
+if selected_page == "大戶增減排行":
     st.subheader("🏆 大股東持股排行榜 (Top 100)")
     
     # ✅ [FIX] 移除 st.spinner，直接執行
