@@ -1111,10 +1111,11 @@ if __name__ == "__main__":
             os.remove(path)
 
 # ✅ [NEW] 抓取神秘金字塔排行 (Norawy StockHoldersTopWeek)
+# ✅ [MODIFIED] 增加 url 參數以支援上櫃查詢
 @st.cache_data(ttl=21600)
-def get_norway_rank_data():
+def get_norway_rank_data(url="https://norway.twsthr.info/StockHoldersTopWeek.aspx"):
     driver = get_driver()
-    url = "https://norway.twsthr.info/StockHoldersTopWeek.aspx"
+    # url 已透過參數傳入，不再 hardcode
     
     try:
         driver.get(url)
@@ -1425,63 +1426,63 @@ if selected_page == "主力":
 # ==================== Tab 6: 類股排行 (新增功能) ====================
 elif selected_page == "類股排行":
     st.subheader("🏆 大股東持股排行榜 (Top 100)")
-    
-    # ✅ [FIX] 移除 st.spinner，直接執行
-    rank_df = get_norway_rank_data()
-    
-    if rank_df is not None and not rank_df.empty:
-        # ✅ [FIX] 重設索引並加入 KEY，確保選取功能正常運作
-        rank_df = rank_df.reset_index(drop=True)
-        
-        # ✅ [NEW] 樣式函式：漲紅跌綠
-        def highlight_val(val):
-            try:
-                # 移除可能的非數字字元 (例如 %)
-                clean_val = str(val).replace('%', '').replace(',', '').strip()
-                v = float(clean_val)
-                if v > 0:
-                    return f'color: {COLOR_UP}' # 紅
-                elif v < 0:
-                    return f'color: {COLOR_DOWN}' # 綠
-            except:
-                pass
-            return ''
-            
-        # 套用樣式 (排除第一欄股票名稱)
-        styled_df = rank_df.style.map(highlight_val, subset=rank_df.columns[1:])
-        
-        event = st.dataframe(
-            styled_df, # 使用有樣式的 DF
-            use_container_width=True, 
-            hide_index=True,
-            on_select="rerun", 
-            selection_mode="single-row",
-            key="rank_table" # 關鍵修正：加入固定 Key
-        )
-        
-        # 處理點擊事件
-        if len(event.selection.rows) > 0:
-            selected_row_idx = event.selection.rows[0]
-            # 取得選中列的資料 (第一欄就是股票名稱/代號)
-            stock_str = str(rank_df.iloc[selected_row_idx, 0])
-            
-            if stock_str:
-                # 提取代號 (4碼數字)
-                match = re.search(r'(\d{4})', stock_str)
-                if match:
-                    code = match.group(1)
-                    
-                    # ✅ [FIX] 改用暫存變數控制跳轉，避免在 widget 建立後修改 key 導致失效
-                    st.session_state["__jump_stock_code"] = code
-                    st.session_state["__jump_page"] = "K線"
-                    
-                    # 更新搜尋次數 (這不是 widget key，可以直接改)
-                    st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
-                    
-                    st.rerun()
 
-    else:
-        st.warning("⚠️ 無法取得排行資料，請稍後再試。")
+    # ✅ [MODIFIED] 新增分頁系統：上市與上櫃
+    tab_listed, tab_otc = st.tabs(["上市排行 (Top 100)", "上櫃排行 (Top 100)"])
+
+    # 定義內層渲染函式以避免重複代碼
+    def render_rank_page(url, key_suffix):
+        rank_df = get_norway_rank_data(url)
+        
+        if rank_df is not None and not rank_df.empty:
+            rank_df = rank_df.reset_index(drop=True)
+            
+            # 樣式函式：漲紅跌綠
+            def highlight_val(val):
+                try:
+                    clean_val = str(val).replace('%', '').replace(',', '').strip()
+                    v = float(clean_val)
+                    if v > 0:
+                        return f'color: {COLOR_UP}' # 紅
+                    elif v < 0:
+                        return f'color: {COLOR_DOWN}' # 綠
+                except:
+                    pass
+                return ''
+                
+            styled_df = rank_df.style.map(highlight_val, subset=rank_df.columns[1:])
+            
+            event = st.dataframe(
+                styled_df,
+                use_container_width=True, 
+                hide_index=True,
+                on_select="rerun", 
+                selection_mode="single-row",
+                key=f"rank_table_{key_suffix}" # 區分 key
+            )
+            
+            # 處理點擊事件
+            if len(event.selection.rows) > 0:
+                selected_row_idx = event.selection.rows[0]
+                stock_str = str(rank_df.iloc[selected_row_idx, 0])
+                
+                if stock_str:
+                    match = re.search(r'(\d{4})', stock_str)
+                    if match:
+                        code = match.group(1)
+                        st.session_state["__jump_stock_code"] = code
+                        st.session_state["__jump_page"] = "K線"
+                        st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                        st.rerun()
+        else:
+            st.warning("⚠️ 無法取得排行資料，請稍後再試。")
+
+    # 分別渲染
+    with tab_listed:
+        render_rank_page("https://norway.twsthr.info/StockHoldersTopWeek.aspx", "listed")
+    
+    with tab_otc:
+        render_rank_page("https://norway.twsthr.info/StockHoldersTopWeek.aspx?CID=100&Show=1", "otc")
 
 # ==================== Tab 7: 多股比較 (New) ====================
 elif selected_page == "多股比較":
