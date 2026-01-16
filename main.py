@@ -1306,7 +1306,7 @@ if selected_page == "主力":
     if stock_input:
         stock_name = get_stock_name(stock_input)
         stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
-        st.subheader(f"⚡ {stock_display} 主力買賣超與家數差")
+        st.subheader(f"⚡ {stock_display} 主力買賣超與家數差 (玩股網)")
         
         # 嘗試安裝/使用 seleniumbase 抓取
         wg_df = None
@@ -1316,7 +1316,7 @@ if selected_page == "主力":
                 # ✅ [FIX] 呼叫爬蟲，如果失敗這裡會拋出例外，不會被快取
                 wg_df = get_wantgoo_data(stock_input, st.session_state.refresh_nonce)
             except Exception as e:
-                st.warning(f"⚠️ 無法取得主力數據，可能被阻擋或無資料。\n(錯誤訊息: {str(e)})")
+                st.warning(f"⚠️ 無法取得玩股網主力數據，可能被阻擋或無資料。\n(錯誤訊息: {str(e)})")
                 st.info("💡 建議點擊上方「強制更新籌碼資料」重試。")
                 wg_df = None
         
@@ -1379,7 +1379,8 @@ if selected_page == "主力":
                 
                 # Plot 2: Net Buy
                 chart2 = {
-                    "chart": make_opts(150, "主力買賣超", False),
+                    # ✅ [FIX] 增加單位 (張)
+                    "chart": make_opts(150, "主力買賣超 (張)", False),
                     "series": [
                         {"type": "Histogram", "data": net_buy_data, "options": {"priceScaleId": "right"}}
                     ]
@@ -1387,7 +1388,8 @@ if selected_page == "主力":
                 
                 # Plot 3: Broker Diff
                 chart3 = {
-                    "chart": make_opts(150, "買賣家數差 (負值=集中=紅)", False),
+                    # ✅ [FIX] 移除說明文字，增加單位 (家)
+                    "chart": make_opts(150, "買賣家數差 (家)", False),
                     "series": [
                         {"type": "Histogram", "data": diff_data, "options": {"priceScaleId": "right"}}
                     ]
@@ -1625,7 +1627,12 @@ elif selected_page == "多股比較":
                             
                             if sub_series:
                                 # Append sub chart
-                                chart_opts = make_opts(150, indicator_type, True)
+                                # ✅ [FIX] Title with Unit if applicable
+                                chart_title = indicator_type
+                                if "成交量" in chart_title or "買賣超" in chart_title:
+                                    chart_title += " (張)"
+                                    
+                                chart_opts = make_opts(150, chart_title, True)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
@@ -1806,7 +1813,8 @@ elif stock_input:
                         
                     if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
-                charts_payload.append({"chart": make_opts(150, "成交量", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
+                # ✅ [FIX] 增加單位 (張)
+                charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
                 k_data, d_data = [], []
@@ -2084,7 +2092,8 @@ elif stock_input:
                             if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
                         
                         # ✅ [FIX] 禁用固定標籤
-                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (淺色為統計區間外)", False), "series": [
+                        # ✅ [FIX] 增加單位 (張), replace (淺色...) with clean title
+                        charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (張)", False), "series": [
                             {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
@@ -2154,21 +2163,23 @@ elif stock_input:
                     total_line.append({"time": row['DateStr'], "value": float(total_cum)})
 
                 # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
-                charts_payload_inst.append({"chart": make_opts(200, "三大法人合計", False), "series": [
+                # ✅ [FIX] 增加單位 (張)
+                charts_payload_inst.append({"chart": make_opts(200, "三大法人合計 (張)", False), "series": [
                     {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": total_line, "options": {"title": "合計累", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 
                 # 下方維持不變，顯示個別法人詳情，禁用固定標籤
-                charts_payload_inst.append({"chart": make_opts(150, "外資", False), "series": [
+                # ✅ [FIX] 增加單位 (張)
+                charts_payload_inst.append({"chart": make_opts(150, "外資 (張)", False), "series": [
                     {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": f_line, "options": {"title": "累積", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-                charts_payload_inst.append({"chart": make_opts(150, "投信", False), "series": [
+                charts_payload_inst.append({"chart": make_opts(150, "投信 (張)", False), "series": [
                     {"type": "Histogram", "data": t_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": t_line, "options": {"title": "累積", "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-                charts_payload_inst.append({"chart": make_opts(150, "自營商", False), "series": [
+                charts_payload_inst.append({"chart": make_opts(150, "自營商 (張)", False), "series": [
                     {"type": "Histogram", "data": d_hist, "options": {"title": "買賣", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": d_line, "options": {"title": "累積", "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
@@ -2238,13 +2249,15 @@ elif stock_input:
                         ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
 
                 # ✅ [FIX] 禁用固定標籤
-                charts_payload_margin.append({"chart": make_opts(150, "融資", False), "series": [
+                # ✅ [FIX] 增加單位 (張)
+                charts_payload_margin.append({"chart": make_opts(150, "融資 (張)", False), "series": [
                     {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 # ✅ [FIX] 禁用固定標籤
-                charts_payload_margin.append({"chart": make_opts(150, "融券", False), "series": [
+                # ✅ [FIX] 增加單位 (張)
+                charts_payload_margin.append({"chart": make_opts(150, "融券 (張)", False), "series": [
                     {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ms_bal, "options": {"title": "餘額", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
