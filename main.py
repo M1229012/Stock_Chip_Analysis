@@ -25,6 +25,7 @@ import sys
 import os
 import tempfile
 import random
+import traceback
 
 # ✅ TradingView 圖表套件
 from streamlit_lightweight_charts import renderLightweightCharts
@@ -886,16 +887,20 @@ def get_intraday_data(stock_id, interval):
         return df
     except: return None
 
-# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (修正版：Subprocess + SeleniumBase)
-@st.cache_data(ttl=21600)
-def get_wantgoo_data(stock_id):
+# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (修正版：Subprocess + SeleniumBase + 錯誤處理)
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_wantgoo_data(stock_id, refresh_nonce):
+    """
+    爬取玩股網主力買賣超資料。
+    如果失敗，會拋出例外 (Exception)，避免快取 None。
+    """
     # 0. 確保環境有安裝 seleniumbase (如果沒有則安裝)
     try:
         import seleniumbase
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "seleniumbase", "pandas", "lxml"])
 
-    # 1. 建立爬蟲腳本字串 (整合了使用者提供的成功邏輯，但移除了 apt-get 等危險指令)
+    # 1. 建立爬蟲腳本字串 (整合了使用者提供的成功邏輯)
     # 我們使用 subprocess 執行這個腳本，以避免 Streamlit 的 Event Loop 衝突
     scraper_script = r"""
 import os
@@ -904,33 +909,17 @@ import pandas as pd
 from seleniumbase import SB
 from io import StringIO
 import random
+import time
+import tempfile
+import traceback
 
 # 從環境變數或參數獲取
 stock_id = "{stock_id}"
 url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
-MAX_RETRY = 6
+MAX_RETRY = 4
 
-def log(*a):
-    # 輸出到 stderr 避免汙染 stdout (csv output)
-    sys.stderr.write(" ".join(map(str, a)) + "\n")
-
-def looks_blocked(title: str, body_text: str) -> bool:
-    t = (title or "").lower()
-    b = (body_text or "").lower()
-    keywords = ["請稍候", "just a moment", "access denied", "cloudflare", "captcha", "驗證", "異常流量", "blocked"]
-    return any(k.lower() in t for k in keywords) or any(k.lower() in b for k in keywords)
-
-def extract_table_from_html(html: str):
-    try:
-        tables = pd.read_html(StringIO(html))
-    except Exception as e:
-        log("read_html failed:", e)
-        return None
-    for df in tables:
-        cols = [str(c).strip() for c in df.columns]
-        if ("日期" in cols) and ("買賣超" in cols) and ("家數差" in cols):
-            return df.rename(columns=lambda x: str(x).strip())
-    return None
+def log_err(msg):
+    sys.stderr.write(f"[ChildProcess] {msg}\n")
 
 def main():
     try:
@@ -938,42 +927,62 @@ def main():
         # headless=True 在 Streamlit Cloud 是必須的
         with SB(uc=True, headless=True, locale_code="zh-TW") as sb:
             for attempt in range(1, MAX_RETRY + 1):
-                log(f"Attempt {attempt}/{MAX_RETRY} connecting to {url}")
-                sb.open(url)
-                
                 try:
-                    sb.wait_for_ready_state_complete(timeout=15)
-                except:
-                    pass
-
-                title = sb.get_title()
-                body_text = sb.get_text("body")[:2000]
-
-                if looks_blocked(title, body_text):
-                    wait_s = random.uniform(5, 10)
-                    log(f"Blocked detected. Waiting {wait_s}s...")
-                    sb.sleep(wait_s)
-                    continue
-                
-                # 等待表格出現
-                try:
-                    sb.wait_for_element("main table tbody tr", timeout=20)
-                except Exception:
-                    pass 
-
-                html = sb.get_page_source()
-                df = extract_table_from_html(html)
-
-                if df is not None and not df.empty:
-                    # 輸出 CSV 到 stdout
-                    print(df.to_csv(index=False))
-                    return
-                else:
-                    log("Table not found or empty.")
-                    sb.sleep(3)
+                    # 使用更強的連線方式
+                    sb.uc_open_with_reconnect(url, reconnect_time=4)
                     
+                    # 嘗試偵測常見的 Cloudflare 標題
+                    if "Just a moment" in sb.get_title():
+                        log_err("Detected Cloudflare interstitial, waiting...")
+                        sb.sleep(6)
+                    
+                    # ✅ [關鍵] 等待表格出現，而不僅僅是 sleep
+                    # 玩股網的表格通常有這個 class 或結構
+                    try:
+                        sb.wait_for_element("table", timeout=15)
+                    except:
+                        log_err("Table element not found instantly, waiting more...")
+                        sb.sleep(3)
+
+                    html = sb.get_page_source()
+                    
+                    # 解析表格
+                    try:
+                        dfs = pd.read_html(StringIO(html))
+                    except ValueError:
+                        # No tables found
+                        dfs = []
+
+                    target_df = None
+                    for df in dfs:
+                        # 檢查關鍵欄位 (模糊比對，去除空白)
+                        cols = [str(c).strip() for c in df.columns]
+                        if any("買賣超" in c for c in cols) and any("家數差" in c for c in cols):
+                            target_df = df
+                            break
+                    
+                    if target_df is not None and not target_df.empty:
+                        # ✅ [關鍵] 寫入暫存檔，避免 stdout 汙染
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='w', encoding='utf-8-sig') as tmp:
+                            target_df.to_csv(tmp.name, index=False)
+                            # 只印出檔案路徑到 stdout
+                            print(tmp.name)
+                            return # 成功，結束
+                    else:
+                        log_err(f"Attempt {attempt}: Table not found or empty.")
+                        sb.sleep(random.uniform(2, 5))
+                        
+                except Exception as inner_e:
+                    log_err(f"Attempt {attempt} failed: {str(inner_e)}")
+                    sb.sleep(3)
+
+            # 如果重試多次都失敗
+            raise RuntimeError("Max retries reached, unable to extract table.")
+
     except Exception as e:
-        log("Error:", str(e))
+        # 將錯誤印到 stderr，讓主程式捕捉
+        log_err(traceback.format_exc())
+        sys.exit(1) # 非 0 退出碼代表失敗
 
 if __name__ == "__main__":
     main()
@@ -989,49 +998,69 @@ if __name__ == "__main__":
             
         # 3. 執行 Subprocess
         # 使用當前的 python interpreter 執行
+        # capture_output=True 會捕捉 stdout 和 stderr
         result = subprocess.run(
             [sys.executable, path],
             capture_output=True,
             text=True,
-            timeout=180 # 給予足夠的時間 (含瀏覽器啟動與重試)
+            timeout=120 # 給予足夠的時間
         )
         
         # 4. 處理結果
-        output_csv = result.stdout.strip()
+        if result.returncode != 0:
+            # 子程序執行失敗，拋出例外以避免快取
+            error_msg = result.stderr.strip() if result.stderr else "Unknown subprocess error"
+            raise RuntimeError(f"Subprocess failed: {error_msg}")
+            
+        # 成功，stdout 應該是 CSV 的檔案路徑
+        csv_path = result.stdout.strip()
         
-        # 除錯：若無輸出，檢查 stderr
-        if not output_csv and result.stderr:
-            print(f"Scraper Stderr: {result.stderr}")
+        if not csv_path or not os.path.exists(csv_path):
+            raise RuntimeError(f"No CSV path returned. Stderr: {result.stderr}")
 
-        if output_csv:
-            try:
-                df = pd.read_csv(StringIO(output_csv))
+        try:
+            # 讀取暫存的 CSV
+            df = pd.read_csv(csv_path)
+            
+            # 清理暫存 CSV
+            os.remove(csv_path)
+            
+            # 資料清洗 (配合 Streamlit 格式)
+            # 欄位可能會有空白，先標準化
+            df.columns = [str(c).strip() for c in df.columns]
+            
+            # 找出正確的欄位名稱 (有時候叫 "買賣超张数" 或其他變體)
+            buy_col = next((c for c in df.columns if "買賣超" in c), None)
+            diff_col = next((c for c in df.columns if "家數差" in c), None)
+            date_col = next((c for c in df.columns if "日期" in c), None)
+            
+            if buy_col and diff_col and date_col:
+                clean_df = df[[date_col, buy_col, diff_col]].copy()
+                clean_df.columns = ['日期', '買賣超', '家數差']
                 
-                # 資料清洗 (配合 Streamlit 格式)
-                req_cols = ['日期', '買賣超', '家數差']
-                if all(col in df.columns for col in req_cols):
-                    clean_df = df[req_cols].copy()
-                    
-                    # 處理數值 (移除逗號，轉數字)
-                    for col in ['買賣超', '家數差']:
-                        clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                    
-                    # 處理日期 (玩股網通常是 YYYY/MM/DD 或 MM/DD)
-                    # 轉成 YYYY-MM-DD
-                    clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
-                    
-                    return clean_df.sort_values('DateStr')
-            except Exception as e:
-                pass
+                # 處理數值 (移除逗號，轉數字)
+                for col in ['買賣超', '家數差']:
+                    clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 
+                # 處理日期 (玩股網通常是 YYYY/MM/DD 或 MM/DD)
+                clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
+                
+                return clean_df.sort_values('DateStr')
+            else:
+                raise ValueError("Parsed CSV missing required columns")
+                
+        except Exception as e:
+            raise RuntimeError(f"Failed to read/parse output CSV: {e}")
+
     except Exception as e:
-        pass
+        # 這裡拋出的例外會導致 st.cache_data 不會快取這個結果
+        # 下次執行時會重新跑一次
+        raise e
+        
     finally:
-        # 清理暫存檔
+        # 清理 Python 腳本暫存檔
         if os.path.exists(path):
             os.remove(path)
-
-    return None
 
 # ✅ [NEW] 抓取神秘金字塔排行 (Norawy StockHoldersTopWeek)
 @st.cache_data(ttl=21600)
@@ -1232,8 +1261,16 @@ if selected_page == "主力":
         st.subheader(f"⚡ {stock_display} 主力買賣超與家數差 (玩股網)")
         
         # 嘗試安裝/使用 seleniumbase 抓取
+        wg_df = None
+        
         with st.spinner("正在抓取主力數據 (使用 SeleniumBase)..."):
-            wg_df = get_wantgoo_data(stock_input)
+            try:
+                # ✅ [FIX] 呼叫爬蟲，如果失敗這裡會拋出例外，不會被快取
+                wg_df = get_wantgoo_data(stock_input, st.session_state.refresh_nonce)
+            except Exception as e:
+                st.warning(f"⚠️ 無法取得玩股網主力數據，可能被阻擋或無資料。\n(錯誤訊息: {str(e)})")
+                st.info("💡 建議點擊上方「強制更新籌碼資料」重試。")
+                wg_df = None
         
         if wg_df is not None and not wg_df.empty:
             # 準備 K 線圖資料 (只顯示有主力數據的日期)
@@ -1318,8 +1355,6 @@ if selected_page == "主力":
             else:
                 st.warning("無法取得股價資料以繪製對照圖表。")
                 st.dataframe(wg_df)
-        else:
-            st.warning("⚠️ 無法取得玩股網主力數據，可能被阻擋或無資料。")
 
 # ==================== Tab 6: 類股排行 (新增功能) ====================
 elif selected_page == "類股排行":
