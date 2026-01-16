@@ -1381,20 +1381,20 @@ if selected_page == "主力":
                 }
                 
                 # Plot 2: Net Buy
+                # ✅ [FIX] 移除 "數值:", 標示單位, 整數顯示 (type: 'price', precision: 0)
                 chart2 = {
-                    # ✅ [FIX] 增加單位 (張), 設定 precision: 0 移除小數點，且使用 type: 'price' 強制顯示整數
                     "chart": make_opts(150, "主力買賣超 (張)", False),
                     "series": [
-                        {"type": "Histogram", "data": net_buy_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right"}}
+                        {"type": "Histogram", "data": net_buy_data, "options": {"title": "買賣超  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "lastValueVisible": False, "priceLineVisible": False}}
                     ]
                 }
                 
                 # Plot 3: Broker Diff
+                # ✅ [FIX] 移除 "數值:", 標示單位, 整數顯示
                 chart3 = {
-                    # ✅ [FIX] 移除說明文字，增加單位 (家), 設定 precision: 0
                     "chart": make_opts(150, "買賣家數差 (家)", False),
                     "series": [
-                        {"type": "Histogram", "data": diff_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right"}}
+                        {"type": "Histogram", "data": diff_data, "options": {"title": "家數差  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "lastValueVisible": False, "priceLineVisible": False}}
                     ]
                 }
                 
@@ -1409,12 +1409,29 @@ if selected_page == "主力":
                 if 'DateStr' in display_df.columns:
                     display_df = display_df.drop(columns=['DateStr'])
                 
-                # 設定顯示格式 (集中度加回 %)
+                # ✅ [FIX] 樣式函式：數值欄位 (買賣超, 家數差, 集中度) 紅綠變色
+                def highlight_main_force(val):
+                    try:
+                        if isinstance(val, (int, float)):
+                            if val > 0: return f'color: {COLOR_UP}'
+                            elif val < 0: return f'color: {COLOR_DOWN}'
+                    except:
+                        pass
+                    return ''
+
+                # 設定顯示格式 (集中度加回 %) 並套用樣式
+                # columns to apply style
+                cols_to_style = ['買賣超', '家數差']
+                if '5日集中' in display_df.columns: cols_to_style.append('5日集中')
+                if '20日集中' in display_df.columns: cols_to_style.append('20日集中')
+
                 st.dataframe(
-                    display_df.style.format({
-                        '5日集中': '{:.2f}%',
-                        '20日集中': '{:.2f}%'
-                    }), 
+                    display_df.style
+                        .format({
+                            '5日集中': '{:.2f}%',
+                            '20日集中': '{:.2f}%'
+                        })
+                        .map(highlight_main_force, subset=cols_to_style), 
                     use_container_width=True, 
                     hide_index=True
                 )
@@ -1574,8 +1591,8 @@ elif selected_page == "多股比較":
                                 for _, row in df.iterrows():
                                      if not pd.isna(row['Volume']):
                                          sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
-                                # ✅ [FIX] precision: 0 for volume, type: 'price' to prevent truncation
-                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", **common_opts}}]
+                                # ✅ [FIX] precision: 0 for volume, type: 'price' to prevent truncation, title with suffix in header
+                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"title": "成交量(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", **common_opts}}]
                                 
                             elif indicator_type in ["KD", "MACD", "RSI"]:
                                  # Reuse existing indicators in df
@@ -1585,14 +1602,14 @@ elif selected_page == "多股比較":
                                          if not pd.isna(row['K']): k.append({"time": row['DateStr'], "value": row['K']})
                                          if not pd.isna(row['D']): d.append({"time": row['DateStr'], "value": row['D']})
                                      sub_series = [
-                                         {"type": "Line", "data": k, "options": {"color": "orange", "lineWidth": 1, **common_opts}},
-                                         {"type": "Line", "data": d, "options": {"color": "cyan", "lineWidth": 1, **common_opts}}
+                                         {"type": "Line", "data": k, "options": {"title": "K  ", "color": "orange", "lineWidth": 1, **common_opts}},
+                                         {"type": "Line", "data": d, "options": {"title": "D  ", "color": "cyan", "lineWidth": 1, **common_opts}}
                                      ]
                                  elif indicator_type == "RSI":
                                      rsi = []
                                      for _, row in df.iterrows():
                                          if not pd.isna(row['RSI']): rsi.append({"time": row['DateStr'], "value": row['RSI']})
-                                     sub_series = [{"type": "Line", "data": rsi, "options": {"color": "#AB47BC", "lineWidth": 1, **common_opts}}]
+                                     sub_series = [{"type": "Line", "data": rsi, "options": {"title": "RSI  ", "color": "#AB47BC", "lineWidth": 1, **common_opts}}]
                                  elif indicator_type == "MACD":
                                      dif, dea, hist = [], [], []
                                      for _, row in df.iterrows():
@@ -1600,9 +1617,9 @@ elif selected_page == "多股比較":
                                          if not pd.isna(row['DEA']): dea.append({"time": row['DateStr'], "value": row['DEA']})
                                          if not pd.isna(row['MACD_Hist']): hist.append({"time": row['DateStr'], "value": row['MACD_Hist'], "color": COLOR_UP if row['MACD_Hist'] >= 0 else COLOR_DOWN})
                                      sub_series = [
-                                         {"type": "Histogram", "data": hist, "options": {**common_opts}},
-                                         {"type": "Line", "data": dif, "options": {"color": "#FFD700", "lineWidth": 1, **common_opts}},
-                                         {"type": "Line", "data": dea, "options": {"color": "#00FFFF", "lineWidth": 1, **common_opts}}
+                                         {"type": "Histogram", "data": hist, "options": {"title": "MACD  ", **common_opts}},
+                                         {"type": "Line", "data": dif, "options": {"title": "DIF  ", "color": "#FFD700", "lineWidth": 1, **common_opts}},
+                                         {"type": "Line", "data": dea, "options": {"title": "DEA  ", "color": "#00FFFF", "lineWidth": 1, **common_opts}}
                                      ]
 
                             elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
@@ -1625,10 +1642,11 @@ elif selected_page == "多股比較":
                                         bar_data.append({"time": row['DateStr'], "value": val, "color": COLOR_UP if val > 0 else COLOR_DOWN})
                                         line_data.append({"time": row['DateStr'], "value": cum_val})
                                         
-                                    # ✅ [FIX] precision: 0 for shares
+                                    # ✅ [FIX] precision: 0 for shares, title
+                                    title_str = f"{indicator_type[:2]}  " if len(indicator_type)>2 else f"{indicator_type}  "
                                     sub_series = [
-                                        {"type": "Histogram", "data": bar_data, "options": {"priceScaleId": "right", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}},
-                                        {"type": "Line", "data": line_data, "options": {"color": "white", "lineWidth": 2, "priceScaleId": "left", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}}
+                                        {"type": "Histogram", "data": bar_data, "options": {"title": title_str, "priceScaleId": "right", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}},
+                                        {"type": "Line", "data": line_data, "options": {"title": "累  ", "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}}
                                     ]
                             
                             if sub_series:
@@ -1820,8 +1838,8 @@ elif stock_input:
                         
                     if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數
-                charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數，標題加上(張)
+                charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量(張)  ", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
                 k_data, d_data = [], []
@@ -1839,10 +1857,10 @@ elif stock_input:
                             
                         if not pd.isna(row['K']): k_data.append({"time": time_val, "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": time_val, "value": float(row['D'])})
-                    # ✅ [FIX] 禁用固定標籤
+                    # ✅ [FIX] 禁用固定標籤，移除 "數值:" 標題改為 K  / D  
                     charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
-                        {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                        {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                        {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
 
                 dif_data, dea_data, hist_data = [], [], []
@@ -1861,11 +1879,11 @@ elif stock_input:
                         if not pd.isna(row['DIF']): dif_data.append({"time": time_val, "value": float(row['DIF'])})
                         if not pd.isna(row['DEA']): dea_data.append({"time": time_val, "value": float(row['DEA'])})
                         if not pd.isna(row['MACD_Hist']): hist_data.append({"time": time_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
-                    # ✅ [FIX] 禁用固定標籤
+                    # ✅ [FIX] 禁用固定標籤，標題優化
                     charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
-                        {"type": "Histogram", "data": hist_data, "options": {"title": "柱", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                        {"type": "Histogram", "data": hist_data, "options": {"title": "MACD  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                        {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                        {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
 
                 rsi_data = [] # ✅ [MODIFIED] Removed rsi_80, rsi_20 lists
@@ -1885,9 +1903,9 @@ elif stock_input:
                             rsi_data.append({"time": time_val, "value": float(row['RSI'])})
                             # ✅ [MODIFIED] Removed 80/20 appending
                     
-                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series
+                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series, title优化
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
-                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
                 
                 renderLightweightCharts(charts_payload, key="tab1_kline")
@@ -2101,8 +2119,8 @@ elif stock_input:
                         # ✅ [FIX] 禁用固定標籤
                         # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
                         charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (張)", False), "series": [
-                            {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                            {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                            {"type": "Histogram", "data": chip_data, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                            {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
                     
                     renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
@@ -2173,23 +2191,23 @@ elif stock_input:
                 # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
                 # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
                 charts_payload_inst.append({"chart": make_opts(200, "三大法人合計 (張)", False), "series": [
-                    {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": total_line, "options": {"title": "合計累", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": total_line, "options": {"title": "合計累(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 
                 # 下方維持不變，顯示個別法人詳情，禁用固定標籤
                 # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
                 charts_payload_inst.append({"chart": make_opts(150, "外資 (張)", False), "series": [
-                    {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": f_line, "options": {"title": "累積", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": f_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": f_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 charts_payload_inst.append({"chart": make_opts(150, "投信 (張)", False), "series": [
-                    {"type": "Histogram", "data": t_hist, "options": {"title": "買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": t_line, "options": {"title": "累積", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": t_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": t_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 charts_payload_inst.append({"chart": make_opts(150, "自營商 (張)", False), "series": [
-                    {"type": "Histogram", "data": d_hist, "options": {"title": "買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                    {"type": "Line", "data": d_line, "options": {"title": "累積", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                    {"type": "Histogram", "data": d_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": d_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
             renderLightweightCharts(charts_payload_inst, key="tab3_inst")
 
@@ -2260,16 +2278,16 @@ elif stock_input:
                 # ✅ [FIX] 禁用固定標籤
                 # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點, type: 'price'
                 charts_payload_margin.append({"chart": make_opts(150, "融資 (張)", False), "series": [
-                    {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Histogram", "data": ml_diff, "options": {"title": "增減(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
-                    {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                    {"type": "Line", "data": ml_bal, "options": {"title": "餘額(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 # ✅ [FIX] 禁用固定標籤
                 # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點, type: 'price'
                 charts_payload_margin.append({"chart": make_opts(150, "融券 (張)", False), "series": [
-                    {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Histogram", "data": ms_diff, "options": {"title": "增減(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
-                    {"type": "Line", "data": ms_bal, "options": {"title": "餘額", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                    {"type": "Line", "data": ms_bal, "options": {"title": "餘額(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
 
             renderLightweightCharts(charts_payload_margin, key="tab4_margin")
