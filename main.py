@@ -1306,7 +1306,8 @@ if selected_page == "主力":
     if stock_input:
         stock_name = get_stock_name(stock_input)
         stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
-        st.subheader(f"⚡ {stock_display} 主力買賣超與家數差") # ✅ [FIX] 移除 (玩股網)
+        # ✅ [FIX] 移除 (玩股網)
+        st.subheader(f"⚡ {stock_display} 主力買賣超與家數差") 
         
         # 嘗試安裝/使用 seleniumbase 抓取
         wg_df = None
@@ -1372,7 +1373,7 @@ if selected_page == "主力":
                     "series": [
                         {"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
                         # ✅ [FIX] 移除主力分頁 MA 線上的水平價格線 (priceLineVisible: False)
-                        # ✅ [FIX] 加入 Title "MA5  " (兩格空白) 與 "MA20  "
+                        # ✅ [FIX] Title 改為 "MA5  " (兩格空白) 與 "MA20  "
                         {"type": "Line", "data": ma5_data, "options": {"title": "MA5  ", "color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
                         {"type": "Line", "data": ma20_data, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                     ]
@@ -1380,7 +1381,7 @@ if selected_page == "主力":
                 
                 # Plot 2: Net Buy
                 chart2 = {
-                    # ✅ [FIX] 增加單位 (張), 設定 precision: 0 移除小數點
+                    # ✅ [FIX] 增加單位 (張), 設定 precision: 0 移除小數點，且使用 type: 'price' 強制顯示整數
                     "chart": make_opts(150, "主力買賣超 (張)", False),
                     "series": [
                         {"type": "Histogram", "data": net_buy_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right"}}
@@ -1552,10 +1553,11 @@ elif selected_page == "多股比較":
                                 if not pd.isna(row['MA20']): ma20.append({"time": row['DateStr'], "value": row['MA20']})
                             
                             # ✅ [FIX] Remove horizontal dashed lines (priceLineVisible, lastValueVisible) for MAs
+                            # ✅ [FIX] MA Title spacing
                             main_series = [
                                 {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}},
-                                {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
-                                {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
+                                {"type": "Line", "data": ma5, "options": {"title": "MA5  ", "color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
+                                {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
                             payload = [{"chart": make_opts(chart_height, display_title, False), "series": main_series}]
@@ -1571,8 +1573,8 @@ elif selected_page == "多股比較":
                                 for _, row in df.iterrows():
                                      if not pd.isna(row['Volume']):
                                          sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
-                                # ✅ [FIX] precision: 0 for volume
-                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", **common_opts}}]
+                                # ✅ [FIX] precision: 0 for volume, type: 'price' to prevent truncation
+                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", **common_opts}}]
                                 
                             elif indicator_type in ["KD", "MACD", "RSI"]:
                                  # Reuse existing indicators in df
@@ -1787,14 +1789,15 @@ elif stock_input:
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": t_val, "value": float(row['BB_Low'])})
 
                 # ✅ [FIX] 禁用固定標籤
+                # ✅ [FIX] MA Title spacing: "MA5  " (two spaces)
                 ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
                 main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}}]
-                if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
-                if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
-                if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
-                if show_ma60: main_series.append({"type": "Line", "data": ma60_data, "options": {**ma_opts, "color": "lime", "lineWidth": 2, "title": "MA60"}})
-                if show_ma120: main_series.append({"type": "Line", "data": ma120_data, "options": {**ma_opts, "color": "gray", "title": "MA120"}})
-                if show_ma240: main_series.append({"type": "Line", "data": ma240_data, "options": {**ma_opts, "color": "blue", "title": "MA240"}})
+                if show_ma5: main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5  "}})
+                if show_ma10: main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10  "}})
+                if show_ma20: main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20  "}})
+                if show_ma60: main_series.append({"type": "Line", "data": ma60_data, "options": {**ma_opts, "color": "lime", "lineWidth": 2, "title": "MA60  "}})
+                if show_ma120: main_series.append({"type": "Line", "data": ma120_data, "options": {**ma_opts, "color": "gray", "title": "MA120  "}})
+                if show_ma240: main_series.append({"type": "Line", "data": ma240_data, "options": {**ma_opts, "color": "blue", "title": "MA240  "}})
                 if show_bb:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
@@ -1816,7 +1819,7 @@ elif stock_input:
                         
                     if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數
                 charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
@@ -2069,9 +2072,9 @@ elif stock_input:
                     
                     # ✅ [NEW] 加入均線到圖表
                     ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
-                    main_chart_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
-                    main_chart_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
-                    main_chart_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+                    main_chart_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5  "}})
+                    main_chart_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10  "}})
+                    main_chart_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20  "}})
 
                     # ✅ [MODIFIED] 移除 data_len
                     charts_payload_broker.append({"chart": make_opts(400, "股價 (淺色為統計區間外)", True), "series": main_chart_series})
@@ -2095,7 +2098,7 @@ elif stock_input:
                             if not pd.isna(cum_val): chip_cumulative_data.append({"time": row['DateStr'], "value": float(cum_val)})
                         
                         # ✅ [FIX] 禁用固定標籤
-                        # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點
+                        # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
                         charts_payload_broker.append({"chart": make_opts(200, f"{target_broker} 買賣 (張)", False), "series": [
                             {"type": "Histogram", "data": chip_data, "options": {"title": "買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -2134,11 +2137,12 @@ elif stock_input:
                 if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
 
             # ✅ [NEW] 整合 K 線與均線
+            # ✅ [FIX] MA Title spacing
             ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
             main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
-            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
-            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
-            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5  "}})
+            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10  "}})
+            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20  "}})
 
             # ✅ [MODIFIED] 移除 data_len
             charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": main_series})
@@ -2166,14 +2170,14 @@ elif stock_input:
                     total_line.append({"time": row['DateStr'], "value": float(total_cum)})
 
                 # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
                 charts_payload_inst.append({"chart": make_opts(200, "三大法人合計 (張)", False), "series": [
                     {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": total_line, "options": {"title": "合計累", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 
                 # 下方維持不變，顯示個別法人詳情，禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
                 charts_payload_inst.append({"chart": make_opts(150, "外資 (張)", False), "series": [
                     {"type": "Histogram", "data": f_hist, "options": {"title": "買賣", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": f_line, "options": {"title": "累積", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -2224,11 +2228,12 @@ elif stock_input:
                 if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
 
             # ✅ [NEW] 整合 K 線與均線
+            # ✅ [FIX] MA Title spacing
             ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
             main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
-            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5"}})
-            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10"}})
-            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20"}})
+            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5  "}})
+            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10  "}})
+            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20  "}})
 
             # ✅ [MODIFIED] 移除 data_len
             charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": main_series})
@@ -2252,14 +2257,14 @@ elif stock_input:
                         ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
 
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點, type: 'price'
                 charts_payload_margin.append({"chart": make_opts(150, "融資 (張)", False), "series": [
                     {"type": "Histogram", "data": ml_diff, "options": {"title": "增減", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
                     {"type": "Line", "data": ml_bal, "options": {"title": "餘額", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點, type: 'price'
                 charts_payload_margin.append({"chart": make_opts(150, "融券 (張)", False), "series": [
                     {"type": "Histogram", "data": ms_diff, "options": {"title": "增減", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     # ✅ [FIX] 餘額改用橘色
