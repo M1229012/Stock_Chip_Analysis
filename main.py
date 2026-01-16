@@ -887,26 +887,58 @@ def get_intraday_data(stock_id, interval):
         return df
     except: return None
 
-# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (修正版：Subprocess + SeleniumBase + 錯誤處理)
+# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (修正版：Permission Denied Fix + Subprocess)
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_wantgoo_data(stock_id, refresh_nonce):
     """
     爬取玩股網主力買賣超資料。
-    如果失敗，會拋出例外 (Exception)，避免快取 None。
+    修正 Permission Denied: 自動在 /tmp/sb_lib 安裝 seleniumbase，
+    並強制子程序載入該路徑，確保 uc_driver 可寫入。
     """
-    # 0. 確保環境有安裝 seleniumbase (如果沒有則安裝)
-    try:
-        import seleniumbase
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "seleniumbase", "pandas", "lxml"])
+    
+    # 0. 準備可寫入的 Library 路徑 (解決 Streamlit Cloud 唯讀權限問題)
+    SB_LIB_PATH = "/tmp/sb_lib"
+    os.makedirs(SB_LIB_PATH, exist_ok=True)
+    
+    # 檢查是否已安裝 seleniumbase 到暫存區，若無則安裝
+    # 注意：使用 --no-deps 避免安裝依賴導致時間過長，假設 pandas/lxml 系統已有或另外裝
+    # 但為了保險，這裡只指定 target
+    if not os.path.exists(os.path.join(SB_LIB_PATH, "seleniumbase")):
+        try:
+            # 安裝 seleniumbase 到 /tmp/sb_lib
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", 
+                "seleniumbase", "pandas", "lxml", 
+                "-t", SB_LIB_PATH, 
+                "--no-cache-dir", "--quiet"
+            ], check=True)
+        except subprocess.CalledProcessError:
+            pass # 嘗試繼續，也許系統已經有了
 
-    # 1. 建立爬蟲腳本字串 (整合了使用者提供的成功邏輯)
-    # 我們使用 subprocess 執行這個腳本，以避免 Streamlit 的 Event Loop 衝突
+    # 1. 建立爬蟲腳本字串
+    # 關鍵修正：在 import 之前，將 SB_LIB_PATH 加入 sys.path
     scraper_script = r"""
-import os
 import sys
+import os
+
+# ✅ [CRITICAL FIX] 強制優先載入 /tmp/sb_lib 中的 seleniumbase
+# 這樣它就會去 /tmp/sb_lib/seleniumbase/drivers 下找驅動，而我們對該路徑有寫入權限
+sb_lib_path = "/tmp/sb_lib"
+if sb_lib_path not in sys.path:
+    sys.path.insert(0, sb_lib_path)
+
 import pandas as pd
-from seleniumbase import SB
+# 嘗試 import SB，如果失敗可能是安裝問題
+try:
+    from seleniumbase import SB
+except ImportError:
+    # Fallback: 如果 /tmp 載入失敗，嘗試系統預設
+    try:
+        from seleniumbase import SB
+    except ImportError:
+        sys.stderr.write("SeleniumBase not found in /tmp or system.\n")
+        sys.exit(1)
+
 from io import StringIO
 import random
 import time
@@ -936,8 +968,7 @@ def main():
                         log_err("Detected Cloudflare interstitial, waiting...")
                         sb.sleep(6)
                     
-                    # ✅ [關鍵] 等待表格出現，而不僅僅是 sleep
-                    # 玩股網的表格通常有這個 class 或結構
+                    # ✅ [關鍵] 等待表格出現
                     try:
                         sb.wait_for_element("table", timeout=15)
                     except:
@@ -950,7 +981,6 @@ def main():
                     try:
                         dfs = pd.read_html(StringIO(html))
                     except ValueError:
-                        # No tables found
                         dfs = []
 
                     target_df = None
@@ -990,46 +1020,36 @@ if __name__ == "__main__":
     # 替換股票代碼
     scraper_script = scraper_script.replace("{stock_id}", str(stock_id))
 
-    # 2. 寫入暫存檔 (使用 tempfile 確保跨平台相容且有寫入權限)
+    # 2. 寫入暫存檔
     fd, path = tempfile.mkstemp(suffix=".py")
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(scraper_script)
             
         # 3. 執行 Subprocess
-        # 使用當前的 python interpreter 執行
-        # capture_output=True 會捕捉 stdout 和 stderr
         result = subprocess.run(
             [sys.executable, path],
             capture_output=True,
             text=True,
-            timeout=120 # 給予足夠的時間
+            timeout=120
         )
         
         # 4. 處理結果
         if result.returncode != 0:
-            # 子程序執行失敗，拋出例外以避免快取
             error_msg = result.stderr.strip() if result.stderr else "Unknown subprocess error"
             raise RuntimeError(f"Subprocess failed: {error_msg}")
             
-        # 成功，stdout 應該是 CSV 的檔案路徑
         csv_path = result.stdout.strip()
         
         if not csv_path or not os.path.exists(csv_path):
             raise RuntimeError(f"No CSV path returned. Stderr: {result.stderr}")
 
         try:
-            # 讀取暫存的 CSV
             df = pd.read_csv(csv_path)
-            
-            # 清理暫存 CSV
             os.remove(csv_path)
             
-            # 資料清洗 (配合 Streamlit 格式)
-            # 欄位可能會有空白，先標準化
+            # 資料清洗
             df.columns = [str(c).strip() for c in df.columns]
-            
-            # 找出正確的欄位名稱 (有時候叫 "買賣超张数" 或其他變體)
             buy_col = next((c for c in df.columns if "買賣超" in c), None)
             diff_col = next((c for c in df.columns if "家數差" in c), None)
             date_col = next((c for c in df.columns if "日期" in c), None)
@@ -1037,14 +1057,9 @@ if __name__ == "__main__":
             if buy_col and diff_col and date_col:
                 clean_df = df[[date_col, buy_col, diff_col]].copy()
                 clean_df.columns = ['日期', '買賣超', '家數差']
-                
-                # 處理數值 (移除逗號，轉數字)
                 for col in ['買賣超', '家數差']:
                     clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                
-                # 處理日期 (玩股網通常是 YYYY/MM/DD 或 MM/DD)
                 clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
-                
                 return clean_df.sort_values('DateStr')
             else:
                 raise ValueError("Parsed CSV missing required columns")
@@ -1053,12 +1068,9 @@ if __name__ == "__main__":
             raise RuntimeError(f"Failed to read/parse output CSV: {e}")
 
     except Exception as e:
-        # 這裡拋出的例外會導致 st.cache_data 不會快取這個結果
-        # 下次執行時會重新跑一次
         raise e
         
     finally:
-        # 清理 Python 腳本暫存檔
         if os.path.exists(path):
             os.remove(path)
 
