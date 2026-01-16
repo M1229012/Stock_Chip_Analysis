@@ -842,17 +842,14 @@ def get_stock_price(stock_id, refresh_nonce=0):
     if df is None or df.empty: return None
 
     try:
-        # ✅ [FIX] 強制轉換時區為 Asia/Taipei，避免 UTC 時間造成的日期位移
-        # yfinance 通常返回 UTC 時間 (例如 2024-01-15 00:00 UTC)
-        # 如果直接轉字串，可能會變成 2024-01-15。但如果下載時間是收盤前，可能會是前一天。
-        # 這裡強制先轉台北時間，確保日期正確。
-        if df.index.tz is not None:
-            df.index = df.index.tz_convert('Asia/Taipei')
+        # ✅ [FIX] 使用 .dt.date 直接取得日期，避免時區轉換造成的誤差
+        # yfinance 的 index 是 datetime，可能帶有時區或為 UTC
+        # 直接轉為 date 物件再轉字串，通常能對齊當地的交易日
+        df['DateStr'] = df.index.date.astype(str)
         
-        # 移除時區資訊，保留本地時間
+        # 移除時區資訊，避免後續計算報錯
         df.index = df.index.tz_localize(None)
         
-        df['DateStr'] = df.index.strftime('%Y-%m-%d')
         df = calculate_technical_indicators(df)
         return df
     except: return None
@@ -1548,7 +1545,7 @@ elif selected_page == "多股比較":
                             
                             # ✅ [FIX] Remove horizontal dashed lines (priceLineVisible, lastValueVisible) for MAs
                             main_series = [
-                                {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
+                                {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False, "priceLineVisible": False}},
                                 {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
                                 {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
