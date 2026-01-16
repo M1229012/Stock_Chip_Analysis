@@ -1306,7 +1306,7 @@ if selected_page == "主力":
     if stock_input:
         stock_name = get_stock_name(stock_input)
         stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
-        st.subheader(f"⚡ {stock_display} 主力買賣超與家數差 (玩股網)")
+        st.subheader(f"⚡ {stock_display} 主力買賣超與家數差")
         
         # 嘗試安裝/使用 seleniumbase 抓取
         wg_df = None
@@ -1316,7 +1316,7 @@ if selected_page == "主力":
                 # ✅ [FIX] 呼叫爬蟲，如果失敗這裡會拋出例外，不會被快取
                 wg_df = get_wantgoo_data(stock_input, st.session_state.refresh_nonce)
             except Exception as e:
-                st.warning(f"⚠️ 無法取得玩股網主力數據，可能被阻擋或無資料。\n(錯誤訊息: {str(e)})")
+                st.warning(f"⚠️ 無法取得主力數據，可能被阻擋或無資料。\n(錯誤訊息: {str(e)})")
                 st.info("💡 建議點擊上方「強制更新籌碼資料」重試。")
                 wg_df = None
         
@@ -1371,8 +1371,9 @@ if selected_page == "主力":
                     "chart": make_opts(350, "股價", True),
                     "series": [
                         {"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
-                        {"type": "Line", "data": ma5_data, "options": {"color": "orange", "lineWidth": 1}},
-                        {"type": "Line", "data": ma20_data, "options": {"color": "#ff00ff", "lineWidth": 1}}
+                        # ✅ [FIX] 移除主力分頁 MA 線上的水平價格線 (priceLineVisible: False)
+                        {"type": "Line", "data": ma5_data, "options": {"color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
+                        {"type": "Line", "data": ma20_data, "options": {"color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                     ]
                 }
                 
@@ -1680,7 +1681,7 @@ elif stock_input:
                     "secondsVisible": False
                 },
                 # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
-                "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75},
+                "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
                 "crosshair": {
                     "mode": 1,
                     "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
