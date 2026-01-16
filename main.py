@@ -20,6 +20,10 @@ import shutil
 import twstock
 import copy
 import numpy as np
+import subprocess
+import sys
+import os
+import tempfile
 
 # ✅ TradingView 圖表套件
 from streamlit_lightweight_charts import renderLightweightCharts
@@ -881,56 +885,121 @@ def get_intraday_data(stock_id, interval):
         return df
     except: return None
 
-# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲
+# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (使用 Subprocess + SeleniumBase)
 @st.cache_data(ttl=21600)
 def get_wantgoo_data(stock_id):
-    driver = get_driver()
-    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
-    
+    # 0. 確保環境有安裝 seleniumbase
     try:
-        driver.get(url)
-        # 等待表格載入
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "table"))
+        import seleniumbase
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "seleniumbase", "pandas", "lxml"])
+
+    # 1. 建立爬蟲腳本字串 (仿照您提供的 Successful Code)
+    # 我們使用 subprocess 執行這個腳本，以避免 Streamlit 的 Event Loop 衝突
+    scraper_script = r"""
+import os
+import sys
+import pandas as pd
+from seleniumbase import SB
+from io import StringIO
+import random
+
+# 從環境變數或參數獲取
+stock_id = "{stock_id}"
+url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+
+def main():
+    try:
+        # 使用 SeleniumBase (uc=True) 繞過防護
+        with SB(uc=True, headless=True, locale_code="zh-TW") as sb:
+            sb.open(url)
+            
+            # 簡單的防阻擋處理 (偵測標題)
+            if "Just a moment" in sb.get_title() or "Access denied" in sb.get_title():
+                sb.sleep(5)
+            
+            # 等待表格出現
+            try:
+                sb.wait_for_element("main table tbody tr", timeout=25)
+            except Exception:
+                pass # 嘗試直接抓取
+
+            html = sb.get_page_source()
+            
+            # 解析表格
+            dfs = pd.read_html(StringIO(html))
+            target_df = None
+            for df in dfs:
+                # 檢查關鍵欄位
+                if "買賣超" in str(df.columns) and "家數差" in str(df.columns):
+                    target_df = df
+                    break
+            
+            if target_df is not None:
+                # 清洗欄位名稱
+                target_df.columns = [str(c).strip() for c in target_df.columns]
+                # 輸出 CSV 到 stdout
+                print(target_df.to_csv(index=False))
+            else:
+                # 沒抓到資料
+                pass
+
+    except Exception as e:
+        # 錯誤處理 (可輸出到 stderr)
+        sys.stderr.write(str(e))
+
+if __name__ == "__main__":
+    main()
+"""
+    # 替換股票代碼
+    scraper_script = scraper_script.replace("{stock_id}", str(stock_id))
+
+    # 2. 寫入暫存檔
+    fd, path = tempfile.mkstemp(suffix=".py")
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(scraper_script)
+            
+        # 3. 執行 Subprocess
+        # 使用當前的 python interpreter 執行
+        result = subprocess.run(
+            [sys.executable, path],
+            capture_output=True,
+            text=True,
+            timeout=120 # 給予足夠的時間 (含瀏覽器啟動)
         )
         
-        # 簡單隨機等待，模擬使用者
-        time.sleep(1.5)
-        
-        html = driver.page_source
-        dfs = pd.read_html(StringIO(html))
-        
-        target_df = None
-        for df in dfs:
-            # 檢查關鍵欄位
-            if "買賣超" in str(df.columns) and "家數差" in str(df.columns):
-                target_df = df
-                break
-        
-        if target_df is not None:
-            # 清洗欄位名稱 (移除多餘空白)
-            target_df.columns = [str(c).strip() for c in target_df.columns]
-            
-            # 確保有需要的欄位
-            req_cols = ['日期', '買賣超', '家數差']
-            if all(col in target_df.columns for col in req_cols):
-                clean_df = target_df[req_cols].copy()
+        # 4. 處理結果
+        output_csv = result.stdout.strip()
+        if output_csv:
+            try:
+                df = pd.read_csv(StringIO(output_csv))
                 
-                # 處理數值 (移除逗號，轉數字)
-                for col in ['買賣超', '家數差']:
-                    clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                # 資料清洗 (配合 Streamlit 格式)
+                # 確保有需要的欄位
+                req_cols = ['日期', '買賣超', '家數差']
+                if all(col in df.columns for col in req_cols):
+                    clean_df = df[req_cols].copy()
+                    
+                    # 處理數值 (移除逗號，轉數字)
+                    for col in ['買賣超', '家數差']:
+                        clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    
+                    # 處理日期 (玩股網通常是 YYYY/MM/DD 或 MM/DD)
+                    # 轉成 YYYY-MM-DD
+                    clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
+                    
+                    return clean_df.sort_values('DateStr')
+            except Exception as e:
+                pass
                 
-                # 處理日期 (玩股網通常是 YYYY/MM/DD 或 MM/DD，這裡假設它抓下來是字串)
-                # 為了與 K 線圖對齊，最好轉成 YYYY-MM-DD
-                # 若原本就是 YYYY/MM/DD，直接取代 / 為 - 即可
-                clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
-                
-                return clean_df.sort_values('DateStr')
-                
-    except Exception:
-        return None
+    except Exception as e:
+        pass
     finally:
-        driver.quit()
+        # 清理暫存檔
+        if os.path.exists(path):
+            os.remove(path)
+
     return None
 
 # ✅ [NEW] 抓取神秘金字塔排行 (Norawy StockHoldersTopWeek)
@@ -1032,13 +1101,6 @@ def get_all_stock_options():
             stock_options.append(f"{code} {info.name}")
     return stock_options
 
-def get_stock_name(stock_id):
-    try:
-        if stock_id in twstock.codes:
-            return twstock.codes[stock_id].name
-        return ""
-    except: return ""
-
 st.title(f"📊 籌碼K線")
 
 tz = pytz.timezone('Asia/Taipei')
@@ -1138,7 +1200,8 @@ if selected_page == "主力":
         stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
         st.subheader(f"⚡ {stock_display} 主力買賣超與家數差 (玩股網)")
         
-        with st.spinner("正在抓取主力數據..."):
+        # 嘗試安裝/使用 seleniumbase 抓取
+        with st.spinner("正在抓取主力數據 (使用 SeleniumBase)..."):
             wg_df = get_wantgoo_data(stock_input)
         
         if wg_df is not None and not wg_df.empty:
