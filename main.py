@@ -900,7 +900,7 @@ def get_wantgoo_data(stock_id, refresh_nonce):
     SB_LIB_PATH = "/tmp/sb_lib"
     os.makedirs(SB_LIB_PATH, exist_ok=True)
     
-    # 檢查是否已安裝 seleniumbase 到暫存區，若無則安裝
+    # 檢查是否已安裝 seleniumbase 這裡，若無則安裝
     # 注意：使用 --no-deps 避免安裝依賴導致時間過長，假設 pandas/lxml 系統已有或另外裝
     # 但為了保險，這裡只指定 target
     if not os.path.exists(os.path.join(SB_LIB_PATH, "seleniumbase")):
