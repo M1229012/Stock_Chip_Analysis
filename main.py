@@ -391,7 +391,6 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             "timeVisible": True, # 分時資料需要顯示時間
             "secondsVisible": False
         },
-        # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
         "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
         "crosshair": {
             "mode": 1,
@@ -881,6 +880,58 @@ def get_intraday_data(stock_id, interval):
         return df
     except: return None
 
+# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲
+@st.cache_data(ttl=21600)
+def get_wantgoo_data(stock_id):
+    driver = get_driver()
+    url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+    
+    try:
+        driver.get(url)
+        # 等待表格載入
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "table"))
+        )
+        
+        # 簡單隨機等待，模擬使用者
+        time.sleep(1.5)
+        
+        html = driver.page_source
+        dfs = pd.read_html(StringIO(html))
+        
+        target_df = None
+        for df in dfs:
+            # 檢查關鍵欄位
+            if "買賣超" in str(df.columns) and "家數差" in str(df.columns):
+                target_df = df
+                break
+        
+        if target_df is not None:
+            # 清洗欄位名稱 (移除多餘空白)
+            target_df.columns = [str(c).strip() for c in target_df.columns]
+            
+            # 確保有需要的欄位
+            req_cols = ['日期', '買賣超', '家數差']
+            if all(col in target_df.columns for col in req_cols):
+                clean_df = target_df[req_cols].copy()
+                
+                # 處理數值 (移除逗號，轉數字)
+                for col in ['買賣超', '家數差']:
+                    clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                
+                # 處理日期 (玩股網通常是 YYYY/MM/DD 或 MM/DD，這裡假設它抓下來是字串)
+                # 為了與 K 線圖對齊，最好轉成 YYYY-MM-DD
+                # 若原本就是 YYYY/MM/DD，直接取代 / 為 - 即可
+                clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
+                
+                return clean_df.sort_values('DateStr')
+                
+    except Exception:
+        return None
+    finally:
+        driver.quit()
+    return None
+
 # ✅ [NEW] 抓取神秘金字塔排行 (Norawy StockHoldersTopWeek)
 @st.cache_data(ttl=21600)
 def get_norway_rank_data():
@@ -1070,16 +1121,110 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "K線"
 
+# ✅ [NEW] 新增 "主力" 與 "類股排行" 選項
 selected_page = st.radio(
     "功能分頁", 
-    ["K線", "分點", "法人", "融資券", "大戶", "大戶增減排行", "多股比較"], 
+    ["K線", "分點", "法人", "融資券", "主力", "大戶", "類股排行", "多股比較"], 
     horizontal=True,
     label_visibility="collapsed",
     key="current_page"
 )
 
-# ==================== Tab 6: 大戶增減排行 (新增功能) ====================
-if selected_page == "大戶增減排行":
+# ==================== Tab: 主力 (New) ====================
+if selected_page == "主力":
+    st.subheader(f"⚡ {stock_display} 主力買賣超與家數差 (玩股網)")
+    
+    with st.spinner("正在抓取主力數據..."):
+        wg_df = get_wantgoo_data(stock_input)
+    
+    if wg_df is not None and not wg_df.empty:
+        # 準備 K 線圖資料 (只顯示有主力數據的日期)
+        # 先抓股價
+        if df_price_daily is None:
+            df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
+        
+        if df_price_daily is not None:
+            # Merge to ensure dates match
+            merged_wg = pd.merge(df_price_daily, wg_df, on='DateStr', how='inner')
+            
+            # Charts
+            candlestick_data = []
+            ma5_data, ma20_data = [], []
+            net_buy_data = []
+            diff_data = []
+            
+            for i, row in merged_wg.iterrows():
+                # K-Line
+                candlestick_data.append({
+                    "time": row['DateStr'], 
+                    "open": row['Open'], "high": row['High'], 
+                    "low": row['Low'], "close": row['Close']
+                })
+                # MA
+                if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": row['MA5']})
+                if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": row['MA20']})
+                
+                # Net Buy (主力買賣超)
+                nb = row['買賣超']
+                net_buy_data.append({
+                    "time": row['DateStr'], 
+                    "value": nb, 
+                    "color": COLOR_UP if nb > 0 else COLOR_DOWN
+                })
+                
+                # Diff (家數差) - Note: Negative diff often implies concentration (Good -> Red)
+                # Positive diff implies dispersion (Bad -> Green)
+                df_val = row['家數差']
+                # Logic: if diff < 0 (Concentrated) -> Red, else Green
+                diff_color = COLOR_UP if df_val < 0 else COLOR_DOWN
+                diff_data.append({
+                    "time": row['DateStr'], 
+                    "value": df_val, 
+                    "color": diff_color
+                })
+
+            # Plot 1: K-Line
+            chart1 = {
+                "chart": make_opts(350, "股價", True),
+                "series": [
+                    {"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
+                    {"type": "Line", "data": ma5_data, "options": {"color": "orange", "lineWidth": 1}},
+                    {"type": "Line", "data": ma20_data, "options": {"color": "#ff00ff", "lineWidth": 1}}
+                ]
+            }
+            
+            # Plot 2: Net Buy
+            chart2 = {
+                "chart": make_opts(150, "主力買賣超", False),
+                "series": [
+                    {"type": "Histogram", "data": net_buy_data, "options": {"priceScaleId": "right"}}
+                ]
+            }
+            
+            # Plot 3: Broker Diff
+            chart3 = {
+                "chart": make_opts(150, "買賣家數差 (負值=集中=紅)", False),
+                "series": [
+                    {"type": "Histogram", "data": diff_data, "options": {"priceScaleId": "right"}}
+                ]
+            }
+            
+            renderLightweightCharts([chart1, chart2, chart3], key="wg_charts")
+            
+            # Data Table
+            st.markdown("#### 詳細數據")
+            # Sort desc for table
+            display_df = wg_df.sort_values('DateStr', ascending=False)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            
+        else:
+            st.warning("無法取得股價資料以繪製對照圖表。")
+            st.dataframe(wg_df)
+    else:
+        st.warning("⚠️ 無法取得玩股網主力數據，可能被阻擋或無資料。")
+
+# ==================== Tab 6: 類股排行 (新增功能) ====================
+elif selected_page == "類股排行":
     st.subheader("🏆 大股東持股排行榜 (Top 100)")
     
     # ✅ [FIX] 移除 st.spinner，直接執行
@@ -2085,3 +2230,218 @@ elif stock_input:
     else:
         st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
         st.info("可能有以下原因：\n1. 此股票為「興櫃股票」或 Yahoo Finance 無資料。\n2. 股票代號輸入錯誤。\n3. Yahoo API 暫時連線失敗，請稍後再試。")
+
+# ==================== Tab 6: 類股排行 (新增功能) ====================
+if selected_page == "類股排行":
+    st.subheader("🏆 大股東持股排行榜 (Top 100)")
+    
+    # ✅ [FIX] 移除 st.spinner，直接執行
+    rank_df = get_norway_rank_data()
+    
+    if rank_df is not None and not rank_df.empty:
+        # ✅ [FIX] 重設索引並加入 KEY，確保選取功能正常運作
+        rank_df = rank_df.reset_index(drop=True)
+        
+        # ✅ [NEW] 樣式函式：漲紅跌綠
+        def highlight_val(val):
+            try:
+                # 移除可能的非數字字元 (例如 %)
+                clean_val = str(val).replace('%', '').replace(',', '').strip()
+                v = float(clean_val)
+                if v > 0:
+                    return f'color: {COLOR_UP}' # 紅
+                elif v < 0:
+                    return f'color: {COLOR_DOWN}' # 綠
+            except:
+                pass
+            return ''
+            
+        # 套用樣式 (排除第一欄股票名稱)
+        styled_df = rank_df.style.map(highlight_val, subset=rank_df.columns[1:])
+        
+        event = st.dataframe(
+            styled_df, # 使用有樣式的 DF
+            use_container_width=True, 
+            hide_index=True,
+            on_select="rerun", 
+            selection_mode="single-row",
+            key="rank_table" # 關鍵修正：加入固定 Key
+        )
+        
+        # 處理點擊事件
+        if len(event.selection.rows) > 0:
+            selected_row_idx = event.selection.rows[0]
+            # 取得選中列的資料 (第一欄就是股票名稱/代號)
+            stock_str = str(rank_df.iloc[selected_row_idx, 0])
+            
+            if stock_str:
+                # 提取代號 (4碼數字)
+                match = re.search(r'(\d{4})', stock_str)
+                if match:
+                    code = match.group(1)
+                    
+                    # ✅ [FIX] 改用暫存變數控制跳轉，避免在 widget 建立後修改 key 導致失效
+                    st.session_state["__jump_stock_code"] = code
+                    st.session_state["__jump_page"] = "K線"
+                    
+                    # 更新搜尋次數 (這不是 widget key，可以直接改)
+                    st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                    
+                    st.rerun()
+
+    else:
+        st.warning("⚠️ 無法取得排行資料，請稍後再試。")
+
+# ==================== Tab 7: 多股比較 (New) ====================
+elif selected_page == "多股比較":
+    st.subheader("📈 多股 K 線比較")
+    
+    # Inputs for comparison
+    with st.expander("⚙️ 設定比較股票與指標", expanded=True):
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        stock_inputs = []
+        with c1: stock_inputs.append(st.text_input("股票 1", placeholder="2330"))
+        with c2: stock_inputs.append(st.text_input("股票 2", placeholder="2317"))
+        with c3: stock_inputs.append(st.text_input("股票 3", placeholder="2454"))
+        with c4: stock_inputs.append(st.text_input("股票 4", placeholder=""))
+        with c5: stock_inputs.append(st.text_input("股票 5", placeholder=""))
+        with c6: stock_inputs.append(st.text_input("股票 6", placeholder=""))
+        
+        indicator_type = st.selectbox(
+            "選擇副圖指標", 
+            ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超"]
+        )
+    
+    # Process each stock
+    valid_stocks = [s.strip() for s in stock_inputs if s.strip()]
+    num_stocks = len(valid_stocks)
+    
+    if num_stocks > 0:
+        # Determine grid cols and height
+        if num_stocks == 1:
+            cols_per_row = 1
+            chart_height = 600
+        elif num_stocks == 2:
+            cols_per_row = 2
+            chart_height = 500
+        else:
+            cols_per_row = 2
+            # ✅ [MODIFIED] Changed to 400 per user request
+            chart_height = 400
+        
+        # Calculate needed rows
+        rows = math.ceil(num_stocks / cols_per_row)
+        
+        for r in range(rows):
+            cols = st.columns(cols_per_row)
+            for c in range(cols_per_row):
+                idx = r * cols_per_row + c
+                if idx < num_stocks:
+                    code = valid_stocks[idx]
+                    name = get_stock_name(code)
+                    display_title = f"{code} {name}" if name else code
+                    
+                    with cols[c]:
+                        # Fetch Data
+                        df = get_stock_price(code, st.session_state.refresh_nonce)
+                        
+                        if df is not None and not df.empty:
+                            # Prepare Data
+                            chart_data = []
+                            ma5, ma20 = [], []
+                            
+                            # 1. Main Chart (K-Line + MA)
+                            for _, row in df.iterrows():
+                                if not pd.isna(row['Open']):
+                                    chart_data.append({
+                                        "time": row['DateStr'], 
+                                        "open": row['Open'], "high": row['High'], 
+                                        "low": row['Low'], "close": row['Close']
+                                    })
+                                if not pd.isna(row['MA5']): ma5.append({"time": row['DateStr'], "value": row['MA5']})
+                                if not pd.isna(row['MA20']): ma20.append({"time": row['DateStr'], "value": row['MA20']})
+                            
+                            # ✅ [FIX] Remove horizontal dashed lines (priceLineVisible, lastValueVisible) for MAs
+                            main_series = [
+                                {"type": "Candlestick", "data": chart_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
+                                {"type": "Line", "data": ma5, "options": {"color": "orange", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}},
+                                {"type": "Line", "data": ma20, "options": {"color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
+                            ]
+                            
+                            payload = [{"chart": make_opts(chart_height, display_title, False), "series": main_series}]
+                            
+                            # 2. Sub Chart
+                            sub_data = []
+                            sub_series = []
+                            
+                            # ✅ [FIX] Remove horizontal dashed lines for Sub-charts
+                            common_opts = {"lastValueVisible": False, "priceLineVisible": False}
+                            
+                            if indicator_type == "成交量":
+                                for _, row in df.iterrows():
+                                     if not pd.isna(row['Volume']):
+                                         sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
+                                sub_series = [{"type": "Histogram", "data": sub_data, "options": {"priceFormat": {"type": "volume"}, "priceScaleId": "right", **common_opts}}]
+                                
+                            elif indicator_type in ["KD", "MACD", "RSI"]:
+                                 # Reuse existing indicators in df
+                                 if indicator_type == "KD":
+                                     k, d = [], []
+                                     for _, row in df.iterrows():
+                                         if not pd.isna(row['K']): k.append({"time": row['DateStr'], "value": row['K']})
+                                         if not pd.isna(row['D']): d.append({"time": row['DateStr'], "value": row['D']})
+                                     sub_series = [
+                                         {"type": "Line", "data": k, "options": {"color": "orange", "lineWidth": 1, **common_opts}},
+                                         {"type": "Line", "data": d, "options": {"color": "cyan", "lineWidth": 1, **common_opts}}
+                                     ]
+                                 elif indicator_type == "RSI":
+                                     rsi = []
+                                     for _, row in df.iterrows():
+                                         if not pd.isna(row['RSI']): rsi.append({"time": row['DateStr'], "value": row['RSI']})
+                                     sub_series = [{"type": "Line", "data": rsi, "options": {"color": "#AB47BC", "lineWidth": 1, **common_opts}}]
+                                 elif indicator_type == "MACD":
+                                     dif, dea, hist = [], [], []
+                                     for _, row in df.iterrows():
+                                         if not pd.isna(row['DIF']): dif.append({"time": row['DateStr'], "value": row['DIF']})
+                                         if not pd.isna(row['DEA']): dea.append({"time": row['DateStr'], "value": row['DEA']})
+                                         if not pd.isna(row['MACD_Hist']): hist.append({"time": row['DateStr'], "value": row['MACD_Hist'], "color": COLOR_UP if row['MACD_Hist'] >= 0 else COLOR_DOWN})
+                                     sub_series = [
+                                         {"type": "Histogram", "data": hist, "options": {**common_opts}},
+                                         {"type": "Line", "data": dif, "options": {"color": "#FFD700", "lineWidth": 1, **common_opts}},
+                                         {"type": "Line", "data": dea, "options": {"color": "#00FFFF", "lineWidth": 1, **common_opts}}
+                                     ]
+
+                            elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
+                                # Need extra fetch
+                                s_date = df['DateStr'].iloc[0]
+                                e_date = df['DateStr'].iloc[-1]
+                                inst_df = get_institutional_data(code, s_date, e_date)
+                                if inst_df is not None:
+                                    # Merge
+                                    m_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
+                                    col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超"}
+                                    target_col = col_map[indicator_type]
+                                    
+                                    bar_data = []
+                                    line_data = []
+                                    cum_val = 0
+                                    for _, row in m_df.iterrows():
+                                        val = row[target_col]
+                                        cum_val += val
+                                        bar_data.append({"time": row['DateStr'], "value": val, "color": COLOR_UP if val > 0 else COLOR_DOWN})
+                                        line_data.append({"time": row['DateStr'], "value": cum_val})
+                                        
+                                    sub_series = [
+                                        {"type": "Histogram", "data": bar_data, "options": {"priceScaleId": "right", **common_opts}},
+                                        {"type": "Line", "data": line_data, "options": {"color": "white", "lineWidth": 2, "priceScaleId": "left", **common_opts}}
+                                    ]
+                            
+                            if sub_series:
+                                # Append sub chart
+                                chart_opts = make_opts(150, indicator_type, True)
+                                if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
+                                payload.append({"chart": chart_opts, "series": sub_series})
+                            
+                            renderLightweightCharts(payload, key=f"compare_{idx}_{code}")
+                        else:
+                            st.warning(f"⚠️ {code} 無資料")
