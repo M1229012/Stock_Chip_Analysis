@@ -24,6 +24,7 @@ import subprocess
 import sys
 import os
 import tempfile
+import random
 
 # ✅ TradingView 圖表套件
 from streamlit_lightweight_charts import renderLightweightCharts
@@ -885,16 +886,16 @@ def get_intraday_data(stock_id, interval):
         return df
     except: return None
 
-# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (使用 Subprocess + SeleniumBase)
+# ✅ [NEW] 新增玩股網「主力買賣超與家數差」爬蟲 (修正版：Subprocess + SeleniumBase)
 @st.cache_data(ttl=21600)
 def get_wantgoo_data(stock_id):
-    # 0. 確保環境有安裝 seleniumbase
+    # 0. 確保環境有安裝 seleniumbase (如果沒有則安裝)
     try:
         import seleniumbase
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "seleniumbase", "pandas", "lxml"])
 
-    # 1. 建立爬蟲腳本字串 (仿照您提供的 Successful Code)
+    # 1. 建立爬蟲腳本字串 (整合了使用者提供的成功邏輯，但移除了 apt-get 等危險指令)
     # 我們使用 subprocess 執行這個腳本，以避免 Streamlit 的 Event Loop 衝突
     scraper_script = r"""
 import os
@@ -934,6 +935,7 @@ def extract_table_from_html(html: str):
 def main():
     try:
         # 使用 SeleniumBase (uc=True) 繞過防護
+        # headless=True 在 Streamlit Cloud 是必須的
         with SB(uc=True, headless=True, locale_code="zh-TW") as sb:
             for attempt in range(1, MAX_RETRY + 1):
                 log(f"Attempt {attempt}/{MAX_RETRY} connecting to {url}")
@@ -979,7 +981,7 @@ if __name__ == "__main__":
     # 替換股票代碼
     scraper_script = scraper_script.replace("{stock_id}", str(stock_id))
 
-    # 2. 寫入暫存檔
+    # 2. 寫入暫存檔 (使用 tempfile 確保跨平台相容且有寫入權限)
     fd, path = tempfile.mkstemp(suffix=".py")
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
