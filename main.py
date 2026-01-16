@@ -1053,13 +1053,49 @@ if __name__ == "__main__":
             buy_col = next((c for c in df.columns if "買賣超" in c), None)
             diff_col = next((c for c in df.columns if "家數差" in c), None)
             date_col = next((c for c in df.columns if "日期" in c), None)
+            # 新增集中度欄位
+            con5_col = next((c for c in df.columns if "5日集中" in c), None)
+            con20_col = next((c for c in df.columns if "20日集中" in c), None)
             
             if buy_col and diff_col and date_col:
-                clean_df = df[[date_col, buy_col, diff_col]].copy()
-                clean_df.columns = ['日期', '買賣超', '家數差']
+                # 選取需要的欄位
+                cols_to_keep = [date_col, buy_col, diff_col]
+                col_names = ['日期', '買賣超', '家數差']
+                
+                if con5_col:
+                    cols_to_keep.append(con5_col)
+                    col_names.append('5日集中')
+                if con20_col:
+                    cols_to_keep.append(con20_col)
+                    col_names.append('20日集中')
+                
+                clean_df = df[cols_to_keep].copy()
+                clean_df.columns = col_names
+                
+                # 處理數值 (移除逗號，轉數字)
                 for col in ['買賣超', '家數差']:
                     clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                clean_df['DateStr'] = clean_df['日期'].astype(str).str.replace('/', '-')
+                
+                # 處理集中度 (移除%，轉數字)
+                for col in ['5日集中', '20日集中']:
+                    if col in clean_df.columns:
+                        clean_df[col] = clean_df[col].astype(str).str.replace('%', '').str.replace(',', '')
+                        clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
+
+                # ✅ [FIX] 日期修正：將抓取到的日期往後推一天 (e.g. 1/14 -> 1/15)
+                # 玩股網格式通常為 MM/DD 或 YYYY/MM/DD
+                clean_df['dt_temp'] = pd.to_datetime(clean_df['日期'])
+                clean_df['dt_temp'] = clean_df['dt_temp'] + pd.Timedelta(days=1)
+                
+                # 更新 DateStr
+                clean_df['DateStr'] = clean_df['dt_temp'].dt.strftime('%Y-%m-%d')
+                
+                # 同步更新顯示用的日期欄位
+                clean_df['日期'] = clean_df['DateStr'].str.replace('-', '/')
+                
+                # 移除暫存欄位
+                clean_df = clean_df.drop(columns=['dt_temp'])
+                
                 return clean_df.sort_values('DateStr')
             else:
                 raise ValueError("Parsed CSV missing required columns")
@@ -1362,7 +1398,20 @@ if selected_page == "主力":
                 st.markdown("#### 詳細數據")
                 # Sort desc for table
                 display_df = wg_df.sort_values('DateStr', ascending=False)
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                
+                # ✅ [FIX] 隱藏 DateStr 欄位，並加上 % 格式
+                if 'DateStr' in display_df.columns:
+                    display_df = display_df.drop(columns=['DateStr'])
+                
+                # 設定顯示格式 (集中度加回 %)
+                st.dataframe(
+                    display_df.style.format({
+                        '5日集中': '{:.2f}%',
+                        '20日集中': '{:.2f}%'
+                    }), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
                 
             else:
                 st.warning("無法取得股價資料以繪製對照圖表。")
@@ -1803,7 +1852,7 @@ elif stock_input:
                         {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
 
-                rsi_data, rsi_80, rsi_20 = [], [], []
+                rsi_data = [] # ✅ [MODIFIED] Removed rsi_80, rsi_20 lists
                 if 'RSI' in plot_df.columns:
                     for i, row in plot_df.iterrows():
                         # ✅ [FIX] 處理 RSI 指標時間
@@ -1818,13 +1867,11 @@ elif stock_input:
                             
                         if not pd.isna(row['RSI']): 
                             rsi_data.append({"time": time_val, "value": float(row['RSI'])})
-                            rsi_80.append({"time": time_val, "value": 80})
-                            rsi_20.append({"time": time_val, "value": 20})
-                    # ✅ [FIX] 禁用固定標籤
+                            # ✅ [MODIFIED] Removed 80/20 appending
+                    
+                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
-                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": rsi_80, "options": {"color": "red", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}},
-                        {"type": "Line", "data": rsi_20, "options": {"color": "green", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "right", "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}}
+                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI(6)", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
                 
                 renderLightweightCharts(charts_payload, key="tab1_kline")
