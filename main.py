@@ -907,46 +907,71 @@ import random
 # 從環境變數或參數獲取
 stock_id = "{stock_id}"
 url = f"https://www.wantgoo.com/stock/{stock_id}/major-investors/main-trend"
+MAX_RETRY = 6
+
+def log(*a):
+    # 輸出到 stderr 避免汙染 stdout (csv output)
+    sys.stderr.write(" ".join(map(str, a)) + "\n")
+
+def looks_blocked(title: str, body_text: str) -> bool:
+    t = (title or "").lower()
+    b = (body_text or "").lower()
+    keywords = ["請稍候", "just a moment", "access denied", "cloudflare", "captcha", "驗證", "異常流量", "blocked"]
+    return any(k.lower() in t for k in keywords) or any(k.lower() in b for k in keywords)
+
+def extract_table_from_html(html: str):
+    try:
+        tables = pd.read_html(StringIO(html))
+    except Exception as e:
+        log("read_html failed:", e)
+        return None
+    for df in tables:
+        cols = [str(c).strip() for c in df.columns]
+        if ("日期" in cols) and ("買賣超" in cols) and ("家數差" in cols):
+            return df.rename(columns=lambda x: str(x).strip())
+    return None
 
 def main():
     try:
         # 使用 SeleniumBase (uc=True) 繞過防護
         with SB(uc=True, headless=True, locale_code="zh-TW") as sb:
-            sb.open(url)
-            
-            # 簡單的防阻擋處理 (偵測標題)
-            if "Just a moment" in sb.get_title() or "Access denied" in sb.get_title():
-                sb.sleep(5)
-            
-            # 等待表格出現
-            try:
-                sb.wait_for_element("main table tbody tr", timeout=25)
-            except Exception:
-                pass # 嘗試直接抓取
+            for attempt in range(1, MAX_RETRY + 1):
+                log(f"Attempt {attempt}/{MAX_RETRY} connecting to {url}")
+                sb.open(url)
+                
+                try:
+                    sb.wait_for_ready_state_complete(timeout=15)
+                except:
+                    pass
 
-            html = sb.get_page_source()
-            
-            # 解析表格
-            dfs = pd.read_html(StringIO(html))
-            target_df = None
-            for df in dfs:
-                # 檢查關鍵欄位
-                if "買賣超" in str(df.columns) and "家數差" in str(df.columns):
-                    target_df = df
-                    break
-            
-            if target_df is not None:
-                # 清洗欄位名稱
-                target_df.columns = [str(c).strip() for c in target_df.columns]
-                # 輸出 CSV 到 stdout
-                print(target_df.to_csv(index=False))
-            else:
-                # 沒抓到資料
-                pass
+                title = sb.get_title()
+                body_text = sb.get_text("body")[:2000]
 
+                if looks_blocked(title, body_text):
+                    wait_s = random.uniform(5, 10)
+                    log(f"Blocked detected. Waiting {wait_s}s...")
+                    sb.sleep(wait_s)
+                    continue
+                
+                # 等待表格出現
+                try:
+                    sb.wait_for_element("main table tbody tr", timeout=20)
+                except Exception:
+                    pass 
+
+                html = sb.get_page_source()
+                df = extract_table_from_html(html)
+
+                if df is not None and not df.empty:
+                    # 輸出 CSV 到 stdout
+                    print(df.to_csv(index=False))
+                    return
+                else:
+                    log("Table not found or empty.")
+                    sb.sleep(3)
+                    
     except Exception as e:
-        # 錯誤處理 (可輸出到 stderr)
-        sys.stderr.write(str(e))
+        log("Error:", str(e))
 
 if __name__ == "__main__":
     main()
@@ -966,17 +991,21 @@ if __name__ == "__main__":
             [sys.executable, path],
             capture_output=True,
             text=True,
-            timeout=120 # 給予足夠的時間 (含瀏覽器啟動)
+            timeout=180 # 給予足夠的時間 (含瀏覽器啟動與重試)
         )
         
         # 4. 處理結果
         output_csv = result.stdout.strip()
+        
+        # 除錯：若無輸出，檢查 stderr
+        if not output_csv and result.stderr:
+            print(f"Scraper Stderr: {result.stderr}")
+
         if output_csv:
             try:
                 df = pd.read_csv(StringIO(output_csv))
                 
                 # 資料清洗 (配合 Streamlit 格式)
-                # 確保有需要的欄位
                 req_cols = ['日期', '買賣超', '家數差']
                 if all(col in df.columns for col in req_cols):
                     clean_df = df[req_cols].copy()
