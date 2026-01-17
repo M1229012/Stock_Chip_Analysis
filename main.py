@@ -395,8 +395,10 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
         "timeScale": {
             "borderColor": "rgba(197, 203, 206, 0.8)", 
             "visible": time_visible, 
-            "timeVisible": True, # 分時資料需要顯示時間
-            "secondsVisible": False
+            "timeVisible": True, 
+            "secondsVisible": False,
+            "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
+            "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
         },
         # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
         "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
@@ -1398,7 +1400,8 @@ if selected_page == "主力":
                     ]
                 }
                 
-                renderLightweightCharts([chart1, chart2, chart3], key="wg_charts")
+                # ✅ [FIX] Key changed to include stock_input to force reset on stock change
+                renderLightweightCharts([chart1, chart2, chart3], key=f"wg_charts_{stock_input}")
                 
                 # Data Table
                 st.markdown("#### 詳細數據")
@@ -1707,8 +1710,10 @@ elif stock_input:
                 "timeScale": {
                     "borderColor": "rgba(197, 203, 206, 0.8)", 
                     "visible": time_visible, 
-                    "timeVisible": True, # 分時資料需要顯示時間
-                    "secondsVisible": False
+                    "timeVisible": True, 
+                    "secondsVisible": False,
+                    "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
+                    "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
                 },
                 # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
@@ -1907,7 +1912,8 @@ elif stock_input:
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
                 
-                renderLightweightCharts(charts_payload, key="tab1_kline")
+                # ✅ [FIX] Key changed to include stock_input to force reset on stock change
+                renderLightweightCharts(charts_payload, key=f"tab1_kline_{stock_input}")
 
         # ==================== Tab 2: 分點 ====================
         if selected_page == "分點":
@@ -2122,7 +2128,8 @@ elif stock_input:
                             {"type": "Line", "data": chip_cumulative_data, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                         ]})
                     
-                    renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
+                    # ✅ [FIX] Key changed to include stock_input to force reset on stock change
+                    renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{stock_input}_{target_broker}")
 
         # ==================== Tab 3: 法人 ====================
         if selected_page == "法人":
@@ -2208,7 +2215,8 @@ elif stock_input:
                     {"type": "Histogram", "data": d_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                     {"type": "Line", "data": d_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
-            renderLightweightCharts(charts_payload_inst, key="tab3_inst")
+            # ✅ [FIX] Key changed to include stock_input to force reset on stock change
+            renderLightweightCharts(charts_payload_inst, key=f"tab3_inst_{stock_input}")
 
         # ==================== Tab 4: 融資券 ====================
         if selected_page == "融資券":
@@ -2289,7 +2297,8 @@ elif stock_input:
                     {"type": "Line", "data": ms_bal, "options": {"title": "餘額(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                 ]})
 
-            renderLightweightCharts(charts_payload_margin, key="tab4_margin")
+            # ✅ [FIX] Key changed to include stock_input to force reset on stock change
+            renderLightweightCharts(charts_payload_margin, key=f"tab4_margin_{stock_input}")
             
             if margin_df is not None and not margin_df.empty:
                 st.markdown("#### 近 10 日融資融券詳細數據")
@@ -2457,7 +2466,8 @@ elif stock_input:
                     holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
                     
                     holder_payload.append({"chart": holder_opts, "series": holder_series})
-                    renderLightweightCharts(holder_payload, key="tab5_holder")
+                    # ✅ [FIX] Key changed to include stock_input to force reset on stock change
+                    renderLightweightCharts(holder_payload, key=f"tab5_holder_{stock_input}")
 
     else:
         st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
