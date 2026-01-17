@@ -1328,9 +1328,6 @@ if selected_page == "主力":
             # 先抓股價
             if 'df_price_daily' not in locals() or df_price_daily is None:
                 df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
-                # ✅ [FIX] 這裡也加上清洗，確保主力分頁使用到乾淨數據
-                if df_price_daily is not None:
-                    df_price_daily = df_price_daily.replace([np.inf, -np.inf], np.nan)
             
             if df_price_daily is not None:
                 # Merge to ensure dates match
@@ -1559,9 +1556,6 @@ elif selected_page == "多股比較":
                         df = get_stock_price(code, st.session_state.refresh_nonce)
                         
                         if df is not None and not df.empty:
-                            # ✅ [FIX] 數據清洗：防止 JSON 錯誤
-                            df = df.replace([np.inf, -np.inf], np.nan)
-
                             # Prepare Data
                             chart_data = []
                             ma5, ma20 = [], []
@@ -1697,10 +1691,6 @@ elif stock_input:
     # ✅ [NEW] 預先定義 df_price 為日資料，確保所有分頁都能存取到基礎資料
     df_price = df_price_daily.copy() if df_price_daily is not None else None
     
-    # [FIX] 全域資料清洗：將無限大轉為 NaN
-    if df_price is not None:
-        df_price = df_price.replace([np.inf, -np.inf], np.nan)
-
     if df_buy is not None and df_sell is not None:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
         #st.caption(f"資料來源：{target_url}")
@@ -1785,9 +1775,6 @@ elif stock_input:
                 # 分時資料的 DateStr 已經包含時間，且是排序好的字串
                 plot_df = plot_df.sort_values("DateStr").reset_index(drop=True)
 
-                # ✅ [FIX] K線分頁資料清洗：防止 JSON 錯誤
-                plot_df = plot_df.replace([np.inf, -np.inf], np.nan)
-
                 candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
                 
                 # ✅ [FIX] 判斷是否為分時資料 (Intraday)
@@ -1852,7 +1839,7 @@ elif stock_input:
                         
                     if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數，標題加上(張)
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數
                 charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量(張)  ", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
@@ -1871,7 +1858,7 @@ elif stock_input:
                             
                         if not pd.isna(row['K']): k_data.append({"time": time_val, "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": time_val, "value": float(row['D'])})
-                    # ✅ [FIX] 禁用固定標籤，移除 "數值:" 標題改為 K  / D  
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1893,7 +1880,7 @@ elif stock_input:
                         if not pd.isna(row['DIF']): dif_data.append({"time": time_val, "value": float(row['DIF'])})
                         if not pd.isna(row['DEA']): dea_data.append({"time": time_val, "value": float(row['DEA'])})
                         if not pd.isna(row['MACD_Hist']): hist_data.append({"time": time_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
-                    # ✅ [FIX] 禁用固定標籤，標題優化
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "MACD  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
@@ -1917,7 +1904,7 @@ elif stock_input:
                             rsi_data.append({"time": time_val, "value": float(row['RSI'])})
                             # ✅ [MODIFIED] Removed 80/20 appending
                     
-                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series, title优化
+                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
@@ -1926,8 +1913,7 @@ elif stock_input:
 
         # ==================== Tab 2: 分點 ====================
         if selected_page == "分點":
-            # ... (其餘分點代碼維持不變，因上方 df_price 已經全域清洗過)
-            # ... (以下為原始邏輯保留)
+            # ✅ [LAYOUT CHANGE] 改為左圖右表 (Left: Charts, Right: Tables)
             col_chart, col_table = st.columns([3, 1])
             
             # 初始化 session_state
@@ -2139,6 +2125,341 @@ elif stock_input:
                         ]})
                     
                     renderLightweightCharts(charts_payload_broker, key=f"tab2_broker_{target_broker}")
+
+        # ==================== Tab 3: 法人 ====================
+        if selected_page == "法人":
+            long_start_date = df_price['DateStr'].iloc[0] 
+            long_end_date = df_price['DateStr'].iloc[-1] 
+            inst_df = get_institutional_data(stock_input, long_start_date, long_end_date)
+            plot_df = df_price.copy()
+            plot_df.index.name = None 
+            if inst_df is not None:
+                plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
+                for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
+                    if col in plot_df.columns: plot_df[col] = plot_df[col].fillna(0)
+                plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
+                plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
+                plot_df['cum_dealer'] = plot_df['自營商買賣超'].cumsum()
+                # ✅ [NEW] 計算三大法人合計買賣超 與 累積
+                plot_df['total_inst'] = plot_df['外資買賣超'] + plot_df['投信買賣超'] + plot_df['自營商買賣超']
+                plot_df['cum_total'] = plot_df['total_inst'].cumsum()
+
+            charts_payload_inst = []
+            candlestick_data = []
+            # ✅ [NEW] 準備均線數據
+            ma5_data, ma10_data, ma20_data = [], [], []
+            
+            for i, row in plot_df.iterrows():
+                if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                # ✅ 收集均線數據
+                if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
+                if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
+                if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
+
+            # ✅ [NEW] 整合 K 線與均線
+            # ✅ [FIX] MA Title spacing
+            ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
+            main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
+            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5  "}})
+            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10  "}})
+            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20  "}})
+
+            # ✅ [MODIFIED] 移除 data_len
+            charts_payload_inst.append({"chart": make_opts(400, "股價", True), "series": main_series})
+
+            if '外資買賣超' in plot_df.columns:
+                f_hist, f_line = [], []
+                t_hist, t_line = [], []
+                d_hist, d_line = [], []
+                total_line, total_hist = [], [] # ✅ [NEW] 合計累積線與合計買賣柱
+                for i, row in plot_df.iterrows():
+                    f_val, f_cum = row['外資買賣超'], row['cum_foreign']
+                    t_val, t_cum = row['投信買賣超'], row['cum_trust']
+                    d_val, d_cum = row['自營商買賣超'], row['cum_dealer']
+                    total_val, total_cum = row['total_inst'], row['cum_total'] # ✅ [NEW]
+                    
+                    f_hist.append({"time": row['DateStr'], "value": float(f_val), "color": COLOR_UP if f_val>0 else COLOR_DOWN})
+                    f_line.append({"time": row['DateStr'], "value": float(f_cum)})
+                    t_hist.append({"time": row['DateStr'], "value": float(t_val), "color": COLOR_UP if t_val>0 else COLOR_DOWN})
+                    t_line.append({"time": row['DateStr'], "value": float(t_cum)})
+                    d_hist.append({"time": row['DateStr'], "value": float(d_val), "color": COLOR_UP if d_val>0 else COLOR_DOWN})
+                    d_line.append({"time": row['DateStr'], "value": float(d_cum)})
+                    
+                    # ✅ [NEW]
+                    total_hist.append({"time": row['DateStr'], "value": float(total_val), "color": COLOR_UP if total_val>0 else COLOR_DOWN})
+                    total_line.append({"time": row['DateStr'], "value": float(total_cum)})
+
+                # ✅ [FIX] 移除個別法人資料，只保留合計，禁用固定標籤
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
+                charts_payload_inst.append({"chart": make_opts(200, "三大法人合計 (張)", False), "series": [
+                    {"type": "Histogram", "data": total_hist, "options": {"title": "合計買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": total_line, "options": {"title": "合計累(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "white", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                ]})
+                
+                # 下方維持不變，顯示個別法人詳情，禁用固定標籤
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，type: 'price'
+                charts_payload_inst.append({"chart": make_opts(150, "外資 (張)", False), "series": [
+                    {"type": "Histogram", "data": f_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": f_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                ]})
+                charts_payload_inst.append({"chart": make_opts(150, "投信 (張)", False), "series": [
+                    {"type": "Histogram", "data": t_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": t_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#FF00FF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                ]})
+                charts_payload_inst.append({"chart": make_opts(150, "自營商 (張)", False), "series": [
+                    {"type": "Histogram", "data": d_hist, "options": {"title": "買賣(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    {"type": "Line", "data": d_line, "options": {"title": "累積(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "#00FFFF", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                ]})
+            renderLightweightCharts(charts_payload_inst, key="tab3_inst")
+
+        # ==================== Tab 4: 融資券 ====================
+        if selected_page == "融資券":
+            # ✅ [FIX] 限制融資券爬取範圍為最近 2 年
+            end_dt = datetime.now()
+            start_dt = end_dt - timedelta(days=730) # 2 years
+            long_start_date = start_dt.strftime('%Y-%m-%d')
+            long_end_date = end_dt.strftime('%Y-%m-%d')
+            
+            with st.spinner("正在爬取融資券資料..."):
+                margin_df = get_margin_data(stock_input, long_start_date, long_end_date)
+            
+            if margin_df is None or margin_df.empty:
+                st.warning("⚠️ 查無融資融券資料，可能來源網站無資料或暫時無法連線。")
+            
+            plot_df = df_price.copy()
+            plot_df.index.name = None 
+            if margin_df is not None:
+                plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
+                plot_df['融資餘額'] = plot_df['融資餘額'].ffill()
+                plot_df['融券餘額'] = plot_df['融券餘額'].ffill()
+                plot_df['融資增減'] = plot_df['融資增減'].fillna(0)
+                plot_df['融券增減'] = plot_df['融券增減'].fillna(0)
+
+            charts_payload_margin = []
+            candlestick_data = []
+            # ✅ [NEW] 準備均線數據
+            ma5_data, ma10_data, ma20_data = [], [], []
+
+            for i, row in plot_df.iterrows():
+                if not pd.isna(row['Open']): candlestick_data.append({"time": row['DateStr'], "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])})
+                # ✅ 收集均線數據
+                if not pd.isna(row['MA5']): ma5_data.append({"time": row['DateStr'], "value": float(row['MA5'])})
+                if not pd.isna(row['MA10']): ma10_data.append({"time": row['DateStr'], "value": float(row['MA10'])})
+                if not pd.isna(row['MA20']): ma20_data.append({"time": row['DateStr'], "value": float(row['MA20'])})
+
+            # ✅ [NEW] 整合 K 線與均線
+            # ✅ [FIX] MA Title spacing
+            ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
+            main_series = [{"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN, "lastValueVisible": False}}]
+            main_series.append({"type": "Line", "data": ma5_data, "options": {**ma_opts, "color": "orange", "title": "MA5  "}})
+            main_series.append({"type": "Line", "data": ma10_data, "options": {**ma_opts, "color": "cyan", "title": "MA10  "}})
+            main_series.append({"type": "Line", "data": ma20_data, "options": {**ma_opts, "color": "#ff00ff", "lineWidth": 2, "title": "MA20  "}})
+
+            # ✅ [MODIFIED] 移除 data_len
+            charts_payload_margin.append({"chart": make_opts(400, "股價", True), "series": main_series})
+
+            if '融資餘額' in plot_df.columns:
+                ml_bal, ml_diff, ms_bal, ms_diff = [], [], [], []
+                for i, row in plot_df.iterrows():
+                    val_mb = row.get('融資餘額')
+                    val_md = row.get('融資增減')
+                    val_sb = row.get('融券餘額')
+                    val_sd = row.get('融券增減')
+                    if not pd.isna(val_mb): ml_bal.append({"time": row['DateStr'], "value": float(val_mb)})
+                    if not pd.isna(val_md): 
+                        # ✅ [FIX] 增加用紅(COLOR_UP), 減少用綠(COLOR_DOWN)
+                        color = COLOR_UP if val_md > 0 else (COLOR_DOWN if val_md < 0 else "gray")
+                        ml_diff.append({"time": row['DateStr'], "value": float(val_md), "color": color})
+                    if not pd.isna(val_sb): ms_bal.append({"time": row['DateStr'], "value": float(val_sb)})
+                    if not pd.isna(val_sd): 
+                        # ✅ [FIX] 增加用紅(COLOR_UP), 減少用綠(COLOR_DOWN)
+                        color = COLOR_UP if val_sd > 0 else (COLOR_DOWN if val_sd < 0 else "gray")
+                        ms_diff.append({"time": row['DateStr'], "value": float(val_sd), "color": color})
+
+                # ✅ [FIX] 禁用固定標籤
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點, type: 'price'
+                charts_payload_margin.append({"chart": make_opts(150, "融資 (張)", False), "series": [
+                    {"type": "Histogram", "data": ml_diff, "options": {"title": "增減(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    # ✅ [FIX] 餘額改用橘色
+                    {"type": "Line", "data": ml_bal, "options": {"title": "餘額(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                ]})
+                # ✅ [FIX] 禁用固定標籤
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點, type: 'price'
+                charts_payload_margin.append({"chart": make_opts(150, "融券 (張)", False), "series": [
+                    {"type": "Histogram", "data": ms_diff, "options": {"title": "增減(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                    # ✅ [FIX] 餘額改用橘色
+                    {"type": "Line", "data": ms_bal, "options": {"title": "餘額(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                ]})
+
+            renderLightweightCharts(charts_payload_margin, key="tab4_margin")
+            
+            if margin_df is not None and not margin_df.empty:
+                st.markdown("#### 近 10 日融資融券詳細數據")
+                
+                # 1. 排序並取最後 10 筆 (最新的在最後) -> 反轉 (最新的在最前)
+                display_margin = margin_df.sort_values("DateStr").tail(10).iloc[::-1]
+                
+                # 2. 移除 DateStr 欄位 (只留: 日期, 融資餘額, 融資增減, 融券餘額, 融券增減)
+                display_margin = display_margin[['日期', '融資餘額', '融資增減', '融券餘額', '融券增減']]
+                
+                # 3. 設定樣式 (增紅減綠)
+                def highlight_margin(df):
+                    attr = pd.DataFrame('', index=df.index, columns=df.columns)
+                    c_up = f'color: {COLOR_UP}'   # 紅
+                    c_down = f'color: {COLOR_DOWN}' # 綠
+                    
+                    # 融資增減
+                    mask_m_up = df['融資增減'] > 0
+                    mask_m_down = df['融資增減'] < 0
+                    attr.loc[mask_m_up, ['融資增減']] = c_up
+                    attr.loc[mask_m_down, ['融資增減']] = c_down
+                    
+                    # 融券增減
+                    mask_s_up = df['融券增減'] > 0
+                    mask_s_down = df['融券增減'] < 0
+                    attr.loc[mask_s_up, ['融券增減']] = c_up
+                    attr.loc[mask_s_down, ['融券增減']] = c_down
+                    
+                    return attr
+
+                st.dataframe(
+                    display_margin.style.apply(highlight_margin, axis=None), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+
+        # ==================== Tab 5: 大戶 (集保分佈) ====================
+        if selected_page == "大戶":
+            LOT_CHOICES = [10, 50, 100, 200, 400, 600, 800, 1000]
+            if "retail_lot" not in st.session_state: st.session_state.retail_lot = 50
+            if "large_lot" not in st.session_state: st.session_state.large_lot = 400
+
+            # ✅ [FIX] 動態過濾選項 (UI 防呆)
+            # 大戶選項：必須 > 散戶
+            valid_large_opts = [x for x in LOT_CHOICES if x > st.session_state.retail_lot]
+            if not valid_large_opts: valid_large_opts = [1000] # Fallback
+            
+            # 散戶選項：必須 < 大戶
+            valid_retail_opts = [x for x in LOT_CHOICES if x < st.session_state.large_lot]
+            if not valid_retail_opts: valid_retail_opts = [10] # Fallback
+
+            c1, c2 = st.columns(2)
+            with c1:
+                # 若當前值不在有效列表內，重置為列表第一個
+                current_large = st.session_state.large_lot
+                if current_large not in valid_large_opts: current_large = valid_large_opts[0]
+                
+                st.session_state.large_lot = st.selectbox(
+                    "大戶持股標準 (>= 張)", 
+                    options=valid_large_opts, 
+                    index=valid_large_opts.index(current_large),
+                    key="sb_large"
+                )
+
+            with c2:
+                current_retail = st.session_state.retail_lot
+                if current_retail not in valid_retail_opts: current_retail = valid_retail_opts[0]
+                
+                st.session_state.retail_lot = st.selectbox(
+                    "散戶持股標準 (< 張)", 
+                    options=valid_retail_opts, 
+                    index=valid_retail_opts.index(current_retail),
+                    key="sb_retail"
+                )
+
+            # ✅ [FIX] 呼叫函式並傳入 refresh_nonce 以強制更新
+            raw_holder_df = get_shareholding_data(stock_input, st.session_state.refresh_nonce)
+            
+            if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
+                st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
+            else:
+                # 使用 分級比例表 進行計算
+                df_ratio = raw_holder_df.get("ratio")
+                holder_df = process_shareholding_df(df_ratio, st.session_state.large_lot, st.session_state.retail_lot)
+                
+                if holder_df is not None and not holder_df.empty:
+                    display_df = holder_df.copy()
+                    # 計算增減 (與前一週比較)
+                    display_df['大戶增減'] = display_df['大戶持股(%)'].diff()
+                    display_df['散戶增減'] = display_df['散戶持股(%)'].diff()
+                    
+                    # 倒序顯示 (最新的在上面)
+                    display_df_show = display_df.sort_values("日期", ascending=False).reset_index(drop=True)
+                    
+                    # ✅ [FIX] 修正樣式邏輯：根據增減欄位來決定持股欄位的顏色
+                    def highlight_changes(df):
+                        attr = pd.DataFrame('', index=df.index, columns=df.columns)
+                        c_up = f'color: {COLOR_UP}'   # 紅
+                        c_down = f'color: {COLOR_DOWN}' # 綠
+                        
+                        # 大戶邏輯
+                        mask_up = df['大戶增減'] > 0
+                        mask_down = df['大戶增減'] < 0
+                        attr.loc[mask_up, ['大戶持股(%)', '大戶增減']] = c_up
+                        attr.loc[mask_down, ['大戶持股(%)', '大戶增減']] = c_down
+                        
+                        # 散戶邏輯
+                        mask_up_r = df['散戶增減'] > 0
+                        mask_down_r = df['散戶增減'] < 0
+                        attr.loc[mask_up_r, ['散戶持股(%)', '散戶增減']] = c_up
+                        attr.loc[mask_down_r, ['散戶持股(%)', '散戶增減']] = c_down
+                        
+                        return attr
+
+                    st.markdown("#### 集保戶股權分散表")
+                    # ✅ [FIX] hide_index=True 隱藏左側索引
+                    st.dataframe(
+                        display_df_show[['日期', '大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']]
+                        .style.apply(highlight_changes, axis=None) # 全表套用樣式函式
+                        .format("{:.2f}", subset=['大戶持股(%)', '大戶增減', '散戶持股(%)', '散戶增減']), 
+                        use_container_width=True, 
+                        height=400,
+                        hide_index=True
+                    )
+                    
+                    # =========================================================
+                    # ✅ [主要修改] 股價只顯示集保日期存在的資料點
+                    # =========================================================
+                    
+                    # 準備合併
+                    df_price_daily['_dt'] = pd.to_datetime(df_price_daily['DateStr'])
+                    holder_df['_dt'] = pd.to_datetime(holder_df['DateStr'])
+                    
+                    # 排序
+                    holder_df = holder_df.sort_values('_dt')
+                    df_price_daily = df_price_daily.sort_values('_dt')
+                    
+                    # ✅ [FIX] 改為以「holder_df (集保數據)」為主表，去抓對應的股價
+                    # 這樣圖表就只會顯示集保分佈表有的日期
+                    chart_df = pd.merge_asof(
+                        holder_df,
+                        df_price_daily[['_dt', 'Close']], # 只取需要的股價欄位
+                        on='_dt',
+                        direction='backward' # 若當天無股價，找前一天的
+                    )
+                    
+                    l_data, r_data, p_data = [], [], []
+                    for i, row in chart_df.iterrows():
+                        if not pd.isna(row['大戶持股(%)']): l_data.append({"time": row['DateStr'], "value": row['大戶持股(%)']})
+                        if not pd.isna(row['散戶持股(%)']): r_data.append({"time": row['DateStr'], "value": row['散戶持股(%)']})
+                        if not pd.isna(row['Close']): p_data.append({"time": row['DateStr'], "value": row['Close']})
+                        
+                    holder_payload = []
+                    holder_series = [
+                        # ✅ [FIX] 禁用固定標籤
+                        {"type": "Line", "data": l_data, "options": {"title": f"大戶(>{st.session_state.large_lot})%", "color": "red", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
+                        {"type": "Line", "data": r_data, "options": {"title": f"散戶(<{st.session_state.retail_lot})%", "color": "green", "lineWidth": 2, "priceScaleId": "left", "lastValueVisible": False, "priceLineVisible": False}},
+                        {"type": "Line", "data": p_data, "options": {"title": "股價", "color": "white", "lineWidth": 1, "priceScaleId": "right", "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}} 
+                    ]
+                    
+                    # ✅ [FIX] autoScale: True, 移除固定 min/max 讓波動更明顯
+                    # ✅ [MODIFIED] 移除 data_len
+                    holder_opts = make_opts(400, "籌碼分佈 vs 股價", True)
+                    holder_opts["leftPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
+                    holder_opts["rightPriceScale"] = {"visible": True, "borderColor": "rgba(197, 203, 206, 0.8)", "autoScale": True}
+                    
+                    holder_payload.append({"chart": holder_opts, "series": holder_series})
+                    renderLightweightCharts(holder_payload, key="tab5_holder")
 
     else:
         st.error(f"⚠️ 無法取得 K 線圖資料 ({stock_input})")
