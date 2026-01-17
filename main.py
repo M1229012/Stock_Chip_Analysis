@@ -688,8 +688,9 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
         driver.quit()
 
 # ✅ [FIX] 使用 Selenium + XPATH 爬取 Norway 神秘金字塔 StockHolders.aspx
+# ✅ [MODIFIED] 增加 refresh_nonce 以支援強制更新
 @st.cache_data(persist="disk", ttl=604800)
-def get_shareholding_data(stock_id: str):
+def get_shareholding_data(stock_id: str, refresh_nonce: int = 0):
     driver = get_driver()
     url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
     
@@ -1838,7 +1839,7 @@ elif stock_input:
                         
                     if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                 # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數，標題加上(張)
+                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數
                 charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量(張)  ", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
 
                 # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
@@ -1857,7 +1858,7 @@ elif stock_input:
                             
                         if not pd.isna(row['K']): k_data.append({"time": time_val, "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": time_val, "value": float(row['D'])})
-                    # ✅ [FIX] 禁用固定標籤，移除 "數值:" 標題改為 K  / D  
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
                         {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
@@ -1879,7 +1880,7 @@ elif stock_input:
                         if not pd.isna(row['DIF']): dif_data.append({"time": time_val, "value": float(row['DIF'])})
                         if not pd.isna(row['DEA']): dea_data.append({"time": time_val, "value": float(row['DEA'])})
                         if not pd.isna(row['MACD_Hist']): hist_data.append({"time": time_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
-                    # ✅ [FIX] 禁用固定標籤，標題優化
+                    # ✅ [FIX] 禁用固定標籤
                     charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
                         {"type": "Histogram", "data": hist_data, "options": {"title": "MACD  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
                         {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
@@ -1903,7 +1904,7 @@ elif stock_input:
                             rsi_data.append({"time": time_val, "value": float(row['RSI'])})
                             # ✅ [MODIFIED] Removed 80/20 appending
                     
-                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series, title优化
+                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
                         {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
@@ -2366,8 +2367,8 @@ elif stock_input:
                     key="sb_retail"
                 )
 
-            # ✅ [FIX] 呼叫正確的函式名稱
-            raw_holder_df = get_shareholding_data(stock_input)
+            # ✅ [FIX] 呼叫函式並傳入 refresh_nonce 以強制更新
+            raw_holder_df = get_shareholding_data(stock_input, st.session_state.refresh_nonce)
             
             if raw_holder_df is None or (isinstance(raw_holder_df, dict) and raw_holder_df.get('ratio') is None):
                 st.warning("⚠️ 查無集保分佈資料，可能為 ETF 或資料來源暫時無法存取。")
