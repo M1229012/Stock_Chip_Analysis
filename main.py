@@ -397,13 +397,8 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             "visible": time_visible, 
             "timeVisible": True, 
             "secondsVisible": False,
-            # ✅ [CRITICAL FIX] 設定 K 棒間距為 10，確保畫面預設縮放合適 (約顯示60根)
-            "barSpacing": 10, 
-            "rightOffset": 5,
-            # ✅ [CRITICAL FIX] 確保捲動到最右側 (最新資料)，這行最重要
-            "rightBarStaysOnScroll": True, 
-            "lockVisibleTimeRangeOnResize": True,
-            "fixLeftEdge": False,
+            "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
+            "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
         },
         # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
         "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
@@ -1088,7 +1083,7 @@ if __name__ == "__main__":
                 for col in ['5日集中', '20日集中']:
                     if col in clean_df.columns:
                         clean_df[col] = clean_df[col].astype(str).str.replace('%', '').str.replace(',', '')
-                        clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
 
                 # ✅ [FIX] 日期修正：將抓取到的日期往後推一天 (e.g. 1/14 -> 1/15)
                 # 玩股網格式通常為 MM/DD 或 YYYY/MM/DD
@@ -1717,15 +1712,10 @@ elif stock_input:
                     "visible": time_visible, 
                     "timeVisible": True, 
                     "secondsVisible": False,
-                    # ✅ [CRITICAL FIX] 設定 K 棒間距為 10，確保畫面預設縮放合適 (約顯示60根)
-                    "barSpacing": 10, 
-                    "rightOffset": 5,
-                    # ✅ [CRITICAL FIX] 確保捲動到最右側 (最新資料)，這行最重要
-                    "rightBarStaysOnScroll": True, 
-                    "lockVisibleTimeRangeOnResize": True,
-                    "fixLeftEdge": False,
+                    "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
+                    "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
                 },
-                # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
+                # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
                 "crosshair": {
                     "mode": 1,
@@ -1786,8 +1776,7 @@ elif stock_input:
                 charts_payload = []
                 plot_df.index.name = None
                 # 分時資料的 DateStr 已經包含時間，且是排序好的字串
-                # ✅ [CRITICAL FIX] 強制按日期字串排序，確保最新的在最後，解決圖表顯示問題
-                plot_df = plot_df.sort_values("DateStr", ascending=True).reset_index(drop=True)
+                plot_df = plot_df.sort_values("DateStr").reset_index(drop=True)
 
                 candlestick_data, ma5_data, ma10_data, ma20_data, ma60_data, ma120_data, ma240_data, bb_up_data, bb_low_data = [], [], [], [], [], [], [], [], []
                 
