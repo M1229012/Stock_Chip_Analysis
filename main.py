@@ -1672,7 +1672,7 @@ elif selected_page == "選股":
     st.subheader("⚡ 飆股篩選器")
     st.markdown("""
     **篩選條件說明**：
-    1. **大戶籌碼增加**：以上市上櫃 Top 100 增幅排行作為基礎名單。
+    1. **大戶籌碼增加**：合併上市與上櫃 Top 100 排行榜，依「總增減(張/%)」排序。
     2. **三大法人連買**：檢查是否連續 3 日合計買賣超 > 0。
     3. **主力買超**：檢查最近一日主力買賣超 > 0。
     
@@ -1685,7 +1685,6 @@ elif selected_page == "選股":
     if st.button("開始掃描"):
         status_text = st.empty()
         progress_bar = st.progress(0)
-        result_area = st.container()
         
         try:
             # 1. 抓取候選名單 (Rank Data)
@@ -1695,8 +1694,6 @@ elif selected_page == "選股":
             df_listed = get_norway_rank_data("https://norway.twsthr.info/StockHoldersTopWeek.aspx")
             # 上櫃
             df_otc = get_norway_rank_data("https://norway.twsthr.info/StockHoldersTopWeek.aspx?CID=100&Show=1")
-            
-            combined_candidates = []
             
             # 處理資料函式
             def process_rank_df(df, label):
@@ -1719,7 +1716,7 @@ elif selected_page == "選股":
                         processed.append({
                             "code": code,
                             "name": stock_str,
-                            "change": change_val,
+                            "change": change_val, # 總增減
                             "pct": pct_val,
                             "type": label
                         })
@@ -1767,49 +1764,85 @@ elif selected_page == "選股":
                 except:
                     pass
                 
-                # 若法人沒過，就不用查主力了 (節省時間)，除非你想看部分符合
-                if is_inst_ok:
-                    # --- 檢查主力 (最近一日買超) ---
-                    try:
-                        # 使用 refresh_nonce 強制更新或使用快取
-                        wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
-                        if wg_df is not None and not wg_df.empty:
-                            last_row = wg_df.iloc[-1]
-                            if last_row['買賣超'] > 0:
-                                is_main_ok = True
-                    except:
-                        pass
+                # --- 檢查主力 (最近一日買超) ---
+                try:
+                    # 使用 refresh_nonce 強制更新或使用快取
+                    wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
+                    if wg_df is not None and not wg_df.empty:
+                        last_row = wg_df.iloc[-1]
+                        if last_row['買賣超'] > 0:
+                            is_main_ok = True
+                except:
+                    pass
                 
-                if is_inst_ok and is_main_ok:
-                    final_results.append({
-                        "代號/名稱": name,
-                        "大戶總增減(張)": item['change'],
-                        "大戶持股%": item['pct'],
-                        "法人連買3日": "✅",
-                        "主力近期買超": "✅"
-                    })
+                # 不論結果如何都加入清單，顯示勾選狀態
+                final_results.append({
+                    "代號/名稱": name,
+                    "大戶總增減": item['change'],
+                    "大戶持股%": item['pct'],
+                    "法人連買3日": is_inst_ok, # Boolean for column_config
+                    "主力近期買超": is_main_ok # Boolean for column_config
+                })
                     
             status_text.text("篩選完成！")
             progress_bar.progress(100)
             
             if final_results:
-                st.success(f"共找到 {len(final_results)} 檔符合條件的股票！")
+                st.success(f"已整理 {len(final_results)} 檔股票的綜合資訊！")
                 res_df = pd.DataFrame(final_results)
                 
-                # ✅ [FIX] 自定義樣式函式 (不需要 matplotlib)
+                # 自定義樣式函式
                 def highlight_result(val):
                     if isinstance(val, (int, float)):
                         if val > 0: return f'color: {COLOR_UP}; font-weight: bold' # 紅
                         elif val < 0: return f'color: {COLOR_DOWN}; font-weight: bold' # 綠
                     return ''
                 
-                # ✅ [FIX] 使用 map 來套用樣式，避免 background_gradient 的錯誤
-                st.dataframe(
-                    res_df.style.map(highlight_result, subset=['大戶總增減(張)']),
-                    use_container_width=True
+                # 使用 column_config 優化顯示 (Checkbox)
+                event = st.dataframe(
+                    res_df.style.map(highlight_result, subset=['大戶總增減']),
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun", # 點擊跳轉
+                    selection_mode="single-row",
+                    column_config={
+                        "法人連買3日": st.column_config.CheckboxColumn(
+                            "法人連買3日",
+                            help="三大法人合計買賣超是否連續 3 日大於 0",
+                            default=False,
+                        ),
+                        "主力近期買超": st.column_config.CheckboxColumn(
+                            "主力近期買超",
+                            help="最近一日主力買賣超是否大於 0",
+                            default=False,
+                        ),
+                        "大戶總增減": st.column_config.NumberColumn(
+                            "大戶總增減",
+                            format="%.2f",
+                        ),
+                        "大戶持股%": st.column_config.NumberColumn(
+                            "大戶持股%",
+                            format="%.2f%%",
+                        )
+                    }
                 )
+
+                # 處理點擊事件
+                if len(event.selection.rows) > 0:
+                    selected_row_idx = event.selection.rows[0]
+                    stock_str = str(res_df.iloc[selected_row_idx]['代號/名稱'])
+                    
+                    if stock_str:
+                        match = re.search(r'(\d{4})', stock_str)
+                        if match:
+                            code = match.group(1)
+                            st.session_state["__jump_stock_code"] = code
+                            st.session_state["__jump_page"] = "K線"
+                            st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                            st.rerun()
+
             else:
-                st.warning("沒有股票同時符合所有條件。")
+                st.warning("沒有資料。")
                 
         except Exception as e:
             st.error(f"篩選過程發生錯誤: {str(e)}")
