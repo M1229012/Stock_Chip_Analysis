@@ -1890,7 +1890,7 @@ elif stock_input:
                         {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
 
-rsi_data = [] 
+                rsi_data = [] 
                 rsi_80_data = [] # 1. 新增：準備放 80 線的資料
                 rsi_20_data = [] # 2. 新增：準備放 20 線的資料
 
