@@ -1202,7 +1202,6 @@ def get_norway_rank_data(url="https://norway.twsthr.info/StockHoldersTopWeek.asp
         return None
     finally:
         driver.quit()
-    return None
 
 # ✅ 獲取所有股票選單
 @st.cache_data
@@ -1262,6 +1261,7 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
         if sorted_stocks:
             st.session_state["stock_selector"] = sorted_stocks[default_index]
                 
+
     # 加上 key 參數以保持狀態
     stock_selection = st.selectbox(
         "搜尋股票", 
@@ -1298,7 +1298,7 @@ if 'current_page' not in st.session_state:
 # ✅ [NEW] 新增 "主力" 與 "類股排行" 選項
 selected_page = st.radio(
     "功能分頁", 
-    ["K線", "分點", "法人", "融資券", "主力", "大戶", "類股排行", "多股比較"], 
+    ["K線", "分點", "法人", "融資券", "主力", "大戶", "類股排行", "多股比較", "選股"], 
     horizontal=True,
     label_visibility="collapsed",
     key="current_page"
@@ -1666,6 +1666,147 @@ elif selected_page == "多股比較":
                             renderLightweightCharts(payload, key=f"compare_{idx}_{code}")
                         else:
                             st.warning(f"⚠️ {code} 無資料")
+
+# ==================== Tab 8: 選股 (New) ====================
+elif selected_page == "選股":
+    st.subheader("⚡ 飆股篩選器")
+    st.markdown("""
+    **篩選條件說明**：
+    1. **大戶籌碼增加**：以上市上櫃 Top 100 增幅排行作為基礎名單。
+    2. **三大法人連買**：檢查是否連續 3 日合計買賣超 > 0。
+    3. **主力買超**：檢查最近一日主力買賣超 > 0。
+    
+    *註：此功能需逐檔即時爬取資料，請耐心等候。*
+    """)
+    
+    # 讓使用者決定要檢查多少支股票 (預設 100)
+    check_limit = st.slider("檢查前 N 名股票 (依大戶增幅排序)", min_value=10, max_value=200, value=100, step=10)
+    
+    if st.button("開始掃描"):
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        result_area = st.container()
+        
+        try:
+            # 1. 抓取候選名單 (Rank Data)
+            status_text.text("正在抓取大戶排行資料 (上市 + 上櫃)...")
+            
+            # 上市
+            df_listed = get_norway_rank_data("https://norway.twsthr.info/StockHoldersTopWeek.aspx")
+            # 上櫃
+            df_otc = get_norway_rank_data("https://norway.twsthr.info/StockHoldersTopWeek.aspx?CID=100&Show=1")
+            
+            combined_candidates = []
+            
+            # 處理資料函式
+            def process_rank_df(df, label):
+                if df is None or df.empty: return []
+                processed = []
+                for _, row in df.iterrows():
+                    try:
+                        stock_str = str(row[0]) # 股票代號/名稱
+                        match = re.search(r'(\d{4})', stock_str)
+                        if not match: continue
+                        code = match.group(1)
+                        
+                        # 清理數值欄位
+                        change_val_str = str(row['總增減']).replace(',', '').strip()
+                        pct_val_str = str(row['上週持有%']).replace('%', '').replace(',', '').strip()
+                        
+                        change_val = float(change_val_str) if change_val_str else 0
+                        pct_val = float(pct_val_str) if pct_val_str else 0
+                        
+                        processed.append({
+                            "code": code,
+                            "name": stock_str,
+                            "change": change_val,
+                            "pct": pct_val,
+                            "type": label
+                        })
+                    except: continue
+                return processed
+
+            list_data = process_rank_df(df_listed, "上市")
+            otc_data = process_rank_df(df_otc, "上櫃")
+            
+            # 合併並依照「總增減」由大到小排序
+            all_data = list_data + otc_data
+            all_data.sort(key=lambda x: x['change'], reverse=True)
+            
+            # 取前 N 名
+            candidates = all_data[:check_limit]
+            
+            final_results = []
+            
+            # 2. 開始逐檔檢查
+            total_checks = len(candidates)
+            
+            for idx, item in enumerate(candidates):
+                code = item['code']
+                name = item['name']
+                
+                status_text.text(f"正在檢查 ({idx+1}/{total_checks}): {name} ...")
+                progress_bar.progress((idx + 1) / total_checks)
+                
+                is_inst_ok = False
+                is_main_ok = False
+                
+                # 計算日期範圍 (取最近 10 天確保有足夠交易日)
+                s_date, e_date = calculate_date_range(code, 10)
+                
+                # --- 檢查法人 (連買 3 日) ---
+                try:
+                    inst_df = get_institutional_data(code, s_date, e_date)
+                    if inst_df is not None and len(inst_df) >= 3:
+                        # 計算合計
+                        inst_df['total'] = inst_df['外資買賣超'] + inst_df['投信買賣超'] + inst_df['自營商買賣超']
+                        # 取最後 3 筆
+                        last_3 = inst_df.tail(3)
+                        if (last_3['total'] > 0).all():
+                            is_inst_ok = True
+                except:
+                    pass
+                
+                # 若法人沒過，就不用查主力了 (節省時間)，除非你想看部分符合
+                if is_inst_ok:
+                    # --- 檢查主力 (最近一日買超) ---
+                    try:
+                        # 使用 refresh_nonce 強制更新或使用快取
+                        wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
+                        if wg_df is not None and not wg_df.empty:
+                            last_row = wg_df.iloc[-1]
+                            if last_row['買賣超'] > 0:
+                                is_main_ok = True
+                    except:
+                        pass
+                
+                if is_inst_ok and is_main_ok:
+                    final_results.append({
+                        "代號/名稱": name,
+                        "大戶總增減(張)": item['change'],
+                        "大戶持股%": item['pct'],
+                        "法人連買3日": "✅",
+                        "主力近期買超": "✅"
+                    })
+                    
+            status_text.text("篩選完成！")
+            progress_bar.progress(100)
+            
+            if final_results:
+                st.success(f"共找到 {len(final_results)} 檔符合條件的股票！")
+                res_df = pd.DataFrame(final_results)
+                
+                # 讓 DataFrame 可以點擊 (雖然 Streamlit DataFrame 點擊互動有限，但我們可以讓它看起來漂亮)
+                st.dataframe(
+                    res_df.style.background_gradient(subset=['大戶總增減(張)'], cmap='Reds'),
+                    use_container_width=True
+                )
+            else:
+                st.warning("沒有股票同時符合所有條件。")
+                
+        except Exception as e:
+            st.error(f"篩選過程發生錯誤: {str(e)}")
+            st.code(traceback.format_exc())
 
 elif stock_input:
     # ... (其餘原有的股票顯示邏輯，只有當不是 "類股排行" 時才執行) ...
