@@ -1796,9 +1796,16 @@ elif selected_page == "選股":
                 st.success(f"共找到 {len(final_results)} 檔符合條件的股票！")
                 res_df = pd.DataFrame(final_results)
                 
-                # 讓 DataFrame 可以點擊 (雖然 Streamlit DataFrame 點擊互動有限，但我們可以讓它看起來漂亮)
+                # ✅ [FIX] 自定義樣式函式 (不需要 matplotlib)
+                def highlight_result(val):
+                    if isinstance(val, (int, float)):
+                        if val > 0: return f'color: {COLOR_UP}; font-weight: bold' # 紅
+                        elif val < 0: return f'color: {COLOR_DOWN}; font-weight: bold' # 綠
+                    return ''
+                
+                # ✅ [FIX] 使用 map 來套用樣式，避免 background_gradient 的錯誤
                 st.dataframe(
-                    res_df.style.background_gradient(subset=['大戶總增減(張)'], cmap='Reds'),
+                    res_df.style.map(highlight_result, subset=['大戶總增減(張)']),
                     use_container_width=True
                 )
             else:
