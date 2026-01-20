@@ -1890,10 +1890,13 @@ elif stock_input:
                         {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                     ]})
 
-                rsi_data = [] # ✅ [MODIFIED] Removed rsi_80, rsi_20 lists
+rsi_data = [] 
+                rsi_80_data = [] # 1. 新增：準備放 80 線的資料
+                rsi_20_data = [] # 2. 新增：準備放 20 線的資料
+
                 if 'RSI' in plot_df.columns:
                     for i, row in plot_df.iterrows():
-                        # ✅ [FIX] 處理 RSI 指標時間
+                        # [FIX] 處理 RSI 指標時間 (這段維持原樣)
                         if is_intraday:
                             try:
                                 dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
@@ -1905,11 +1908,21 @@ elif stock_input:
                             
                         if not pd.isna(row['RSI']): 
                             rsi_data.append({"time": time_val, "value": float(row['RSI'])})
-                            # ✅ [MODIFIED] Removed 80/20 appending
-                    
-                    # ✅ [FIX] 禁用固定標籤, removed 80/20 series
+                            
+                            # 3. 新增：同步填入 80 與 20 的固定數值
+                            rsi_80_data.append({"time": time_val, "value": 80})
+                            rsi_20_data.append({"time": time_val, "value": 20})
+
+                    # 4. 新增：將線條加入 series (注意看這裡加入了兩個新的 dict)
                     charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
-                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                        # 原本的 RSI 線
+                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                        
+                        # 新增的 80 線 (虛線)
+                        {"type": "Line", "data": rsi_80_data, "options": {"color": "rgba(255, 0, 127, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "80", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+                        
+                        # 新增的 20 線 (虛線)
+                        {"type": "Line", "data": rsi_20_data, "options": {"color": "rgba(0, 255, 0, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "20", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}}
                     ]})
                 
                 # ✅ [FIX] Key changed to include stock_input to force reset on stock change
