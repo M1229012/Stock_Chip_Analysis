@@ -32,94 +32,128 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ CSS 設定 (整合：隱藏 Header + 手機版優化 + 介面樣式)
-st.markdown("""
+# ✅ 初始化主題狀態
+if 'theme' not in st.session_state:
+    st.session_state.theme = 'dark'
+
+# ✅ 定義顏色變數 (根據主題)
+if st.session_state.theme == 'dark':
+    BG_COLOR = "#0e1117"
+    TEXT_COLOR = "#fafafa"
+    CARD_BG = "#262730"
+    CHART_BG = "#131722"
+    CHART_TEXT = "white"
+    GRID_COLOR = "rgba(42, 46, 57, 0.5)"
+    RADIO_HOVER = "#ffffff"
+    RADIO_BG_ACTIVE = "rgba(239, 83, 80, 0.15)"
+else:
+    BG_COLOR = "#ffffff"
+    TEXT_COLOR = "#000000"
+    CARD_BG = "#f0f2f6"
+    CHART_BG = "#ffffff"
+    CHART_TEXT = "black"
+    GRID_COLOR = "rgba(42, 46, 57, 0.1)"
+    RADIO_HOVER = "#000000"
+    RADIO_BG_ACTIVE = "rgba(239, 83, 80, 0.1)"
+
+COLOR_UP = '#ef5350' # 紅色 (上漲)
+COLOR_DOWN = '#26a69a' # 綠色 (下跌)
+
+# ✅ CSS 設定 (整合：隱藏 Header + 手機版優化 + 介面樣式 + 動態主題)
+st.markdown(f"""
     <style>
+    /* ================= 動態主題設定 ================= */
+    .stApp {{
+        background-color: {BG_COLOR};
+        color: {TEXT_COLOR};
+    }}
+    
     /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
-    header[data-testid="stHeader"] {
+    header[data-testid="stHeader"] {{
         visibility: hidden;
-    }
+    }}
     /* 隱藏部署按鈕 (保險起見) */
-    .stDeployButton {
+    .stDeployButton {{
         display: none;
-    }
+    }}
     /* 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
-    .block-container {
+    .block-container {{
         padding-top: 1rem !important;
-    }
+    }}
 
     /* ================= 通用字體設定 ================= */
-    html, body, [class*="css"] { font-size: 18px !important; }
-    .stDataFrame { font-size: 16px !important; }
+    html, body, [class*="css"] {{ font-size: 18px !important; }}
+    .stDataFrame {{ font-size: 16px !important; }}
       
     /* ================= 數據卡片樣式 ================= */
-    .metric-container {
+    .metric-container {{
         display: flex;
         justify-content: space-between;
-        background-color: #262730;
+        background-color: {CARD_BG};
         padding: 10px;
         border-radius: 5px;
         margin-top: 5px;
         flex-wrap: wrap;
-    }
-    .metric-item {
+    }}
+    .metric-item {{
         text-align: center;
         width: 48%;
         min-width: 100px;
-    }
-    .metric-label {
+    }}
+    .metric-label {{
         font-size: 0.9rem;
         color: #aaa;
         white-space: nowrap;
-    }
-    .metric-value {
+    }}
+    .metric-value {{
         font-size: 1.2rem;
         font-weight: bold;
-    }
+        color: {TEXT_COLOR};
+    }}
 
     /* ================= 手機版 RWD (螢幕 < 768px) ================= */
-    @media (max-width: 768px) {
-        html, body, [class*="css"] { font-size: 15px !important; }
-        .stDataFrame { font-size: 14px !important; }
-        h1 { font-size: 1.8rem !important; }
-        h2 { font-size: 1.5rem !important; }
-        h3 { font-size: 1.3rem !important; }
-        .metric-container { padding: 8px; gap: 5px; }
-        .metric-label { font-size: 0.8rem; }
-        .metric-value { font-size: 1rem; }
+    @media (max-width: 768px) {{
+        html, body, [class*="css"] {{ font-size: 15px !important; }}
+        .stDataFrame {{ font-size: 14px !important; }}
+        h1 {{ font-size: 1.8rem !important; }}
+        h2 {{ font-size: 1.5rem !important; }}
+        h3 {{ font-size: 1.3rem !important; }}
+        .metric-container {{ padding: 8px; gap: 5px; }}
+        .metric-label {{ font-size: 0.8rem; }}
+        .metric-value {{ font-size: 1rem; }}
         
         /* 手機時：隱藏包含 desktop-marker 的容器 */
-        div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {
+        div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {{
             display: none !important;
-        }
+        }}
 
         /* ✅ [FIX] 手機版 Radio Button 優化：縮小間距與內距，確保單行顯示 */
-        div[data-testid="stRadio"] > div[role="radiogroup"] {
+        div[data-testid="stRadio"] > div[role="radiogroup"] {{
             gap: 2px !important; /* 縮小按鈕間距 */
-        }
-        div[data-testid="stRadio"] > div[role="radiogroup"] label {
+        }}
+        div[data-testid="stRadio"] > div[role="radiogroup"] label {{
             padding: 6px 8px !important; /* 縮小點擊範圍內距 */
             font-size: 14px !important; /* 稍微縮小字體 */
-        }
-    }
+        }}
+    }}
 
     /* ================= 電腦版 RWD (螢幕 > 768px) ================= */
-    @media (min-width: 769px) {
+    @media (min-width: 769px) {{
         /* 電腦時：隱藏包含 mobile-marker 的容器 */
-        div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {
+        div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {{
             display: none !important;
-        }
-    }
+        }}
+    }}
 
     /* ================= [CSS 強制修正] Radio Button 樣式 ================= */
     
     /* 1. 隱藏 Radio 的圓圈輸入框 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {
+    div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{
         display: none !important;
-    }
+    }}
 
     /* 2. 調整 Radio Group 容器 - 透明背景，只在選項區域下方顯示線條 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
+    div[data-testid="stRadio"] > div[role="radiogroup"] {{
         background-color: transparent;
         border: none;
         box-shadow: none;
@@ -141,15 +175,15 @@ st.markdown("""
         /* 隱藏捲軸 */
         scrollbar-width: none; 
         -ms-overflow-style: none;
-    }
+    }}
     
     /* 隱藏 Chrome/Safari 捲軸 */
-    div[data-testid="stRadio"] > div[role="radiogroup"]::-webkit-scrollbar {
+    div[data-testid="stRadio"] > div[role="radiogroup"]::-webkit-scrollbar {{
         display: none;
-    }
+    }}
 
     /* 3. 設定每個選項 (Label) 的基礎樣式 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label {
+    div[data-testid="stRadio"] > div[role="radiogroup"] label {{
         background-color: transparent !important;
         border: none;
         border-radius: 6px 6px 0 0; /* 上方圓角 */
@@ -165,23 +199,23 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         flex: 0 0 auto; /* ✅ [FIX] 防止項目被壓縮 */
-    }
+    }}
 
     /* 4. ✅ 滑鼠懸停效果 (Hover) */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
-        color: #ffffff !important;
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {{
+        color: {RADIO_HOVER} !important;
         background-color: rgba(255, 255, 255, 0.05) !important; /* 懸停時淡淡的灰 */
-    }
+    }}
 
     /* 5. ✅ [關鍵修正] 選中狀態 (Active) */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {{
         color: #ef5350 !important; /* 文字變紅 */
         border-bottom: 3px solid #ef5350 !important; /* 底部紅線 */
-        background-color: rgba(239, 83, 80, 0.15) !important; /* 背景淡紅 */
+        background-color: {RADIO_BG_ACTIVE} !important; /* 背景淡紅 */
         font-weight: bold !important;
-    }
+    }}
     
-    div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
+    div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {{
         margin: 0 !important;
         padding-top: 2px !important; /* 垂直微調 */
         
@@ -190,21 +224,18 @@ st.markdown("""
         
         /* ✅ [FIX] 確保文字不換行 */
         white-space: nowrap !important;
-    }
+    }}
     
     /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {{
         color: #ef5350 !important;
         font-weight: bold !important;
         margin: 0 !important;
         /* ✅ [微調] 增加一點點上邊距，人工修正視覺基準線，確保文字在紅框中完美垂直置中 */
         padding-top: 2px !important; 
-    }
+    }}
     </style>
     """, unsafe_allow_html=True)
-
-COLOR_UP = '#ef5350' # 紅色 (上漲)
-COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
 # ================= 2. 輔助函式 =================
 
@@ -389,9 +420,9 @@ def resample_data(df, period):
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
 def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
     opts = {
-        "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
+        "layout": {"textColor": CHART_TEXT, "background": {"type": "solid", "color": CHART_BG}},
         "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
-        "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
+        "grid": {"vertLines": {"color": GRID_COLOR}, "horzLines": {"color": GRID_COLOR}},
         "timeScale": {
             "borderColor": "rgba(197, 203, 206, 0.8)", 
             "visible": time_visible, 
@@ -416,7 +447,8 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
     if title:
-        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
+        watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
+        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
     return opts
 
 # ================= 3. 爬蟲核心 =================
@@ -1214,6 +1246,13 @@ def get_all_stock_options():
 
 st.title(f"📊 籌碼K線")
 
+# ✅ [NEW] 主題切換按鈕 (位於最右上角)
+col_top_head, col_top_theme = st.columns([8, 1])
+with col_top_theme:
+    if st.button("🌞/🌜", help="切換深色/淺色模式"):
+        st.session_state.theme = 'light' if st.session_state.theme == 'dark' else 'dark'
+        st.rerun()
+
 tz = pytz.timezone('Asia/Taipei')
 current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
@@ -1671,18 +1710,18 @@ elif selected_page == "多股比較":
 elif selected_page == "選股":
     st.subheader("⚡ 飆股篩選器")
     st.markdown("""
-    **篩選條件說明**：
-    1. **大戶籌碼增加**：合併上市與上櫃 Top 100 排行榜，依「總增減(張/%)」排序。
-    2. **三大法人連買**：檢查是否連續 3 日合計買賣超 > 0。
-    3. **主力買超**：檢查最近一日主力買賣超 > 0。
+    **篩選條件 (嚴格)**：
+    系統將自動掃描所有上市與上櫃「大戶持股增加」的股票，並列出**同時符合**以下所有條件者：
+    1. **大戶籌碼增加** (排行榜入列)
+    2. **法人連買 3 日**
+    3. **主力近期買超**
     
     *註：此功能需逐檔即時爬取資料，請耐心等候。*
     """)
     
-    # 讓使用者決定要檢查多少支股票 (預設 100)
-    check_limit = st.slider("檢查前 N 名股票 (依大戶增幅排序)", min_value=10, max_value=200, value=100, step=10)
+    # 移除手動拉桿，直接設定為全部掃描 (預設邏輯)
     
-    if st.button("開始掃描"):
+    if st.button("開始自動掃描"):
         status_text = st.empty()
         progress_bar = st.progress(0)
         
@@ -1726,19 +1765,15 @@ elif selected_page == "選股":
             list_data = process_rank_df(df_listed, "上市")
             otc_data = process_rank_df(df_otc, "上櫃")
             
-            # 合併並依照「總增減」由大到小排序
-            all_data = list_data + otc_data
-            all_data.sort(key=lambda x: x['change'], reverse=True)
-            
-            # 取前 N 名
-            candidates = all_data[:check_limit]
+            # 合併所有資料 (不需排序，下面會全掃)
+            all_candidates = list_data + otc_data
             
             final_results = []
             
             # 2. 開始逐檔檢查
-            total_checks = len(candidates)
+            total_checks = len(all_candidates)
             
-            for idx, item in enumerate(candidates):
+            for idx, item in enumerate(all_candidates):
                 code = item['code']
                 name = item['name']
                 
@@ -1755,9 +1790,7 @@ elif selected_page == "選股":
                 try:
                     inst_df = get_institutional_data(code, s_date, e_date)
                     if inst_df is not None and len(inst_df) >= 3:
-                        # 計算合計
                         inst_df['total'] = inst_df['外資買賣超'] + inst_df['投信買賣超'] + inst_df['自營商買賣超']
-                        # 取最後 3 筆
                         last_3 = inst_df.tail(3)
                         if (last_3['total'] > 0).all():
                             is_inst_ok = True
@@ -1765,30 +1798,35 @@ elif selected_page == "選股":
                     pass
                 
                 # --- 檢查主力 (最近一日買超) ---
-                try:
-                    # 使用 refresh_nonce 強制更新或使用快取
-                    wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
-                    if wg_df is not None and not wg_df.empty:
-                        last_row = wg_df.iloc[-1]
-                        if last_row['買賣超'] > 0:
-                            is_main_ok = True
-                except:
-                    pass
+                # 只有法人通過才檢查主力 (節省資源) - 但為了同時符合，都檢查也無妨
+                if is_inst_ok:
+                    try:
+                        wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
+                        if wg_df is not None and not wg_df.empty:
+                            last_row = wg_df.iloc[-1]
+                            if last_row['買賣超'] > 0:
+                                is_main_ok = True
+                    except:
+                        pass
                 
-                # 不論結果如何都加入清單，顯示勾選狀態
-                final_results.append({
-                    "代號/名稱": name,
-                    "大戶總增減": item['change'],
-                    "大戶持股%": item['pct'],
-                    "法人連買3日": is_inst_ok, # Boolean for column_config
-                    "主力近期買超": is_main_ok # Boolean for column_config
-                })
-                    
+                # ✅ 只有同時符合三者才加入 (大戶已經在名單內，所以只要檢查另外兩個)
+                if is_inst_ok and is_main_ok:
+                    final_results.append({
+                        "代號/名稱": name,
+                        "大戶總增減": item['change'],
+                        "大戶持股%": item['pct'],
+                        "法人連買3日": True,
+                        "主力近期買超": True
+                    })
+            
+            # 依照「大戶總增減」由大到小排序
+            final_results.sort(key=lambda x: x['大戶總增減'], reverse=True)
+            
             status_text.text("篩選完成！")
             progress_bar.progress(100)
             
             if final_results:
-                st.success(f"已整理 {len(final_results)} 檔股票的綜合資訊！")
+                st.success(f"共找到 {len(final_results)} 檔符合所有條件的強勢股！")
                 res_df = pd.DataFrame(final_results)
                 
                 # 自定義樣式函式
@@ -1798,23 +1836,22 @@ elif selected_page == "選股":
                         elif val < 0: return f'color: {COLOR_DOWN}; font-weight: bold' # 綠
                     return ''
                 
-                # 使用 column_config 優化顯示 (Checkbox)
                 event = st.dataframe(
                     res_df.style.map(highlight_result, subset=['大戶總增減']),
                     use_container_width=True,
                     hide_index=True,
-                    on_select="rerun", # 點擊跳轉
+                    on_select="rerun",
                     selection_mode="single-row",
                     column_config={
                         "法人連買3日": st.column_config.CheckboxColumn(
                             "法人連買3日",
-                            help="三大法人合計買賣超是否連續 3 日大於 0",
                             default=False,
+                            disabled=True # 只讀
                         ),
                         "主力近期買超": st.column_config.CheckboxColumn(
                             "主力近期買超",
-                            help="最近一日主力買賣超是否大於 0",
                             default=False,
+                            disabled=True
                         ),
                         "大戶總增減": st.column_config.NumberColumn(
                             "大戶總增減",
@@ -1827,11 +1864,9 @@ elif selected_page == "選股":
                     }
                 )
 
-                # 處理點擊事件
                 if len(event.selection.rows) > 0:
                     selected_row_idx = event.selection.rows[0]
                     stock_str = str(res_df.iloc[selected_row_idx]['代號/名稱'])
-                    
                     if stock_str:
                         match = re.search(r'(\d{4})', stock_str)
                         if match:
@@ -1842,7 +1877,7 @@ elif selected_page == "選股":
                             st.rerun()
 
             else:
-                st.warning("沒有資料。")
+                st.warning("沒有股票同時符合三大條件。")
                 
         except Exception as e:
             st.error(f"篩選過程發生錯誤: {str(e)}")
@@ -1885,9 +1920,9 @@ elif stock_input:
         # ✅ [REVERTED] 恢復 make_opts 到未嘗試縮放前的狀態 (移除 barSpacing/rightOffset/data_len)
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
             opts = {
-                "layout": {"textColor": "white", "background": {"type": "solid", "color": "#131722"}},
+                "layout": {"textColor": CHART_TEXT, "background": {"type": "solid", "color": CHART_BG}},
                 "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
-                "grid": {"vertLines": {"color": "rgba(42, 46, 57, 0.5)"}, "horzLines": {"color": "rgba(42, 46, 57, 0.5)"}},
+                "grid": {"vertLines": {"color": GRID_COLOR}, "horzLines": {"color": GRID_COLOR}},
                 "timeScale": {
                     "borderColor": "rgba(197, 203, 206, 0.8)", 
                     "visible": time_visible, 
@@ -1913,7 +1948,8 @@ elif stock_input:
                 # ✅ [FIX] RSI 模式下也要保留 minimumWidth，並將 visible 設為 True (否則無法對齊)
                 opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
             if title:
-                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": 'rgba(255, 255, 255, 0.2)', "text": title}
+                watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
+                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
             
             return opts
 
