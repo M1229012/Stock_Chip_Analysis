@@ -196,6 +196,11 @@ st.markdown(f"""
         margin: 0 !important;
         padding-top: 2px !important; 
     }}
+    
+    /* ✅ [NEW] 緊湊模式：強制縮小按鈕與圖表之間的間距 */
+    div.element-container:has(button[kind="secondary"]) {{
+        margin-bottom: -10px !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -380,7 +385,7 @@ def resample_data(df, period):
     return resampled
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
-# ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (使用全域縮放倍率)
+# ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (預設恢復正常邊距)
 def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
     
     # ✅ 讀取全域縮放倍率 (預設 1.0)
@@ -1580,15 +1585,12 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
-                        # ✅ [NEW] 跳轉按鈕 (標題列樣式)
-                        col_label, col_jump = st.columns([3, 1])
-                        with col_label:
-                            st.markdown(f"### {display_title}")
-                        with col_jump:
-                            if st.button("➯", key=f"jump_btn_{code}_{idx}", help=f"跳轉至 {code} 詳細分析", use_container_width=True):
-                                st.session_state["__jump_stock_code"] = code
-                                st.session_state["__jump_page"] = "K線"
-                                st.rerun()
+                        # ✅ [NEW] 跳轉按鈕整合於 Title，消除垂直空隙
+                        # 使用全寬按鈕作為標題，點擊即可跳轉
+                        if st.button(f"{display_title} ➯", key=f"jump_btn_{code}_{idx}", help=f"點擊跳轉至 {code} K線分析", use_container_width=True):
+                            st.session_state["__jump_stock_code"] = code
+                            st.session_state["__jump_page"] = "K線"
+                            st.rerun()
 
                         # Fetch Data
                         df = get_stock_price(code, st.session_state.refresh_nonce)
@@ -1617,8 +1619,8 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖高度 240px，字體 11px
-                            payload = [{"chart": make_opts(240, None, False, font_size=11), "series": main_series}]
+                            # ✅ [MODIFIED] 主圖高度 240px，字體 11px，恢復工具列留白 (top_margin=0.1)
+                            payload = [{"chart": make_opts(240, None, False, font_size=11, top_margin=0.1), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
