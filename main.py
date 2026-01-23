@@ -1557,7 +1557,7 @@ elif selected_page == "多股比較":
         # Determine grid cols and height
         cols_per_row = 2
         # ✅ [MODIFIED] 縮小尺寸
-        chart_height = 250 
+        chart_height = 300 
         
         # Calculate needed rows
         rows = math.ceil(num_stocks / cols_per_row)
@@ -1607,8 +1607,8 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖字體縮小，設定 top margin 避免遮擋
-                            payload = [{"chart": make_opts(chart_height, display_title, False, font_size=11, top_margin=0.25), "series": main_series}]
+                            # ✅ [MODIFIED] 主圖字體縮小，設定 top margin (0.3) 避免 Toolbar 遮擋 K 線
+                            payload = [{"chart": make_opts(chart_height, display_title, False, font_size=11, top_margin=0.3), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
@@ -1686,8 +1686,8 @@ elif selected_page == "多股比較":
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
                                 
-                                # ✅ [MODIFIED] 副圖高度調整為 160，保留 10% 邊距避免截斷
-                                chart_opts = make_opts(160, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
+                                # ✅ [MODIFIED] 副圖高度調整為 200px，保留 10% 邊距避免截斷
+                                chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
