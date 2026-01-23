@@ -51,6 +51,30 @@ COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
 # ✅ CSS 設定 (隱藏 Header + 手機版優化 + 介面樣式)
 st.markdown(f"""
+
+    /* ================= [NEW] 多股比較頁面：強制壓縮圖表間距 ================= */
+    /* Streamlit 元件容器底部常有預設 margin，這裡全部壓到 0 */
+    div[data-testid="stVerticalBlock"] > div,
+    div[data-testid="stHorizontalBlock"] > div,
+    div[data-testid="column"] > div,
+    div.element-container {
+        margin-bottom: 0rem !important;
+        padding-bottom: 0rem !important;
+    }
+
+    /* custom component（lightweight charts）外框壓縮 */
+    div[data-testid="stCustomComponentV1"],
+    div[data-testid="stCustomComponentV1"] > div {
+        margin: 0rem !important;
+        padding: 0rem !important;
+    }
+
+    /* iframe 也壓縮（有些版本 component 會用 iframe） */
+    iframe {
+        margin: 0rem !important;
+        padding: 0rem !important;
+        display: block !important;
+    }
     <style>
     /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
     header[data-testid="stHeader"] {{
@@ -94,31 +118,6 @@ st.markdown(f"""
         font-weight: bold;
         color: #fafafa;
     }}
-
-
-    /* ================= [NEW] 多股比較頁面：強制壓縮圖表間距 ================= */
-    /* Streamlit 元件容器底部常有預設 margin，這裡全部壓到 0 */
-    div[data-testid="stVerticalBlock"] > div,
-    div[data-testid="stHorizontalBlock"] > div,
-    div[data-testid="column"] > div,
-    div.element-container {
-        margin-bottom: 0rem !important;
-        padding-bottom: 0rem !important;
-    }
-
-    /* custom component（lightweight charts）外框壓縮 */
-    div[data-testid="stCustomComponentV1"],
-    div[data-testid="stCustomComponentV1"] > div {
-        margin: 0rem !important;
-        padding: 0rem !important;
-    }
-
-    /* iframe 也壓縮（有些版本 component 會用 iframe） */
-    iframe {
-        margin: 0rem !important;
-        padding: 0rem !important;
-        display: block !important;
-    }
 
 
     /* ================= 手機版 RWD (螢幕 < 768px) ================= */
