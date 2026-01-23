@@ -36,6 +36,10 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
+# ✅ [NEW] 圖表等比例縮放倍率（1.0=原尺寸，0.8=縮小20%）
+if "chart_scale" not in st.session_state:
+    st.session_state.chart_scale = 0.8
+
 # ✅ 定義顏色變數 (僅用於圖表設定，不再改變網頁背景)
 if st.session_state.theme == 'dark':
     CHART_BG = "#131722"
@@ -380,13 +384,23 @@ def resample_data(df, period):
     return resampled
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
-# ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (預設恢復正常邊距)
+# ✅ [MODIFIED] 使用 chart_scale 進行全域縮放，解決副圖截斷與大小不一致問題
 def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
+    
+    # ✅ 讀取全域縮放倍率
+    scale = st.session_state.get("chart_scale", 1.0)
+    
+    # ✅ 等比例縮放計算 (加上最小值保護)
+    # 高度至少 120 (確保副圖不被切)，字體至少 9px，軸寬至少 55px
+    h = max(120, int(height * scale))
+    fs = max(9, int(font_size * scale))
+    min_w = max(55, int(75 * scale))
+
     opts = {
         "layout": {
             "textColor": CHART_TEXT, 
             "background": {"type": "solid", "color": CHART_BG},
-            "fontSize": font_size # ✅ 支援字體大小設定
+            "fontSize": fs # ✅ 應用縮放後的字體大小
         },
         "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
         "grid": {"vertLines": {"color": GRID_COLOR}, "horzLines": {"color": GRID_COLOR}},
@@ -395,18 +409,18 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "visible": time_visible, 
             "timeVisible": True, 
             "secondsVisible": False,
-            "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
-            "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
+            "barSpacing": 12, # 保持 K 棒密度
+            "rightOffset": 5, 
         },
-        # ✅ [FIX] 設定 scaleMargins 避免圖形被邊緣或 Toolbar 遮擋
+        # ✅ 設定 scaleMargins 與縮放後的寬度
         "rightPriceScale": {
             "borderColor": "rgba(197, 203, 206, 0.8)", 
             "visible": True, 
-            "minimumWidth": 75, 
+            "minimumWidth": min_w, 
             "autoScale": True,
             "scaleMargins": {
-                "top": top_margin,    # 上方留白
-                "bottom": bottom_margin # 下方留白
+                "top": top_margin,
+                "bottom": bottom_margin
             }
         },
         "crosshair": {
@@ -418,16 +432,17 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
                 "labelBackgroundColor": '#1E88E5'
             }
         },
-        "height": height,
+        "height": h, # ✅ 應用縮放後的高度
     }
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {
-            "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75,
-            "scaleMargins": {"top": 0.1, "bottom": 0.1} # RSI 也有自己的留白
+            "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": min_w,
+            "scaleMargins": {"top": 0.1, "bottom": 0.1} 
         }
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
-        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
+        # ✅ 浮水印字體也跟著縮放
+        opts["watermark"] = {"visible": True, "fontSize": int(20 * scale), "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
     return opts
 
 # ================= 3. 爬蟲核心 =================
@@ -1149,7 +1164,6 @@ def get_norway_rank_data(url="https://norway.twsthr.info/StockHoldersTopWeek.asp
                 # 簡單判斷：看是否包含 "大股東持有" 字樣
                 if df.apply(lambda x: x.astype(str).str.contains('大股東持有').any()).any():
                     target_df = df
-
                     break
         
         if target_df is None and len(dfs) > 0:
@@ -1608,7 +1622,7 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖高度 240px，字體 11px
+                            # ✅ [MODIFIED] 主圖字體縮小
                             payload = [{"chart": make_opts(chart_height, display_title, False, font_size=11), "series": main_series}]
                             
                             # 2. Sub Chart
@@ -1687,7 +1701,7 @@ elif selected_page == "多股比較":
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
                                 
-                                # ✅ [MODIFIED] 副圖高度調整為 160px，字體 10px，top margin 縮小至 0.1
+                                # ✅ [MODIFIED] 副圖高度調整為 160px，保留 10% 邊距避免截斷
                                 chart_opts = make_opts(160, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
