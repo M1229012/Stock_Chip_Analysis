@@ -95,6 +95,32 @@ st.markdown(f"""
         color: #fafafa;
     }}
 
+
+    /* ================= [NEW] 多股比較頁面：強制壓縮圖表間距 ================= */
+    /* Streamlit 元件容器底部常有預設 margin，這裡全部壓到 0 */
+    div[data-testid="stVerticalBlock"] > div,
+    div[data-testid="stHorizontalBlock"] > div,
+    div[data-testid="column"] > div,
+    div.element-container {
+        margin-bottom: 0rem !important;
+        padding-bottom: 0rem !important;
+    }
+
+    /* custom component（lightweight charts）外框壓縮 */
+    div[data-testid="stCustomComponentV1"],
+    div[data-testid="stCustomComponentV1"] > div {
+        margin: 0rem !important;
+        padding: 0rem !important;
+    }
+
+    /* iframe 也壓縮（有些版本 component 會用 iframe） */
+    iframe {
+        margin: 0rem !important;
+        padding: 0rem !important;
+        display: block !important;
+    }
+
+
     /* ================= 手機版 RWD (螢幕 < 768px) ================= */
     @media (max-width: 768px) {{
         html, body, [class*="css"] {{ font-size: 15px !important; }}
@@ -1582,11 +1608,8 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
-                        # ✅ [NEW] 標題按鈕：全寬度按鈕，消除垂直縫隙
-                        if st.button(f"{display_title} ➯", key=f"jump_btn_{code}_{idx}", help=f"點擊跳轉至 {code} K線分析", use_container_width=True):
-                            st.session_state["__jump_stock_code"] = code
-                            st.session_state["__jump_page"] = "K線"
-                            st.rerun()
+                        # ✅ [FIX] 移除按鈕，改為純文字標題（不佔額外間距）
+                        st.markdown(f"**{display_title}**")
 
                         # Fetch Data
                         df = get_stock_price(code, st.session_state.refresh_nonce)
@@ -1615,8 +1638,7 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖高度 400px (還原)，字體 10px，恢復工具列留白 (top_margin=0.05 預設)
-                            # ✅ [FIX] 移除 top_margin=0.3，讓圖填滿
+                            # ✅ [MODIFIED] 主圖高度 400px (還原)，字體 10px
                             payload = [{"chart": make_opts(400, None, False, font_size=10), "series": main_series}]
                             
                             # 2. Sub Chart
@@ -1630,11 +1652,9 @@ elif selected_page == "多股比較":
                                 for _, row in df.iterrows():
                                      if not pd.isna(row['Volume']):
                                          sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
-                                # ✅ [FIX] precision: 0 for volume, type: 'price' to prevent truncation, title with suffix in header
                                 sub_series = [{"type": "Histogram", "data": sub_data, "options": {"title": "成交量(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", **common_opts}}]
                                 
                             elif indicator_type in ["KD", "MACD", "RSI"]:
-                                 # Reuse existing indicators in df
                                  if indicator_type == "KD":
                                      k, d = [], []
                                      for _, row in df.iterrows():
@@ -1662,12 +1682,10 @@ elif selected_page == "多股比較":
                                      ]
 
                             elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
-                                # Need extra fetch
                                 s_date = df['DateStr'].iloc[0]
                                 e_date = df['DateStr'].iloc[-1]
                                 inst_df = get_institutional_data(code, s_date, e_date)
                                 if inst_df is not None:
-                                    # Merge
                                     m_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
                                     col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超"}
                                     target_col = col_map[indicator_type]
@@ -1681,7 +1699,6 @@ elif selected_page == "多股比較":
                                         bar_data.append({"time": row['DateStr'], "value": val, "color": COLOR_UP if val > 0 else COLOR_DOWN})
                                         line_data.append({"time": row['DateStr'], "value": cum_val})
                                         
-                                    # ✅ [FIX] precision: 0 for shares, title
                                     title_str = f"{indicator_type[:2]}  " if len(indicator_type)>2 else f"{indicator_type}  "
                                     sub_series = [
                                         {"type": "Histogram", "data": bar_data, "options": {"title": title_str, "priceScaleId": "right", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}},
@@ -1689,20 +1706,20 @@ elif selected_page == "多股比較":
                                     ]
                             
                             if sub_series:
-                                # Append sub chart
-                                # ✅ [FIX] Title with Unit if applicable
                                 chart_title = indicator_type
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
                                 
-                                # ✅ [MODIFIED] 副圖高度調整為 200px (加大防截斷)，字體 10px，top margin 縮小至 0.1
                                 chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
-                                if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
+                                if indicator_type == "RSI":
+                                    chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
+                            # ✅ 圖表輸出（CSS 已把 component 外距壓到最小）
                             renderLightweightCharts(payload, key=f"compare_{idx}_{code}")
                         else:
                             st.warning(f"⚠️ {code} 無資料")
+
 
 # ==================== Tab 8: 選股 (New) ====================
 elif selected_page == "選股":
