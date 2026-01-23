@@ -380,8 +380,8 @@ def resample_data(df, period):
     return resampled
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
-# ✅ [MODIFIED] 增加 font_size, top_margin 等參數以支援等比例縮小與避免遮擋
-def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
+# ✅ [MODIFIED] 增加 font_size 參數以支援等比例縮小 (移除 top_margin)
+def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12):
     opts = {
         "layout": {
             "textColor": CHART_TEXT, 
@@ -398,17 +398,8 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
             "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
         },
-        # ✅ [FIX] 設定 scaleMargins 避免圖形被邊緣或 Toolbar 遮擋
-        "rightPriceScale": {
-            "borderColor": "rgba(197, 203, 206, 0.8)", 
-            "visible": True, 
-            "minimumWidth": 75, 
-            "autoScale": True,
-            "scaleMargins": {
-                "top": top_margin,    # 上方留白
-                "bottom": bottom_margin # 下方留白
-            }
-        },
+        # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
+        "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
         "crosshair": {
             "mode": 1,
             "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
@@ -421,10 +412,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
         "height": height,
     }
     if scale_mode == "rsi":
-        opts["rightPriceScale"] = {
-            "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75,
-            "scaleMargins": {"top": 0.1, "bottom": 0.1} # RSI 也有自己的留白
-        }
+        opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
         opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
@@ -1556,7 +1544,7 @@ elif selected_page == "多股比較":
     if num_stocks > 0:
         # Determine grid cols and height
         cols_per_row = 2
-        # ✅ [MODIFIED] 縮小尺寸
+        # ✅ [MODIFIED] 縮小尺寸 (K線)
         chart_height = 300 
         
         # Calculate needed rows
@@ -1686,8 +1674,8 @@ elif selected_page == "多股比較":
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
                                 
-                                # ✅ [MODIFIED] 副圖高度調整為 200px，保留 10% 邊距避免截斷
-                                chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
+                                # ✅ [MODIFIED] 副圖高度調整為 150px，字體 11px
+                                chart_opts = make_opts(150, chart_title, True, font_size=11, top_margin=0.1, bottom_margin=0.1)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
@@ -1920,7 +1908,7 @@ elif stock_input:
                     "barSpacing": 12, # ✅ [FIX] 設定 K 棒間距為 12px，使畫面預設顯示約 60 根 (近60日)
                     "rightOffset": 5, # ✅ [FIX] 右側保留一些空間
                 },
-                # ✅ [FIX] 強制設定右側座標軸最小寬度，以對齊所有圖表
+                # ✅ [FIX] Add autoScale: True to solve 'cut off' issue for small heights
                 "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
                 "crosshair": {
                     "mode": 1,
