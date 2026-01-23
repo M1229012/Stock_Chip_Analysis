@@ -36,10 +36,6 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ [FIX] 圖表等比例縮放倍率（預設改回 1.0，避免過度縮小導致裁切）
-if "chart_scale" not in st.session_state:
-    st.session_state.chart_scale = 1.0
-
 # ✅ 定義顏色變數 (僅用於圖表設定，不再改變網頁背景)
 if st.session_state.theme == 'dark':
     CHART_BG = "#131722"
@@ -383,17 +379,17 @@ def resample_data(df, period):
     resampled = calculate_technical_indicators(resampled)
     return resampled
 
-# ✅ [FIX] Move make_opts to Global Scope
-# ✅ [MODIFIED] 全域 make_opts (包含縮放邏輯與 Margin 修正)
-def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.12, bottom_margin=0.12):
+# ✅ [FIX] Move make_opts to Global Scope to avoid NameError
+# ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (使用全域縮放倍率)
+def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
     
-    # ✅ 讀取全域縮放倍率
+    # ✅ 讀取全域縮放倍率 (預設 1.0)
     scale = st.session_state.get("chart_scale", 1.0)
     
     # ✅ 等比例縮放計算 (加上最小值保護)
     h = max(120, int(height * scale))
     fs = max(9, int(font_size * scale))
-    min_w = max(80, int(90 * scale)) # 增加最小寬度，避免價格軸標籤被切
+    min_w = max(55, int(75 * scale))
 
     opts = {
         "layout": {
@@ -436,7 +432,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {
             "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": min_w,
-            "scaleMargins": {"top": 0.15, "bottom": 0.15} # ✅ RSI 邊距加大
+            "scaleMargins": {"top": 0.1, "bottom": 0.1} 
         }
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
@@ -1570,8 +1566,6 @@ elif selected_page == "多股比較":
     if num_stocks > 0:
         # Determine grid cols and height
         cols_per_row = 2
-        # ✅ [MODIFIED] 縮小尺寸
-        chart_height = 240 
         
         # Calculate needed rows
         rows = math.ceil(num_stocks / cols_per_row)
@@ -1586,10 +1580,12 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
-                        # ✅ [NEW] 跳轉按鈕
+                        # ✅ [NEW] 跳轉按鈕 (標題列樣式)
                         col_label, col_jump = st.columns([3, 1])
+                        with col_label:
+                            st.markdown(f"### {display_title}")
                         with col_jump:
-                            if st.button(f"🔍 分析 {code}", key=f"jump_btn_{code}"):
+                            if st.button("➯", key=f"jump_btn_{code}_{idx}", help=f"跳轉至 {code} 詳細分析", use_container_width=True):
                                 st.session_state["__jump_stock_code"] = code
                                 st.session_state["__jump_page"] = "K線"
                                 st.rerun()
@@ -1621,8 +1617,8 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖字體縮小至 11px
-                            payload = [{"chart": make_opts(chart_height, display_title, False, font_size=11), "series": main_series}]
+                            # ✅ [MODIFIED] 主圖高度 240px，字體 11px
+                            payload = [{"chart": make_opts(240, None, False, font_size=11), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
@@ -1700,7 +1696,7 @@ elif selected_page == "多股比較":
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
                                 
-                                # ✅ [MODIFIED] 副圖高度調整為 160px，保留 10% 邊距避免截斷
+                                # ✅ [MODIFIED] 副圖高度調整為 160px，字體 10px，top margin 縮小至 0.1
                                 chart_opts = make_opts(160, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
