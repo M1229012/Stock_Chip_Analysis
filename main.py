@@ -32,42 +32,26 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
-# ✅ 初始化主題狀態
+# ✅ 初始化主題狀態 (預設暗色圖表)
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ 定義顏色變數 (根據主題)
+# ✅ 定義顏色變數 (僅用於圖表設定，不再改變網頁背景)
 if st.session_state.theme == 'dark':
-    BG_COLOR = "#0e1117"
-    TEXT_COLOR = "#fafafa"
-    CARD_BG = "#262730"
     CHART_BG = "#131722"
     CHART_TEXT = "white"
     GRID_COLOR = "rgba(42, 46, 57, 0.5)"
-    RADIO_HOVER = "#ffffff"
-    RADIO_BG_ACTIVE = "rgba(239, 83, 80, 0.15)"
 else:
-    BG_COLOR = "#ffffff"
-    TEXT_COLOR = "#000000"
-    CARD_BG = "#f0f2f6"
     CHART_BG = "#ffffff"
     CHART_TEXT = "black"
     GRID_COLOR = "rgba(42, 46, 57, 0.1)"
-    RADIO_HOVER = "#000000"
-    RADIO_BG_ACTIVE = "rgba(239, 83, 80, 0.1)"
 
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ✅ CSS 設定 (整合：隱藏 Header + 手機版優化 + 介面樣式 + 動態主題)
+# ✅ CSS 設定 (隱藏 Header + 手機版優化 + 介面樣式)
 st.markdown(f"""
     <style>
-    /* ================= 動態主題設定 ================= */
-    .stApp {{
-        background-color: {BG_COLOR};
-        color: {TEXT_COLOR};
-    }}
-    
     /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
     header[data-testid="stHeader"] {{
         visibility: hidden;
@@ -76,7 +60,7 @@ st.markdown(f"""
     .stDeployButton {{
         display: none;
     }}
-    /* 修正頂部留白 (因為隱藏了 Header，把內容往上推) */
+    /* 修正頂部留白 */
     .block-container {{
         padding-top: 1rem !important;
     }}
@@ -89,7 +73,7 @@ st.markdown(f"""
     .metric-container {{
         display: flex;
         justify-content: space-between;
-        background-color: {CARD_BG};
+        background-color: #262730;
         padding: 10px;
         border-radius: 5px;
         margin-top: 5px;
@@ -108,7 +92,7 @@ st.markdown(f"""
     .metric-value {{
         font-size: 1.2rem;
         font-weight: bold;
-        color: {TEXT_COLOR};
+        color: #fafafa;
     }}
 
     /* ================= 手機版 RWD (螢幕 < 768px) ================= */
@@ -122,116 +106,94 @@ st.markdown(f"""
         .metric-label {{ font-size: 0.8rem; }}
         .metric-value {{ font-size: 1rem; }}
         
-        /* 手機時：隱藏包含 desktop-marker 的容器 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {{
             display: none !important;
         }}
 
-        /* ✅ [FIX] 手機版 Radio Button 優化：縮小間距與內距，確保單行顯示 */
         div[data-testid="stRadio"] > div[role="radiogroup"] {{
-            gap: 2px !important; /* 縮小按鈕間距 */
+            gap: 2px !important; 
         }}
         div[data-testid="stRadio"] > div[role="radiogroup"] label {{
-            padding: 6px 8px !important; /* 縮小點擊範圍內距 */
-            font-size: 14px !important; /* 稍微縮小字體 */
+            padding: 6px 8px !important; 
+            font-size: 14px !important; 
         }}
     }}
 
     /* ================= 電腦版 RWD (螢幕 > 768px) ================= */
     @media (min-width: 769px) {{
-        /* 電腦時：隱藏包含 mobile-marker 的容器 */
         div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {{
             display: none !important;
         }}
     }}
 
     /* ================= [CSS 強制修正] Radio Button 樣式 ================= */
-    
-    /* 1. 隱藏 Radio 的圓圈輸入框 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{
         display: none !important;
     }}
 
-    /* 2. 調整 Radio Group 容器 - 透明背景，只在選項區域下方顯示線條 */
     div[data-testid="stRadio"] > div[role="radiogroup"] {{
         background-color: transparent;
         border: none;
         box-shadow: none;
         padding: 0;
-        gap: 10px; /* 選項間距 */
+        gap: 10px;
         display: flex;
         flex-direction: row;
-        
-        /* ✅ [FIX] 強制不換行，並允許橫向捲動 (手機版關鍵修正) */
         flex-wrap: nowrap !important;
         overflow-x: auto !important;
         white-space: nowrap !important;
-        
         margin-bottom: 5px;
-        /* 這裡加上一條全長的淡線當作軌道 (可選) */
         border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
-        width: 100%; /* 佔滿寬度 */
-        
-        /* 隱藏捲軸 */
+        width: 100%;
         scrollbar-width: none; 
         -ms-overflow-style: none;
     }}
     
-    /* 隱藏 Chrome/Safari 捲軸 */
     div[data-testid="stRadio"] > div[role="radiogroup"]::-webkit-scrollbar {{
         display: none;
     }}
 
-    /* 3. 設定每個選項 (Label) 的基礎樣式 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {{
         background-color: transparent !important;
         border: none;
-        border-radius: 6px 6px 0 0; /* 上方圓角 */
-        color: #8b92a2 !important; /* 未選中：灰色 */
-        padding: 8px 16px !important; /* 增加點擊範圍 */
+        border-radius: 6px 6px 0 0;
+        color: #8b92a2 !important;
+        padding: 8px 16px !important;
         margin: 0 !important;
         font-weight: 500;
         font-size: 16px;
         transition: all 0.15s ease-in-out;
-        border-bottom: 3px solid transparent; /* 預留底線位置 */
+        border-bottom: 3px solid transparent;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        flex: 0 0 auto; /* ✅ [FIX] 防止項目被壓縮 */
+        flex: 0 0 auto;
     }}
 
-    /* 4. ✅ 滑鼠懸停效果 (Hover) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {{
-        color: {RADIO_HOVER} !important;
-        background-color: rgba(255, 255, 255, 0.05) !important; /* 懸停時淡淡的灰 */
+        color: #ffffff !important;
+        background-color: rgba(255, 255, 255, 0.05) !important;
     }}
 
-    /* 5. ✅ [關鍵修正] 選中狀態 (Active) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {{
-        color: #ef5350 !important; /* 文字變紅 */
-        border-bottom: 3px solid #ef5350 !important; /* 底部紅線 */
-        background-color: {RADIO_BG_ACTIVE} !important; /* 背景淡紅 */
+        color: #ef5350 !important;
+        border-bottom: 3px solid #ef5350 !important;
+        background-color: rgba(239, 83, 80, 0.15) !important;
         font-weight: bold !important;
     }}
     
     div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {{
         margin: 0 !important;
-        padding-top: 2px !important; /* 垂直微調 */
-        
-        /* 👇 這裡控制左右位置，負數往左 */
+        padding-top: 2px !important;
         transform: translateX(-5px) !important; 
-        
-        /* ✅ [FIX] 確保文字不換行 */
         white-space: nowrap !important;
     }}
     
-    /* 修正內部文字顏色與對齊，確保被選中時文字真的變紅且置中 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {{
         color: #ef5350 !important;
         font-weight: bold !important;
         margin: 0 !important;
-        /* ✅ [微調] 增加一點點上邊距，人工修正視覺基準線，確保文字在紅框中完美垂直置中 */
         padding-top: 2px !important; 
     }}
     </style>
@@ -1246,10 +1208,10 @@ def get_all_stock_options():
 
 st.title(f"📊 籌碼K線")
 
-# ✅ [NEW] 主題切換按鈕 (位於最右上角)
+# ✅ [NEW] 主題切換按鈕 (位於最右上角，僅切換圖表主題)
 col_top_head, col_top_theme = st.columns([8, 1])
 with col_top_theme:
-    if st.button("🌞/🌜", help="切換深色/淺色模式"):
+    if st.button("🌞/🌜", help="切換 K 線圖表深色/淺色模式"):
         st.session_state.theme = 'light' if st.session_state.theme == 'dark' else 'dark'
         st.rerun()
 
@@ -1547,38 +1509,38 @@ elif selected_page == "類股排行":
 elif selected_page == "多股比較":
     st.subheader("📈 多股 K 線比較")
     
+    # ✅ [NEW] 記憶式多股輸入框
+    if "multi_stock_inputs" not in st.session_state:
+        st.session_state.multi_stock_inputs = "2330 2317 2454"
+
     # Inputs for comparison
     with st.expander("⚙️ 設定比較股票與指標", expanded=True):
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        stock_inputs = []
-        with c1: stock_inputs.append(st.text_input("股票 1", placeholder="2330"))
-        with c2: stock_inputs.append(st.text_input("股票 2", placeholder="2317"))
-        with c3: stock_inputs.append(st.text_input("股票 3", placeholder="2454"))
-        with c4: stock_inputs.append(st.text_input("股票 4", placeholder=""))
-        with c5: stock_inputs.append(st.text_input("股票 5", placeholder=""))
-        with c6: stock_inputs.append(st.text_input("股票 6", placeholder=""))
-        
-        indicator_type = st.selectbox(
-            "選擇副圖指標", 
-            ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超"]
-        )
+        col_input, col_ind = st.columns([3, 1])
+        with col_input:
+            user_input = st.text_input(
+                "輸入股票代號 (可輸入多支，以空白或逗號分隔，最多 10 支)", 
+                value=st.session_state.multi_stock_inputs,
+                key="multi_stock_inputs" # 直接綁定 state
+            )
+        with col_ind:
+            indicator_type = st.selectbox(
+                "選擇副圖指標", 
+                ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超"]
+            )
     
-    # Process each stock
-    valid_stocks = [s.strip() for s in stock_inputs if s.strip()]
+    # Process stocks
+    raw_stocks = re.split(r'[ ,]+', user_input.strip())
+    valid_stocks = [s.strip() for s in raw_stocks if s.strip()]
+    
+    # ✅ [FIX] 限制最多 10 支
+    valid_stocks = valid_stocks[:10]
     num_stocks = len(valid_stocks)
     
     if num_stocks > 0:
         # Determine grid cols and height
-        if num_stocks == 1:
-            cols_per_row = 1
-            chart_height = 600
-        elif num_stocks == 2:
-            cols_per_row = 2
-            chart_height = 500
-        else:
-            cols_per_row = 2
-            # ✅ [MODIFIED] Changed to 400 per user request
-            chart_height = 400
+        cols_per_row = 2
+        # ✅ [MODIFIED] 縮小尺寸
+        chart_height = 300 
         
         # Calculate needed rows
         rows = math.ceil(num_stocks / cols_per_row)
@@ -1593,6 +1555,14 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
+                        # ✅ [NEW] 跳轉按鈕
+                        col_label, col_jump = st.columns([3, 1])
+                        with col_jump:
+                            if st.button(f"🔍 分析 {code}", key=f"jump_btn_{code}"):
+                                st.session_state["__jump_stock_code"] = code
+                                st.session_state["__jump_page"] = "K線"
+                                st.rerun()
+
                         # Fetch Data
                         df = get_stock_price(code, st.session_state.refresh_nonce)
                         
@@ -1697,8 +1667,9 @@ elif selected_page == "多股比較":
                                 chart_title = indicator_type
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
-                                    
-                                chart_opts = make_opts(150, chart_title, True)
+                                
+                                # ✅ [MODIFIED] 縮小副圖尺寸 (150 -> 100)
+                                chart_opts = make_opts(100, chart_title, True)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
