@@ -36,9 +36,9 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ [NEW] 圖表等比例縮放倍率（1.0=原尺寸，0.8=縮小20%）
+# ✅ [FIX] 圖表等比例縮放倍率（預設改回 1.0，避免過度縮小導致裁切）
 if "chart_scale" not in st.session_state:
-    st.session_state.chart_scale = 0.8
+    st.session_state.chart_scale = 1.0
 
 # ✅ 定義顏色變數 (僅用於圖表設定，不再改變網頁背景)
 if st.session_state.theme == 'dark':
@@ -383,18 +383,17 @@ def resample_data(df, period):
     resampled = calculate_technical_indicators(resampled)
     return resampled
 
-# ✅ [FIX] Move make_opts to Global Scope to avoid NameError
-# ✅ [MODIFIED] 使用 chart_scale 進行全域縮放，解決副圖截斷與大小不一致問題
-def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
+# ✅ [FIX] Move make_opts to Global Scope
+# ✅ [MODIFIED] 全域 make_opts (包含縮放邏輯與 Margin 修正)
+def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.12, bottom_margin=0.12):
     
     # ✅ 讀取全域縮放倍率
     scale = st.session_state.get("chart_scale", 1.0)
     
     # ✅ 等比例縮放計算 (加上最小值保護)
-    # 高度至少 120 (確保副圖不被切)，字體至少 9px，軸寬至少 55px
     h = max(120, int(height * scale))
     fs = max(9, int(font_size * scale))
-    min_w = max(55, int(75 * scale))
+    min_w = max(80, int(90 * scale)) # 增加最小寬度，避免價格軸標籤被切
 
     opts = {
         "layout": {
@@ -409,7 +408,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "visible": time_visible, 
             "timeVisible": True, 
             "secondsVisible": False,
-            "barSpacing": 12, # 保持 K 棒密度
+            "barSpacing": 12, 
             "rightOffset": 5, 
         },
         # ✅ 設定 scaleMargins 與縮放後的寬度
@@ -437,7 +436,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {
             "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": min_w,
-            "scaleMargins": {"top": 0.1, "bottom": 0.1} 
+            "scaleMargins": {"top": 0.15, "bottom": 0.15} # ✅ RSI 邊距加大
         }
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
@@ -1622,7 +1621,7 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖字體縮小
+                            # ✅ [MODIFIED] 主圖字體縮小至 11px
                             payload = [{"chart": make_opts(chart_height, display_title, False, font_size=11), "series": main_series}]
                             
                             # 2. Sub Chart
