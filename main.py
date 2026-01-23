@@ -197,9 +197,9 @@ st.markdown(f"""
         padding-top: 2px !important; 
     }}
     
-    /* ✅ [NEW] 緊湊模式：強制縮小按鈕與圖表之間的間距 */
-    div.element-container:has(button[kind="secondary"]) {{
-        margin-bottom: -10px !important;
+    /* ✅ [NEW] 強制消除 Streamlit 內部元件間距，達到緊密排列 */
+    div[data-testid="column"] > div > div > div > div {{
+        gap: 0rem !important;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -385,22 +385,19 @@ def resample_data(df, period):
     return resampled
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
-# ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (預設恢復正常邊距)
+# ✅ [MODIFIED] 恢復預設參數 (移除 chart_scale 縮放邏輯，使用固定數值以確保穩定)
 def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
     
-    # ✅ 讀取全域縮放倍率 (預設 1.0)
-    scale = st.session_state.get("chart_scale", 1.0)
-    
-    # ✅ 等比例縮放計算 (加上最小值保護)
-    h = max(120, int(height * scale))
-    fs = max(9, int(font_size * scale))
-    min_w = max(55, int(75 * scale))
+    # ✅ [FIX] 移除全域縮放，直接使用傳入的參數
+    # h = max(120, int(height * scale)) -> 使用 height
+    # fs = max(9, int(font_size * scale)) -> 使用 font_size
+    # min_w = max(55, int(75 * scale)) -> 固定
 
     opts = {
         "layout": {
             "textColor": CHART_TEXT, 
             "background": {"type": "solid", "color": CHART_BG},
-            "fontSize": fs # ✅ 應用縮放後的字體大小
+            "fontSize": font_size # ✅ 支援字體大小設定
         },
         "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
         "grid": {"vertLines": {"color": GRID_COLOR}, "horzLines": {"color": GRID_COLOR}},
@@ -416,7 +413,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
         "rightPriceScale": {
             "borderColor": "rgba(197, 203, 206, 0.8)", 
             "visible": True, 
-            "minimumWidth": min_w, 
+            "minimumWidth": 75, 
             "autoScale": True,
             "scaleMargins": {
                 "top": top_margin,
@@ -432,17 +429,17 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
                 "labelBackgroundColor": '#1E88E5'
             }
         },
-        "height": h, # ✅ 應用縮放後的高度
+        "height": height, # ✅ 使用傳入的高度
     }
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {
-            "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": min_w,
+            "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75,
             "scaleMargins": {"top": 0.1, "bottom": 0.1} 
         }
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
-        # ✅ 浮水印字體也跟著縮放
-        opts["watermark"] = {"visible": True, "fontSize": int(20 * scale), "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
+        # ✅ 浮水印字體
+        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
     return opts
 
 # ================= 3. 爬蟲核心 =================
@@ -1585,8 +1582,7 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
-                        # ✅ [NEW] 跳轉按鈕整合於 Title，消除垂直空隙
-                        # 使用全寬按鈕作為標題，點擊即可跳轉
+                        # ✅ [NEW] 標題按鈕：全寬度按鈕，消除垂直縫隙
                         if st.button(f"{display_title} ➯", key=f"jump_btn_{code}_{idx}", help=f"點擊跳轉至 {code} K線分析", use_container_width=True):
                             st.session_state["__jump_stock_code"] = code
                             st.session_state["__jump_page"] = "K線"
@@ -1619,8 +1615,9 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 主圖高度 240px，字體 11px，恢復工具列留白 (top_margin=0.1)
-                            payload = [{"chart": make_opts(240, None, False, font_size=11, top_margin=0.1), "series": main_series}]
+                            # ✅ [MODIFIED] 主圖高度 400px (還原)，字體 10px，恢復工具列留白 (top_margin=0.05 預設)
+                            # ✅ [FIX] 移除 top_margin=0.3，讓圖填滿
+                            payload = [{"chart": make_opts(400, None, False, font_size=10), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
@@ -1698,8 +1695,8 @@ elif selected_page == "多股比較":
                                 if "成交量" in chart_title or "買賣超" in chart_title:
                                     chart_title += " (張)"
                                 
-                                # ✅ [MODIFIED] 副圖高度調整為 160px，字體 10px，top margin 縮小至 0.1
-                                chart_opts = make_opts(160, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
+                                # ✅ [MODIFIED] 副圖高度調整為 200px (加大防截斷)，字體 10px，top margin 縮小至 0.1
+                                chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
