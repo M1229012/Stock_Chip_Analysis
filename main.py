@@ -49,7 +49,7 @@ else:
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ✅ CSS 設定 (隱藏 Header + 手機版優化 + 介面樣式)
+# ✅ CSS 設定 (隱藏 Header + 手機版優化 + 介面樣式 + 強制無縫排列)
 st.markdown(f"""
     <style>
     /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
@@ -197,7 +197,31 @@ st.markdown(f"""
         padding-top: 2px !important; 
     }}
     
-    /* ✅ [NEW] 強制消除 Streamlit 內部元件間距，達到緊密排列 */
+    /* ✅ [NEW] 強制消除 Streamlit 內部元件間距，達到完全緊密排列 */
+    
+    /* 1. 消除 Column 之間的水平間距 (Gap) */
+    div[data-testid="stHorizontalBlock"] {{
+        gap: 0rem !important;
+    }}
+    
+    /* 2. 消除 Column 內部的 Padding */
+    div[data-testid="column"] {{
+        padding: 0 !important;
+    }}
+    
+    /* 3. 消除每個 Element (圖表) 上下的 Margin */
+    div.element-container {{
+        margin-bottom: 0px !important;
+    }}
+    
+    /* 4. 確保 iframe (圖表本體) 沒有額外邊距 */
+    iframe {{
+        margin: 0 !important;
+        padding: 0 !important;
+        display: block !important;
+    }}
+    
+    /* 5. 針對多層嵌套的 Layout 做強制歸零 */
     div[data-testid="column"] > div > div > div > div {{
         gap: 0rem !important;
     }}
@@ -1548,7 +1572,6 @@ elif selected_page == "多股比較":
         with col_input:
             user_input = st.text_input(
                 "輸入股票代號 (可輸入多支，以空白或逗號分隔，最多 10 支)", 
-                value=st.session_state.multi_stock_inputs,
                 key="multi_stock_inputs" # 直接綁定 state
             )
         with col_ind:
@@ -1582,6 +1605,9 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
+                        # ✅ [NEW] 移除所有 st.button，完全緊密排列
+                        # 標題將顯示在圖表的 Watermark 中
+
                         # Fetch Data
                         df = get_stock_price(code, st.session_state.refresh_nonce)
                         
@@ -1609,9 +1635,8 @@ elif selected_page == "多股比較":
                                 {"type": "Line", "data": ma20, "options": {"title": "MA20  ", "color": "#ff00ff", "lineWidth": 1, "lastValueVisible": False, "priceLineVisible": False}}
                             ]
                             
-                            # ✅ [MODIFIED] 移除所有按鈕，改用 Watermark 顯示股票名稱
-                            # ✅ [FIX] 主圖高度 400px (還原)，字體 10px，恢復工具列留白 (top_margin=0.05 預設)
-                            # ✅ [FIX] 移除 top_margin=0.3，讓圖填滿
+                            # ✅ [MODIFIED] 主圖還原高度 400px，字體 10px，標題顯示於浮水印
+                            # ✅ [FIX] 移除 top_margin，讓圖填滿
                             payload = [{"chart": make_opts(400, display_title, False, font_size=10), "series": main_series}]
                             
                             # 2. Sub Chart
