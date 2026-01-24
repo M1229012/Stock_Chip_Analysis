@@ -36,8 +36,7 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ 定義顏色變數 (修改：PAGE_BG 固定，只切換圖表顏色)
-# 固定網頁背景為深色，不隨按鈕改變
+# ✅ 定義顏色變數 (PAGE_BG 固定，只切換圖表顏色)
 PAGE_BG = "#131722" 
 
 if st.session_state.theme == 'dark':
@@ -63,12 +62,12 @@ st.markdown(f"""
     /* 全域背景色 */
     .stApp {{ background-color: {PAGE_BG} !important; }}
     
-    /* ================= 1. 恢復頂部空間 (解決上方擠成一團的問題) ================= */
+    /* ================= 1. 調整頂部空間 (稍微放寬一點) ================= */
     .block-container {{
-        padding-top: 2rem !important; /* 恢復頂部留白 */
+        padding-top: 3rem !important; /* 原本 2rem 改為 3rem，讓標題不要太貼頂 */
         padding-left: 1rem !important;
         padding-right: 1rem !important;
-        padding-bottom: 0rem !important;
+        padding-bottom: 2rem !important;
         max-width: 100% !important;
     }}
 
@@ -1218,6 +1217,9 @@ if "days_label" not in st.session_state:
 if "selected_days" not in st.session_state:
     st.session_state.selected_days = days_map.get(st.session_state.days_label, 20) # [FIX] 同步將預設值改為 20
 
+# ✅ [Layout Spacer] 在標題和搜尋區塊之間加入間距
+st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
 # ✅ [UI REFACTOR] 將側邊欄的輸入移至主畫面頂部的 Expander，確保手機版可見
 with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=True):
     all_stocks = get_all_stock_options()
@@ -1269,6 +1271,9 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
             st.rerun()
 
     st.caption(f"🕒 資料抓取時間: {current_time}")
+
+# ✅ [Layout Spacer] 在搜尋區塊和 Tabs 之間加入間距
+st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
 # ✅ [FIX] 移除 st.tabs，改用 st.radio 模擬分頁
 if 'current_page' not in st.session_state:
@@ -1899,7 +1904,9 @@ elif stock_input:
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
             # ✅ [NEW] 將 K 線週期選擇器移至此處，並加入分時選項
-            kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
+            c1_k, c2_k = st.columns([1, 2])
+            with c1_k:
+                kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
             
             # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料或抓取分時資料
             plot_df = None
@@ -1932,6 +1939,18 @@ elif stock_input:
             show_ma240 = "MA240" in selected_mas
             show_bb = "BB" in selected_mas
             
+            # ✅ [NEW FEATURE] 副圖順序調整
+            # 使用 multiselect 來決定顯示哪些副圖以及它們的順序
+            indicator_options = ["成交量", "KD", "MACD", "RSI"]
+            # 預設顯示的副圖 (可自行調整預設順序)
+            default_indicators = ["成交量", "KD", "MACD"]
+            
+            selected_indicators = st.multiselect(
+                "選擇副圖指標 (依選擇順序排列，刪除後重新加入可改變位置)",
+                options=indicator_options,
+                default=default_indicators
+            )
+            
             if plot_df is not None and not plot_df.empty:
                 charts_payload = []
                 plot_df.index.name = None
@@ -1943,6 +1962,12 @@ elif stock_input:
                 # ✅ [FIX] 判斷是否為分時資料 (Intraday)
                 is_intraday = kline_period in ["5分", "15分", "30分", "60分"]
                 
+                # 預先計算好所有副圖需要的數據
+                vol_data = []
+                k_data, d_data = [], []
+                dif_data, dea_data, hist_data = [], [], []
+                rsi_data, rsi_80_data, rsi_20_data = [], [], []
+
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
                         # ✅ [FIX] 如果是分時資料，時間必須轉為 Unix Timestamp (秒) 才能正確顯示
@@ -1971,6 +1996,21 @@ elif stock_input:
                     if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": t_val, "value": float(row['BB_Up'])})
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": t_val, "value": float(row['BB_Low'])})
 
+                    # 收集副圖資料
+                    if not pd.isna(row['Volume']): vol_data.append({"time": t_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
+                    if 'K' in plot_df.columns:
+                        if not pd.isna(row['K']): k_data.append({"time": t_val, "value": float(row['K'])})
+                        if not pd.isna(row['D']): d_data.append({"time": t_val, "value": float(row['D'])})
+                    if 'DIF' in plot_df.columns:
+                        if not pd.isna(row['DIF']): dif_data.append({"time": t_val, "value": float(row['DIF'])})
+                        if not pd.isna(row['DEA']): dea_data.append({"time": t_val, "value": float(row['DEA'])})
+                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": t_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
+                    if 'RSI' in plot_df.columns:
+                        if not pd.isna(row['RSI']): 
+                            rsi_data.append({"time": t_val, "value": float(row['RSI'])})
+                            rsi_80_data.append({"time": t_val, "value": 80})
+                            rsi_20_data.append({"time": t_val, "value": 20})
+
                 # ✅ [FIX] 禁用固定標籤
                 # ✅ [FIX] MA Title spacing: "MA5  " (two spaces)
                 ma_opts = {"lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": True, "lineWidth": 1}
@@ -1985,105 +2025,46 @@ elif stock_input:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
                 
-                # ✅ [MODIFIED] 移除 data_len, 並且將高度改為 800
-                charts_payload.append({"chart": make_opts(800, "股價", True), "series": main_series})
+                # ✅ [MODIFIED] 移除 data_len, 並且將高度改為 600 (讓主圖大一點)
+                charts_payload.append({"chart": make_opts(600, "股價", True), "series": main_series})
 
-                vol_data = []
-                for i, row in plot_df.iterrows():
-                    # ✅ [FIX] 同樣處理成交量的時間格式
-                    if is_intraday:
-                        try:
-                            dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
-                            time_val = int(dt_obj.timestamp())
-                        except:
-                            time_val = row['DateStr']
-                    else:
-                        time_val = row['DateStr']
-                        
-                    if not pd.isna(row['Volume']): vol_data.append({"time": time_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
-                # ✅ [FIX] 禁用固定標籤
-                # ✅ [FIX] 增加單位 (張), precision: 0 移除小數點，且使用 type: 'price' 顯示完整整數
-                charts_payload.append({"chart": make_opts(150, "成交量 (張)", False), "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量(張)  ", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]})
+                # ✅ [NEW LOGIC] 根據使用者選擇的順序加入副圖
+                for indicator in selected_indicators:
+                    
+                    if indicator == "成交量":
+                        charts_payload.append({
+                            "chart": make_opts(150, "成交量 (張)", False), 
+                            "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量(張)  ", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]
+                        })
 
-                # ✅ [修正錯誤] 這裡原本 k_data, d_data = [] 會導致 ValueError，改為 [], []
-                k_data, d_data = [], []
-                if 'K' in plot_df.columns:
-                    for i, row in plot_df.iterrows():
-                        # ✅ [FIX] 處理 KD 指標時間
-                        if is_intraday:
-                            try:
-                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
-                                time_val = int(dt_obj.timestamp())
-                            except:
-                                time_val = row['DateStr']
-                        else:
-                            time_val = row['DateStr']
-                            
-                        if not pd.isna(row['K']): k_data.append({"time": time_val, "value": float(row['K'])})
-                        if not pd.isna(row['D']): d_data.append({"time": time_val, "value": float(row['D'])})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "KD", False), "series": [
-                        {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                    ]})
+                    elif indicator == "KD":
+                        charts_payload.append({
+                            "chart": make_opts(150, "KD", False), 
+                            "series": [
+                                {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                                {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                            ]
+                        })
 
-                dif_data, dea_data, hist_data = [], [], []
-                if 'DIF' in plot_df.columns:
-                    for i, row in plot_df.iterrows():
-                        # ✅ [FIX] 處理 MACD 指標時間
-                        if is_intraday:
-                            try:
-                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
-                                time_val = int(dt_obj.timestamp())
-                            except:
-                                time_val = row['DateStr']
-                        else:
-                            time_val = row['DateStr']
-                            
-                        if not pd.isna(row['DIF']): dif_data.append({"time": time_val, "value": float(row['DIF'])})
-                        if not pd.isna(row['DEA']): dea_data.append({"time": time_val, "value": float(row['DEA'])})
-                        if not pd.isna(row['MACD_Hist']): hist_data.append({"time": time_val, "value": float(row['MACD_Hist']), "color": COLOR_UP if row['MACD_Hist']>=0 else COLOR_DOWN})
-                    # ✅ [FIX] 禁用固定標籤
-                    charts_payload.append({"chart": make_opts(150, "MACD", False), "series": [
-                        {"type": "Histogram", "data": hist_data, "options": {"title": "MACD  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                    ]})
+                    elif indicator == "MACD":
+                        charts_payload.append({
+                            "chart": make_opts(150, "MACD", False), 
+                            "series": [
+                                {"type": "Histogram", "data": hist_data, "options": {"title": "MACD  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                                {"type": "Line", "data": dif_data, "options": {"color": "#FFD700", "lineWidth": 1, "title": "DIF  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                                {"type": "Line", "data": dea_data, "options": {"color": "#00FFFF", "lineWidth": 1, "title": "DEA  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                            ]
+                        })
 
-                rsi_data = [] 
-                rsi_80_data = [] # 1. 新增：準備放 80 線的資料
-                rsi_20_data = [] # 2. 新增：準備放 20 線的資料
-
-                if 'RSI' in plot_df.columns:
-                    for i, row in plot_df.iterrows():
-                        # [FIX] 處理 RSI 指標時間 (這段維持原樣)
-                        if is_intraday:
-                            try:
-                                dt_obj = datetime.strptime(row['DateStr'], '%Y-%m-%d %H:%M')
-                                time_val = int(dt_obj.timestamp())
-                            except:
-                                time_val = row['DateStr']
-                        else:
-                            time_val = row['DateStr']
-                            
-                        if not pd.isna(row['RSI']): 
-                            rsi_data.append({"time": time_val, "value": float(row['RSI'])})
-                            
-                            # 3. 新增：同步填入 80 與 20 的固定數值
-                            rsi_80_data.append({"time": time_val, "value": 80})
-                            rsi_20_data.append({"time": time_val, "value": 20})
-
-                    # 4. 新增：將線條加入 series (注意看這裡加入了兩個新的 dict)
-                    charts_payload.append({"chart": make_opts(150, "RSI", False, scale_mode="rsi"), "series": [
-                        # 原本的 RSI 線
-                        {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                        
-                        # 新增的 80 線 (虛線)
-                        {"type": "Line", "data": rsi_80_data, "options": {"color": "rgba(255, 0, 127, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "80", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
-                        
-                        # 新增的 20 線 (虛線)
-                        {"type": "Line", "data": rsi_20_data, "options": {"color": "rgba(0, 255, 0, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "20", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}}
-                    ]})
+                    elif indicator == "RSI":
+                        charts_payload.append({
+                            "chart": make_opts(150, "RSI", False, scale_mode="rsi"), 
+                            "series": [
+                                {"type": "Line", "data": rsi_data, "options": {"color": "#AB47BC", "lineWidth": 1, "title": "RSI  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                                {"type": "Line", "data": rsi_80_data, "options": {"color": "rgba(255, 0, 127, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "80", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+                                {"type": "Line", "data": rsi_20_data, "options": {"color": "rgba(0, 255, 0, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "20", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}}
+                            ]
+                        })
                 
                 # ✅ [FIX] Key changed to include stock_input to force reset on stock change
                 renderLightweightCharts(charts_payload, key=f"tab1_kline_{stock_input}")
