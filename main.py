@@ -1970,16 +1970,27 @@ elif stock_input:
                             if col in plot_df.columns: plot_df[col] = plot_df[col].fillna(0)
                         # 計算合計
                         plot_df['三大法人合計'] = plot_df['外資買賣超'] + plot_df['投信買賣超'] + plot_df['自營商買賣超']
+                        
+                        # ✅ [NEW] 計算累積買賣超 (供折線圖使用)
+                        if '外資買賣超' in plot_df.columns: plot_df['cum_foreign'] = plot_df['外資買賣超'].cumsum()
+                        if '投信買賣超' in plot_df.columns: plot_df['cum_trust'] = plot_df['投信買賣超'].cumsum()
+                        if '自營商買賣超' in plot_df.columns: plot_df['cum_dealer'] = plot_df['自營商買賣超'].cumsum()
+                        if '三大法人合計' in plot_df.columns: plot_df['cum_total'] = plot_df['三大法人合計'].cumsum()
 
                 # 2. 融資券數據
+                # ✅ [Critical Fix] 為了確保融資資料能正確抓取，使用較長的時間區間 (2年)
                 if any(x in selected_indicators for x in ["融資", "融券"]):
-                    s_d = plot_df['DateStr'].iloc[0]
-                    e_d = plot_df['DateStr'].iloc[-1]
-                    margin_df = get_margin_data(stock_input, s_d, e_d)
+                    end_dt = datetime.now()
+                    start_dt = end_dt - timedelta(days=730)
+                    margin_s_d = start_dt.strftime('%Y-%m-%d')
+                    margin_e_d = end_dt.strftime('%Y-%m-%d')
+                    
+                    margin_df = get_margin_data(stock_input, margin_s_d, margin_e_d)
+                    
                     if margin_df is not None:
                         plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
                         # 融資增減, 融券增減
-                        for col in ['融資增減', '融券增減']:
+                        for col in ['融資增減', '融券增減', '融資餘額', '融券餘額']:
                             if col in plot_df.columns: plot_df[col] = plot_df[col].fillna(0)
 
                 # 3. 主力數據 (玩股網)
@@ -2022,9 +2033,15 @@ elif stock_input:
                 dif_data, dea_data, hist_data = [], [], []
                 rsi_data, rsi_80_data, rsi_20_data = [], [], []
                 
-                # 籌碼資料容器
-                foreign_data, trust_data, dealer_data, total_inst_data = [], [], [], []
-                margin_data, short_data = [], []
+                # 籌碼資料容器 (Histogram & Line)
+                foreign_data, foreign_line = [], []
+                trust_data, trust_line = [], []
+                dealer_data, dealer_line = [], []
+                total_inst_data, total_inst_line = [], []
+                
+                margin_data, margin_line = [], []
+                short_data, short_line = [], []
+                
                 main_force_data, main_diff_data = [], []
 
                 for i, row in plot_df.iterrows():
@@ -2074,27 +2091,48 @@ elif stock_input:
                     if kline_period == "日K":
                         if '外資買賣超' in plot_df.columns:
                             v = row['外資買賣超']
+                            c = row.get('cum_foreign', 0)
                             foreign_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            foreign_line.append({"time": t_val, "value": float(c)})
+                        
                         if '投信買賣超' in plot_df.columns:
                             v = row['投信買賣超']
-                            trust_data.append({"time": t_val, "value": float(v), "color": "#FF00FF" if v > 0 else "#008080"}) # 投信習慣用紫色系
+                            c = row.get('cum_trust', 0)
+                            # ✅ [COLOR FIX] 統一為紅綠
+                            trust_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            trust_line.append({"time": t_val, "value": float(c)})
+                        
                         if '自營商買賣超' in plot_df.columns:
                             v = row['自營商買賣超']
-                            dealer_data.append({"time": t_val, "value": float(v), "color": "#00FFFF" if v > 0 else "#008080"})
+                            c = row.get('cum_dealer', 0)
+                            # ✅ [COLOR FIX] 統一為紅綠
+                            dealer_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            dealer_line.append({"time": t_val, "value": float(c)})
+                        
                         if '三大法人合計' in plot_df.columns:
                             v = row['三大法人合計']
+                            c = row.get('cum_total', 0)
                             total_inst_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            total_inst_line.append({"time": t_val, "value": float(c)})
                         
                         if '融資增減' in plot_df.columns:
                             v = row['融資增減']
+                            # 融資餘額
+                            bal = row.get('融資餘額', 0)
                             margin_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            if bal > 0: margin_line.append({"time": t_val, "value": float(bal)})
+                        
                         if '融券增減' in plot_df.columns:
                             v = row['融券增減']
+                            # 融券餘額
+                            bal = row.get('融券餘額', 0)
                             short_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            if bal > 0: short_line.append({"time": t_val, "value": float(bal)})
                             
                         if '主力買賣超' in plot_df.columns:
                             v = row['主力買賣超']
                             main_force_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                        
                         if '家數差' in plot_df.columns:
                             v = row['家數差']
                             # 家數差負數代表籌碼集中(好)，正數代表分散(壞)，所以負數給紅，正數給綠
@@ -2122,6 +2160,7 @@ elif stock_input:
                     
                     # 共同選項
                     common_sub_opts = {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}
+                    line_overlay_opts = {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False, "lineWidth": 2, "color": "white"} # 累積折線用左軸
 
                     if indicator == "成交量":
                         charts_payload.append({
@@ -2159,35 +2198,58 @@ elif stock_input:
                         })
                         
                     # --- 新增的籌碼指標 (僅支援日K) ---
+                    # ✅ [FIX] 增加折線圖 Overlay (累積值)
                     elif indicator == "外資":
                         charts_payload.append({
                             "chart": make_opts(150, "外資買賣超", False),
-                            "series": [{"type": "Histogram", "data": foreign_data, "options": {"title": "外資  ", **common_sub_opts}}]
+                            "series": [
+                                {"type": "Histogram", "data": foreign_data, "options": {"title": "外資  ", **common_sub_opts}},
+                                {"type": "Line", "data": foreign_line, "options": {"title": "累  ", **line_overlay_opts}}
+                            ]
                         })
                     elif indicator == "投信":
                         charts_payload.append({
                             "chart": make_opts(150, "投信買賣超", False),
-                            "series": [{"type": "Histogram", "data": trust_data, "options": {"title": "投信  ", **common_sub_opts}}]
+                            "series": [
+                                {"type": "Histogram", "data": trust_data, "options": {"title": "投信  ", **common_sub_opts}},
+                                {"type": "Line", "data": trust_line, "options": {"title": "累  ", **line_overlay_opts}}
+                            ]
                         })
                     elif indicator == "自營商":
                         charts_payload.append({
                             "chart": make_opts(150, "自營商買賣超", False),
-                            "series": [{"type": "Histogram", "data": dealer_data, "options": {"title": "自營商  ", **common_sub_opts}}]
+                            "series": [
+                                {"type": "Histogram", "data": dealer_data, "options": {"title": "自營商  ", **common_sub_opts}},
+                                {"type": "Line", "data": dealer_line, "options": {"title": "累  ", **line_overlay_opts}}
+                            ]
                         })
                     elif indicator == "三大法人合計":
                         charts_payload.append({
                             "chart": make_opts(150, "法人合計", False),
-                            "series": [{"type": "Histogram", "data": total_inst_data, "options": {"title": "合計  ", **common_sub_opts}}]
+                            "series": [
+                                {"type": "Histogram", "data": total_inst_data, "options": {"title": "合計  ", **common_sub_opts}},
+                                {"type": "Line", "data": total_inst_line, "options": {"title": "累  ", **line_overlay_opts}}
+                            ]
                         })
                     elif indicator == "融資":
+                        # 融資折線使用橘色
+                        margin_line_opts = {**line_overlay_opts, "color": "orange", "title": "餘額  "}
                         charts_payload.append({
                             "chart": make_opts(150, "融資增減", False),
-                            "series": [{"type": "Histogram", "data": margin_data, "options": {"title": "融資增減  ", **common_sub_opts}}]
+                            "series": [
+                                {"type": "Histogram", "data": margin_data, "options": {"title": "增減  ", **common_sub_opts}},
+                                {"type": "Line", "data": margin_line, "options": margin_line_opts}
+                            ]
                         })
                     elif indicator == "融券":
+                        # 融券折線使用橘色
+                        short_line_opts = {**line_overlay_opts, "color": "orange", "title": "餘額  "}
                         charts_payload.append({
                             "chart": make_opts(150, "融券增減", False),
-                            "series": [{"type": "Histogram", "data": short_data, "options": {"title": "融券增減  ", **common_sub_opts}}]
+                            "series": [
+                                {"type": "Histogram", "data": short_data, "options": {"title": "增減  ", **common_sub_opts}},
+                                {"type": "Line", "data": short_line, "options": short_line_opts}
+                            ]
                         })
                     elif indicator == "主力買賣超":
                         charts_payload.append({
@@ -2213,6 +2275,10 @@ elif stock_input:
                 st.session_state.active_broker = None
             if "last_buy" not in st.session_state: st.session_state.last_buy = None
             if "last_sell" not in st.session_state: st.session_state.last_sell = None
+
+            # ✅ [NEW] 自動載入預設券商 (買超第一名)
+            if st.session_state.active_broker is None and df_buy is not None and not df_buy.empty:
+                st.session_state.active_broker = df_buy.iloc[0]['broker']
 
             # --- 右側：排行表 (優先處理以捕捉事件，但不調用 rerun) ---
             with col_table:
@@ -2473,8 +2539,12 @@ elif stock_input:
                     
                     f_hist.append({"time": row['DateStr'], "value": float(f_val), "color": COLOR_UP if f_val>0 else COLOR_DOWN})
                     f_line.append({"time": row['DateStr'], "value": float(f_cum)})
+                    
+                    # ✅ [COLOR FIX] 統一為紅綠
                     t_hist.append({"time": row['DateStr'], "value": float(t_val), "color": COLOR_UP if t_val>0 else COLOR_DOWN})
                     t_line.append({"time": row['DateStr'], "value": float(t_cum)})
+                    
+                    # ✅ [COLOR FIX] 統一為紅綠
                     d_hist.append({"time": row['DateStr'], "value": float(d_val), "color": COLOR_UP if d_val>0 else COLOR_DOWN})
                     d_line.append({"time": row['DateStr'], "value": float(d_cum)})
                     
