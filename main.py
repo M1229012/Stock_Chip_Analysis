@@ -63,6 +63,9 @@ st.markdown(f"""
     /* 修正頂部留白 */
     .block-container {{
         padding-top: 1rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-bottom: 0rem !important;
     }}
 
     /* ================= 通用字體設定 ================= */
@@ -197,9 +200,9 @@ st.markdown(f"""
         padding-top: 2px !important; 
     }}
     
-    /* ✅ [NEW] 強制消除 Streamlit 內部元件間距，達到完全緊密排列 */
+    /* ================= [NEW] 強制消除所有間距 (Grid No Gap) ================= */
     
-    /* 1. 消除 Column 之間的水平間距 (Gap) */
+    /* 1. 消除 Column 之間的水平間距 */
     div[data-testid="stHorizontalBlock"] {{
         gap: 0rem !important;
     }}
@@ -208,20 +211,27 @@ st.markdown(f"""
     div[data-testid="column"] {{
         padding: 0 !important;
     }}
+
+    /* 3. [關鍵] 消除垂直堆疊間距 (讓 Row 與 Row 之間無縫) */
+    div[data-testid="stVerticalBlock"] {{
+        gap: 0rem !important;
+    }}
     
-    /* 3. 消除每個 Element (圖表) 上下的 Margin */
+    /* 4. 消除每個 Element (圖表/文字) 上下的 Margin */
     div.element-container {{
         margin-bottom: 0px !important;
+        margin-top: 0px !important;
     }}
     
-    /* 4. 確保 iframe (圖表本體) 沒有額外邊距 */
+    /* 5. 確保 iframe (圖表本體) 沒有額外邊距且為區塊顯示 */
     iframe {{
+        display: block !important;
         margin: 0 !important;
         padding: 0 !important;
-        display: block !important;
+        border: 0 !important;
     }}
     
-    /* 5. 針對多層嵌套的 Layout 做強制歸零 */
+    /* 6. 針對多層嵌套的 Layout 做強制歸零 */
     div[data-testid="column"] > div > div > div > div {{
         gap: 0rem !important;
     }}
