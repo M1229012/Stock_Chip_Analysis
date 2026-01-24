@@ -51,48 +51,67 @@ else:
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ✅ CSS 設定 (使用負值 Margin 強制無縫)
+# ✅ CSS 設定 (修復頂部擠壓 + 強制圖表無縫)
 st.markdown(f"""
     <style>
     /* 隱藏 Header */
     header[data-testid="stHeader"] {{ visibility: hidden; }}
     .stDeployButton {{ display: none; }}
 
-    /* 全域背景色 (視覺融合) */
+    /* 全域背景色 */
     .stApp {{ background-color: {PAGE_BG} !important; }}
     
-    /* ================= [關鍵修改] 負值 Margin 消除間隙 ================= */
-    
-    /* 1. 修正頂部容器，移除所有緩衝 */
+    /* ================= 1. 恢復頂部空間 (解決上方擠成一團的問題) ================= */
     .block-container {{
-        padding: 0px !important;
+        padding-top: 2rem !important; /* 恢復頂部留白 */
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-bottom: 0rem !important;
         max-width: 100% !important;
     }}
 
-    /* 2. 針對圖表容器使用「負值」下邊距，強制下方的圖表往上貼 */
-    div.element-container {{
-        margin-bottom: -20px !important; /* 👈 這裡用負數來吃掉間隙 */
+    /* ================= 2. 針對「圖表」暴力消除間隙 (不影響輸入框) ================= */
+    
+    /* [關鍵] 只針對含有 iframe (圖表) 的容器設定負邊距，往上拉 */
+    div.element-container:has(iframe) {{
+        margin-bottom: -40px !important; /* 👈 這裡控制上下間隙，越負越擠 */
         padding: 0px !important;
     }}
     
-    /* 3. 針對 iframe (圖表本體) 也使用負值，消除 HTML 預設行高留白 */
+    /* 確保 iframe 本身沒有邊距 */
     iframe {{
         display: block !important;
-        margin-bottom: -10px !important; /* 👈 這裡也用負數 */
+        margin: 0px !important;
         padding: 0px !important;
         border: 0px !important;
         width: 100% !important;
     }}
 
-    /* 4. 消除 Streamlit 佈局區塊的所有間距 */
-    div[data-testid="stHorizontalBlock"] {{ gap: 0px !important; }}
-    div[data-testid="stVerticalBlock"] {{ gap: 0px !important; }}
-    div[data-testid="column"] {{ padding: 0px !important; }}
+    /* ================= 3. 消除 Grid 佈局間隙 ================= */
     
-    /* 5. 確保圖片/HTML 容器滿版 */
+    /* 消除水平排列 (Columns) 的間距 */
+    div[data-testid="stHorizontalBlock"] {{
+        gap: 0px !important;
+        padding: 0px !important;
+    }}
+    
+    /* 消除垂直排列 (Rows) 的間距 */
+    div[data-testid="stVerticalBlock"] {{
+        gap: 0px !important;
+        padding: 0px !important;
+    }}
+    
+    /* 消除 Column 內部的 Padding */
+    div[data-testid="column"] {{
+        padding: 0px !important;
+        min-width: 0px !important;
+        flex: 1 1 auto !important;
+    }}
+    
+    /* 確保圖片/HTML 容器滿版 */
     div[data-testid="stImage"] {{ width: 100% !important; }}
     
-    /* ================= 其他樣式 ================= */
+    /* ================= 其他 UI 樣式 ================= */
     html, body, [class*="css"] {{ font-size: 18px !important; }}
     .stDataFrame {{ font-size: 16px !important; }}
       
@@ -1541,7 +1560,7 @@ elif selected_page == "多股比較":
                             
                             # ✅ [MODIFIED] 主圖還原高度 400px，字體 10px，標題顯示於浮水印
                             # ✅ [FIX] 移除 top_margin，讓圖填滿
-                            payload = [{"chart": make_opts(400, display_title, False, font_size=10, top_margin=0.02, bottom_margin=0.02), "series": main_series}]
+                            payload = [{"chart": make_opts(400, display_title, False, font_size=10, top_margin=0.0, bottom_margin=0.0), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
