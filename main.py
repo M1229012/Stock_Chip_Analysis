@@ -41,8 +41,7 @@ if st.session_state.theme == 'dark':
     CHART_BG = "#131722"
     CHART_TEXT = "white"
     GRID_COLOR = "rgba(42, 46, 57, 0.5)"
-    # [關鍵修正] 網頁背景色與圖表背景色一致，視覺上消除所有縫隙
-    PAGE_BG = "#131722" 
+    PAGE_BG = "#131722" # 讓網頁背景與圖表背景一致
 else:
     CHART_BG = "#ffffff"
     CHART_TEXT = "black"
@@ -52,82 +51,51 @@ else:
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ✅ CSS 設定 (強制無縫排列 + 視覺隱藏法)
+# ✅ CSS 設定 (使用負值 Margin 強制無縫)
 st.markdown(f"""
     <style>
-    /* ================= 1. 隱藏 Streamlit 預設 Header ================= */
-    header[data-testid="stHeader"] {{
-        visibility: hidden;
-    }}
+    /* 隱藏 Header */
+    header[data-testid="stHeader"] {{ visibility: hidden; }}
     .stDeployButton {{ display: none; }}
 
-    /* ================= 2. 全域背景色設定 (視覺隱藏法) ================= */
-    /* 將整個 App 背景設為與圖表相同，這樣即便有縫隙也看不出來 */
-    .stApp {{
-        background-color: {PAGE_BG} !important;
-    }}
+    /* 全域背景色 (視覺融合) */
+    .stApp {{ background-color: {PAGE_BG} !important; }}
     
-    /* ================= 3. 邊距暴力歸零 (The Zero Gap Strategy) ================= */
+    /* ================= [關鍵修改] 負值 Margin 消除間隙 ================= */
     
-    /* 修正頂部留白，設為 0 */
+    /* 1. 修正頂部容器，移除所有緩衝 */
     .block-container {{
-        padding-top: 0rem !important;
-        padding-left: 0rem !important;
-        padding-right: 0rem !important;
-        padding-bottom: 0rem !important;
+        padding: 0px !important;
         max-width: 100% !important;
     }}
 
-    /* 消除水平排列 (Columns) 的間距 */
-    div[data-testid="stHorizontalBlock"] {{
-        gap: 0px !important;
-        padding: 0px !important;
-    }}
-    
-    /* 消除垂直排列 (Rows) 的間距 */
-    div[data-testid="stVerticalBlock"] {{
-        gap: 0px !important;
-        padding: 0px !important;
-    }}
-    
-    /* 消除 Column 內部的 Padding */
-    div[data-testid="column"] {{
-        padding: 0px !important;
-        min-width: 0px !important;
-        flex: 1 1 auto !important;
-    }}
-
-    /* 消除 Element Container 的 Margin */
+    /* 2. 針對圖表容器使用「負值」下邊距，強制下方的圖表往上貼 */
     div.element-container {{
-        margin: 0px !important;
+        margin-bottom: -20px !important; /* 👈 這裡用負數來吃掉間隙 */
         padding: 0px !important;
-        border: none !important;
     }}
     
-    /* 消除 iframe (圖表) 底部的微小留白 */
+    /* 3. 針對 iframe (圖表本體) 也使用負值，消除 HTML 預設行高留白 */
     iframe {{
         display: block !important;
-        margin: 0px !important;
+        margin-bottom: -10px !important; /* 👈 這裡也用負數 */
         padding: 0px !important;
         border: 0px !important;
         width: 100% !important;
     }}
 
-    /* 針對 Streamlit 圖片/HTML 容器強制滿版 */
-    div[data-testid="stImage"] {{
-        width: 100% !important;
-    }}
+    /* 4. 消除 Streamlit 佈局區塊的所有間距 */
+    div[data-testid="stHorizontalBlock"] {{ gap: 0px !important; }}
+    div[data-testid="stVerticalBlock"] {{ gap: 0px !important; }}
+    div[data-testid="column"] {{ padding: 0px !important; }}
     
-    /* 隱藏可能的空 Markdown 佔位符 */
-    div.stMarkdown p {{
-        margin-bottom: 0px !important;
-    }}
-
-    /* ================= 通用字體設定 ================= */
+    /* 5. 確保圖片/HTML 容器滿版 */
+    div[data-testid="stImage"] {{ width: 100% !important; }}
+    
+    /* ================= 其他樣式 ================= */
     html, body, [class*="css"] {{ font-size: 18px !important; }}
     .stDataFrame {{ font-size: 16px !important; }}
       
-    /* ================= 數據卡片樣式 ================= */
     .metric-container {{
         display: flex;
         justify-content: space-between;
@@ -137,53 +105,28 @@ st.markdown(f"""
         margin-top: 5px;
         flex-wrap: wrap;
     }}
-    .metric-item {{
-        text-align: center;
-        width: 48%;
-        min-width: 100px;
-    }}
-    .metric-label {{
-        font-size: 0.9rem;
-        color: #aaa;
-        white-space: nowrap;
-    }}
-    .metric-value {{
-        font-size: 1.2rem;
-        font-weight: bold;
-        color: #fafafa;
-    }}
+    .metric-item {{ text-align: center; width: 48%; min-width: 100px; }}
+    .metric-label {{ font-size: 0.9rem; color: #aaa; white-space: nowrap; }}
+    .metric-value {{ font-size: 1.2rem; font-weight: bold; color: #fafafa; }}
 
-    /* ================= Radio Button 樣式 ================= */
-    /* 在多股比較模式下，可能希望選單不要太搶眼，維持原樣即可 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{
-        display: none !important;
-    }}
+    /* Radio Button Optimization */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{ display: none !important; }}
     div[data-testid="stRadio"] > div[role="radiogroup"] {{
-        background-color: transparent;
-        border: none;
-        gap: 10px;
-        display: flex;
-        flex-direction: row;
-        overflow-x: auto !important;
-        white-space: nowrap !important;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
+        background-color: transparent; border: none; gap: 10px;
+        display: flex; flexDirection: row; overflow-x: auto !important;
+        white-space: nowrap !important; border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
         scrollbar-width: none; 
     }}
     div[data-testid="stRadio"] > div[role="radiogroup"] label {{
-        color: #8b92a2 !important;
-        padding: 8px 16px !important;
-        border-bottom: 3px solid transparent;
-        cursor: pointer;
+        color: #8b92a2 !important; padding: 8px 16px !important;
+        border-bottom: 3px solid transparent; cursor: pointer;
     }}
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {{
-        color: #ffffff !important;
-        background-color: rgba(255, 255, 255, 0.05) !important;
+        color: #ffffff !important; background-color: rgba(255, 255, 255, 0.05) !important;
     }}
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {{
-        color: #ef5350 !important;
-        border-bottom: 3px solid #ef5350 !important;
-        background-color: rgba(239, 83, 80, 0.15) !important;
-        font-weight: bold !important;
+        color: #ef5350 !important; border-bottom: 3px solid #ef5350 !important;
+        background-color: rgba(239, 83, 80, 0.15) !important; font-weight: bold !important;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -370,7 +313,7 @@ def resample_data(df, period):
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
 # ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (使用固定數值)
-def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.02, bottom_margin=0.02):
+def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.0, bottom_margin=0.0):
     
     # ✅ 移除縮放倍率，使用傳入參數
     h = height
@@ -400,7 +343,8 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "minimumWidth": min_w, 
             "autoScale": True,
             "scaleMargins": {
-                "top": top_margin, # ✅ [FIX] 將上下邊距縮小，讓圖表更滿
+                # ✅ [FIX] 將上下邊距設為 0，讓圖表徹底撐滿
+                "top": top_margin, 
                 "bottom": bottom_margin
             }
         },
@@ -418,7 +362,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {
             "visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": min_w,
-            "scaleMargins": {"top": 0.1, "bottom": 0.1} 
+            "scaleMargins": {"top": 0.05, "bottom": 0.05} 
         }
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
@@ -1597,7 +1541,7 @@ elif selected_page == "多股比較":
                             
                             # ✅ [MODIFIED] 主圖還原高度 400px，字體 10px，標題顯示於浮水印
                             # ✅ [FIX] 移除 top_margin，讓圖填滿
-                            payload = [{"chart": make_opts(400, display_title, False, font_size=10), "series": main_series}]
+                            payload = [{"chart": make_opts(400, display_title, False, font_size=10, top_margin=0.02, bottom_margin=0.02), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
