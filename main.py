@@ -36,17 +36,19 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ 定義顏色變數
+# ✅ 定義顏色變數 (修改：PAGE_BG 固定，只切換圖表顏色)
+# 固定網頁背景為深色，不隨按鈕改變
+PAGE_BG = "#131722" 
+
 if st.session_state.theme == 'dark':
     CHART_BG = "#131722"
     CHART_TEXT = "white"
     GRID_COLOR = "rgba(42, 46, 57, 0.5)"
-    PAGE_BG = "#131722" # 讓網頁背景與圖表背景一致
 else:
+    # 亮色模式只影響圖表
     CHART_BG = "#ffffff"
     CHART_TEXT = "black"
     GRID_COLOR = "rgba(42, 46, 57, 0.1)"
-    PAGE_BG = "#ffffff"
 
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
@@ -1983,8 +1985,8 @@ elif stock_input:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
                 
-                # ✅ [MODIFIED] 移除 data_len
-                charts_payload.append({"chart": make_opts(400, "股價", True), "series": main_series})
+                # ✅ [MODIFIED] 移除 data_len, 並且將高度改為 600
+                charts_payload.append({"chart": make_opts(600, "股價", True), "series": main_series})
 
                 vol_data = []
                 for i, row in plot_df.iterrows():
