@@ -1903,10 +1903,36 @@ elif stock_input:
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
-            # ✅ [NEW] 將 K 線週期選擇器移至此處，並加入分時選項
-            c1_k, c2_k = st.columns([1, 2])
-            with c1_k:
-                kline_period = st.selectbox("K 線週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
+            # ✅ [UI OPTIMIZATION] 使用容器與欄位優化排版，避免擠成一團
+            with st.container():
+                # 使用 3 欄排列：週期 (窄) | 均線 (寬) | 指標 (寬)
+                c_k_period, c_k_ma, c_k_ind = st.columns([1, 2, 2], gap="medium")
+                
+                with c_k_period:
+                    # 加上 icon 讓標題好看一點
+                    kline_period = st.selectbox("📅 週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
+                
+                with c_k_ma:
+                    ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
+                    ma_default = ["MA5", "MA10", "MA20", "MA60"]
+                    selected_mas = st.multiselect(
+                        "📈 均線 / 布林",
+                        options=ma_options_list,
+                        default=ma_default
+                    )
+                    
+                with c_k_ind:
+                    # ✅ [NEW FEATURE] 副圖順序調整：使用 multiselect 來決定顯示順序
+                    indicator_options = ["成交量", "KD", "MACD", "RSI"]
+                    default_indicators = ["成交量", "KD", "MACD"]
+                    selected_indicators = st.multiselect(
+                        "📊 副圖指標 (依選擇順序排列)",
+                        options=indicator_options,
+                        default=default_indicators
+                    )
+            
+            # 畫一條分隔線或留白，讓控制區與圖表區分開
+            st.divider() 
             
             # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料或抓取分時資料
             plot_df = None
@@ -1921,16 +1947,6 @@ elif stock_input:
                         st.warning("⚠️ 無法取得分時資料（可能是週末或資料源暫時無法存取）")
                         plot_df = df_price_daily.copy() # Fallback
 
-            # ✅ [FIX] 改用 st.multiselect 取代多個 Checkbox
-            ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
-            ma_default = ["MA5", "MA10", "MA20", "MA60"]
-            
-            selected_mas = st.multiselect(
-                "選擇均線 / 布林通道",
-                options=ma_options_list,
-                default=ma_default
-            )
-            
             show_ma5 = "MA5" in selected_mas
             show_ma10 = "MA10" in selected_mas
             show_ma20 = "MA20" in selected_mas
@@ -1938,18 +1954,6 @@ elif stock_input:
             show_ma120 = "MA120" in selected_mas
             show_ma240 = "MA240" in selected_mas
             show_bb = "BB" in selected_mas
-            
-            # ✅ [NEW FEATURE] 副圖順序調整
-            # 使用 multiselect 來決定顯示哪些副圖以及它們的順序
-            indicator_options = ["成交量", "KD", "MACD", "RSI"]
-            # 預設顯示的副圖 (可自行調整預設順序)
-            default_indicators = ["成交量", "KD", "MACD"]
-            
-            selected_indicators = st.multiselect(
-                "選擇副圖指標 (依選擇順序排列，刪除後重新加入可改變位置)",
-                options=indicator_options,
-                default=default_indicators
-            )
             
             if plot_df is not None and not plot_df.empty:
                 charts_payload = []
