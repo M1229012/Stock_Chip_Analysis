@@ -74,7 +74,7 @@ st.markdown(f"""
     
     /* [關鍵] 只針對含有 iframe (圖表) 的容器設定負邊距，往上拉 */
     div.element-container:has(iframe) {{
-        margin-bottom: -40px !important; /* 👈 這裡控制上下間隙，越負越擠 */
+        margin-bottom: -80px !important; /* 👈 這裡控制上下間隙，越負越擠 */
         padding: 0px !important;
     }}
     
