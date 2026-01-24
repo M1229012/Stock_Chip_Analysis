@@ -1985,8 +1985,8 @@ elif stock_input:
                     main_series.append({"type": "Line", "data": bb_up_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上"}})
                     main_series.append({"type": "Line", "data": bb_low_data, "options": {**ma_opts, "color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下"}})
                 
-                # ✅ [MODIFIED] 移除 data_len, 並且將高度改為 600
-                charts_payload.append({"chart": make_opts(600, "股價", True), "series": main_series})
+                # ✅ [MODIFIED] 移除 data_len, 並且將高度改為 800
+                charts_payload.append({"chart": make_opts(800, "股價", True), "series": main_series})
 
                 vol_data = []
                 for i, row in plot_df.iterrows():
