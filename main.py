@@ -60,12 +60,13 @@ st.markdown(f"""
     .stDeployButton {{
         display: none;
     }}
-    /* 修正頂部留白 */
+    /* 修正頂部留白，並讓寬度滿版 */
     .block-container {{
-        padding-top: 1rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
+        padding-top: 0.5rem !important;
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
         padding-bottom: 0rem !important;
+        max-width: 100% !important;
     }}
 
     /* ================= 通用字體設定 ================= */
@@ -200,21 +201,22 @@ st.markdown(f"""
         padding-top: 2px !important; 
     }}
     
-    /* ================= [NEW] 強制消除所有間距 (Grid No Gap) ================= */
+    /* ================= [NEW] 絕對無縫隙排版 (Absolute Zero Gap Grid) ================= */
     
-    /* 1. 消除 Column 之間的水平間距 */
+    /* 1. 消除 Column 之間的水平間距 (Gap) */
     div[data-testid="stHorizontalBlock"] {{
-        gap: 0rem !important;
+        gap: 0 !important;
     }}
     
     /* 2. 消除 Column 內部的 Padding */
     div[data-testid="column"] {{
         padding: 0 !important;
+        min-width: 0 !important; /* 防止內容撐開 */
     }}
 
-    /* 3. [關鍵] 消除垂直堆疊間距 (讓 Row 與 Row 之間無縫) */
+    /* 3. [關鍵] 消除垂直堆疊間距 (讓 Row 與 Row 之間無縫，圖表上下貼合) */
     div[data-testid="stVerticalBlock"] {{
-        gap: 0rem !important;
+        gap: 0 !important;
     }}
     
     /* 4. 消除每個 Element (圖表/文字) 上下的 Margin */
@@ -223,7 +225,7 @@ st.markdown(f"""
         margin-top: 0px !important;
     }}
     
-    /* 5. 確保 iframe (圖表本體) 沒有額外邊距且為區塊顯示 */
+    /* 5. 確保 iframe (圖表本體) 沒有額外邊距且為區塊顯示 (消除底部微小留白) */
     iframe {{
         display: block !important;
         margin: 0 !important;
@@ -233,7 +235,12 @@ st.markdown(f"""
     
     /* 6. 針對多層嵌套的 Layout 做強制歸零 */
     div[data-testid="column"] > div > div > div > div {{
-        gap: 0rem !important;
+        gap: 0 !important;
+    }}
+
+    /* 7. 確保圖表容器寬度 100% */
+    div[data-testid="stImage"] {{
+        width: 100% !important;
     }}
     </style>
     """, unsafe_allow_html=True)
