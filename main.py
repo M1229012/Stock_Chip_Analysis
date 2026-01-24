@@ -52,7 +52,7 @@ else:
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ✅ CSS 設定 (修復頂部擠壓 + 強制圖表無縫)
+# ✅ CSS 設定 (修復頂部擠壓 + 強制圖表無縫 + 增加間距)
 st.markdown(f"""
     <style>
     /* 隱藏 Header */
@@ -92,13 +92,13 @@ st.markdown(f"""
     
     /* 消除水平排列 (Columns) 的間距 */
     div[data-testid="stHorizontalBlock"] {{
-        gap: 0px !important;
+        gap: 15px !important; /* 增加 Column 之間的間距 */
         padding: 0px !important;
     }}
     
     /* 消除垂直排列 (Rows) 的間距 */
     div[data-testid="stVerticalBlock"] {{
-        gap: 0px !important;
+        gap: 10px !important; /* 增加元件垂直間距 */
         padding: 0px !important;
     }}
     
@@ -1903,13 +1903,15 @@ elif stock_input:
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
-            # ✅ [UI OPTIMIZATION] 使用容器與欄位優化排版，避免擠成一團
+            # ✅ [UI OPTIMIZATION] 使用容器與欄位優化排版，並加入間距
+            st.markdown("<br>", unsafe_allow_html=True) # 增加一些頂部間距
+            
             with st.container():
-                # 使用 3 欄排列：週期 (窄) | 均線 (寬) | 指標 (寬)
-                c_k_period, c_k_ma, c_k_ind = st.columns([1, 2, 2], gap="medium")
+                # 使用 3 欄排列：週期 (窄) | 均線 (中) | 指標 (寬)
+                # 調整比例 [1, 3, 5] 讓副圖指標有更多空間顯示文字
+                c_k_period, c_k_ma, c_k_ind = st.columns([1, 3, 5], gap="large")
                 
                 with c_k_period:
-                    # 加上 icon 讓標題好看一點
                     kline_period = st.selectbox("📅 週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
                 
                 with c_k_ma:
@@ -1922,17 +1924,22 @@ elif stock_input:
                     )
                     
                 with c_k_ind:
-                    # ✅ [NEW FEATURE] 副圖順序調整：使用 multiselect 來決定顯示順序
-                    indicator_options = ["成交量", "KD", "MACD", "RSI"]
+                    # ✅ [NEW FEATURE] 擴充副圖指標選項 (法人、融資券、主力)
+                    indicator_options = [
+                        "成交量", "KD", "MACD", "RSI", 
+                        "外資", "投信", "自營商", "三大法人合計",
+                        "融資", "融券",
+                        "主力買賣超", "家數差"
+                    ]
                     default_indicators = ["成交量", "KD", "MACD"]
                     selected_indicators = st.multiselect(
-                        "📊 副圖指標 (依選擇順序排列)",
+                        "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
                         options=indicator_options,
                         default=default_indicators
                     )
             
             # 畫一條分隔線或留白，讓控制區與圖表區分開
-            st.divider() 
+            st.markdown("<br>", unsafe_allow_html=True)
             
             # ✅ [NEW] 根據選擇的週期重新採樣 (Resample) 資料或抓取分時資料
             plot_df = None
@@ -1946,6 +1953,49 @@ elif stock_input:
                     if plot_df is None:
                         st.warning("⚠️ 無法取得分時資料（可能是週末或資料源暫時無法存取）")
                         plot_df = df_price_daily.copy() # Fallback
+
+            # ✅ [Data Merging Logic] 檢查是否需要合併額外籌碼數據
+            # 只有在日K模式下，且使用者選了籌碼指標，才去抓取並合併
+            # 分時資料因無籌碼數據，故忽略
+            if plot_df is not None and not plot_df.empty and kline_period == "日K":
+                # 1. 法人數據
+                if any(x in selected_indicators for x in ["外資", "投信", "自營商", "三大法人合計"]):
+                    s_d = plot_df['DateStr'].iloc[0]
+                    e_d = plot_df['DateStr'].iloc[-1]
+                    inst_df = get_institutional_data(stock_input, s_d, e_d)
+                    if inst_df is not None:
+                        plot_df = pd.merge(plot_df, inst_df, on='DateStr', how='left')
+                        # 補 0 避免錯誤
+                        for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
+                            if col in plot_df.columns: plot_df[col] = plot_df[col].fillna(0)
+                        # 計算合計
+                        plot_df['三大法人合計'] = plot_df['外資買賣超'] + plot_df['投信買賣超'] + plot_df['自營商買賣超']
+
+                # 2. 融資券數據
+                if any(x in selected_indicators for x in ["融資", "融券"]):
+                    s_d = plot_df['DateStr'].iloc[0]
+                    e_d = plot_df['DateStr'].iloc[-1]
+                    margin_df = get_margin_data(stock_input, s_d, e_d)
+                    if margin_df is not None:
+                        plot_df = pd.merge(plot_df, margin_df, on='DateStr', how='left')
+                        # 融資增減, 融券增減
+                        for col in ['融資增減', '融券增減']:
+                            if col in plot_df.columns: plot_df[col] = plot_df[col].fillna(0)
+
+                # 3. 主力數據 (玩股網)
+                if any(x in selected_indicators for x in ["主力買賣超", "家數差"]):
+                    # 嘗試抓取
+                    try:
+                        wg_df = get_wantgoo_data(stock_input, st.session_state.refresh_nonce)
+                        if wg_df is not None:
+                            # 欄位: 日期, 買賣超, 家數差...
+                            # 需與 plot_df 合併
+                            plot_df = pd.merge(plot_df, wg_df, on='DateStr', how='left')
+                            # 補 0
+                            if '買賣超' in plot_df.columns: plot_df['主力買賣超'] = plot_df['買賣超'].fillna(0)
+                            if '家數差' in plot_df.columns: plot_df['家數差'] = plot_df['家數差'].fillna(0)
+                    except:
+                        pass # 抓不到就跳過
 
             show_ma5 = "MA5" in selected_mas
             show_ma10 = "MA10" in selected_mas
@@ -1966,11 +2016,16 @@ elif stock_input:
                 # ✅ [FIX] 判斷是否為分時資料 (Intraday)
                 is_intraday = kline_period in ["5分", "15分", "30分", "60分"]
                 
-                # 預先計算好所有副圖需要的數據
+                # 預先初始化副圖資料容器
                 vol_data = []
                 k_data, d_data = [], []
                 dif_data, dea_data, hist_data = [], [], []
                 rsi_data, rsi_80_data, rsi_20_data = [], [], []
+                
+                # 籌碼資料容器
+                foreign_data, trust_data, dealer_data, total_inst_data = [], [], [], []
+                margin_data, short_data = [], []
+                main_force_data, main_diff_data = [], []
 
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
@@ -2000,7 +2055,7 @@ elif stock_input:
                     if show_bb and not pd.isna(row['BB_Up']): bb_up_data.append({"time": t_val, "value": float(row['BB_Up'])})
                     if show_bb and not pd.isna(row['BB_Low']): bb_low_data.append({"time": t_val, "value": float(row['BB_Low'])})
 
-                    # 收集副圖資料
+                    # 收集副圖資料 - 技術指標
                     if not pd.isna(row['Volume']): vol_data.append({"time": t_val, "value": float(row['Volume']), "color": COLOR_UP if row['Close']>=row['Open'] else COLOR_DOWN})
                     if 'K' in plot_df.columns:
                         if not pd.isna(row['K']): k_data.append({"time": t_val, "value": float(row['K'])})
@@ -2014,6 +2069,36 @@ elif stock_input:
                             rsi_data.append({"time": t_val, "value": float(row['RSI'])})
                             rsi_80_data.append({"time": t_val, "value": 80})
                             rsi_20_data.append({"time": t_val, "value": 20})
+                    
+                    # 收集副圖資料 - 籌碼指標 (僅日K有效)
+                    if kline_period == "日K":
+                        if '外資買賣超' in plot_df.columns:
+                            v = row['外資買賣超']
+                            foreign_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                        if '投信買賣超' in plot_df.columns:
+                            v = row['投信買賣超']
+                            trust_data.append({"time": t_val, "value": float(v), "color": "#FF00FF" if v > 0 else "#008080"}) # 投信習慣用紫色系
+                        if '自營商買賣超' in plot_df.columns:
+                            v = row['自營商買賣超']
+                            dealer_data.append({"time": t_val, "value": float(v), "color": "#00FFFF" if v > 0 else "#008080"})
+                        if '三大法人合計' in plot_df.columns:
+                            v = row['三大法人合計']
+                            total_inst_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                        
+                        if '融資增減' in plot_df.columns:
+                            v = row['融資增減']
+                            margin_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                        if '融券增減' in plot_df.columns:
+                            v = row['融券增減']
+                            short_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                            
+                        if '主力買賣超' in plot_df.columns:
+                            v = row['主力買賣超']
+                            main_force_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v > 0 else COLOR_DOWN})
+                        if '家數差' in plot_df.columns:
+                            v = row['家數差']
+                            # 家數差負數代表籌碼集中(好)，正數代表分散(壞)，所以負數給紅，正數給綠
+                            main_diff_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v < 0 else COLOR_DOWN})
 
                 # ✅ [FIX] 禁用固定標籤
                 # ✅ [FIX] MA Title spacing: "MA5  " (two spaces)
@@ -2035,10 +2120,13 @@ elif stock_input:
                 # ✅ [NEW LOGIC] 根據使用者選擇的順序加入副圖
                 for indicator in selected_indicators:
                     
+                    # 共同選項
+                    common_sub_opts = {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}
+
                     if indicator == "成交量":
                         charts_payload.append({
                             "chart": make_opts(150, "成交量 (張)", False), 
-                            "series": [{"type": "Histogram", "data": vol_data, "options": {"priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "title": "成交量(張)  ", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}]
+                            "series": [{"type": "Histogram", "data": vol_data, "options": {"title": "成交量  ", **common_sub_opts}}]
                         })
 
                     elif indicator == "KD":
@@ -2068,6 +2156,48 @@ elif stock_input:
                                 {"type": "Line", "data": rsi_80_data, "options": {"color": "rgba(255, 0, 127, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "80", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
                                 {"type": "Line", "data": rsi_20_data, "options": {"color": "rgba(0, 255, 0, 0.5)", "lineWidth": 1, "lineStyle": 2, "title": "20", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}}
                             ]
+                        })
+                        
+                    # --- 新增的籌碼指標 (僅支援日K) ---
+                    elif indicator == "外資":
+                        charts_payload.append({
+                            "chart": make_opts(150, "外資買賣超", False),
+                            "series": [{"type": "Histogram", "data": foreign_data, "options": {"title": "外資  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "投信":
+                        charts_payload.append({
+                            "chart": make_opts(150, "投信買賣超", False),
+                            "series": [{"type": "Histogram", "data": trust_data, "options": {"title": "投信  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "自營商":
+                        charts_payload.append({
+                            "chart": make_opts(150, "自營商買賣超", False),
+                            "series": [{"type": "Histogram", "data": dealer_data, "options": {"title": "自營商  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "三大法人合計":
+                        charts_payload.append({
+                            "chart": make_opts(150, "法人合計", False),
+                            "series": [{"type": "Histogram", "data": total_inst_data, "options": {"title": "合計  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "融資":
+                        charts_payload.append({
+                            "chart": make_opts(150, "融資增減", False),
+                            "series": [{"type": "Histogram", "data": margin_data, "options": {"title": "融資增減  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "融券":
+                        charts_payload.append({
+                            "chart": make_opts(150, "融券增減", False),
+                            "series": [{"type": "Histogram", "data": short_data, "options": {"title": "融券增減  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "主力買賣超":
+                        charts_payload.append({
+                            "chart": make_opts(150, "主力買賣超", False),
+                            "series": [{"type": "Histogram", "data": main_force_data, "options": {"title": "主力  ", **common_sub_opts}}]
+                        })
+                    elif indicator == "家數差":
+                        charts_payload.append({
+                            "chart": make_opts(150, "買賣家數差", False),
+                            "series": [{"type": "Histogram", "data": main_diff_data, "options": {"title": "家數差  ", **common_sub_opts}}]
                         })
                 
                 # ✅ [FIX] Key changed to include stock_input to force reset on stock change
