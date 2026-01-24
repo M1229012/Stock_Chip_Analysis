@@ -36,37 +36,91 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ 定義顏色變數 (僅用於圖表設定，不再改變網頁背景)
+# ✅ 定義顏色變數
 if st.session_state.theme == 'dark':
     CHART_BG = "#131722"
     CHART_TEXT = "white"
     GRID_COLOR = "rgba(42, 46, 57, 0.5)"
+    # [關鍵修正] 網頁背景色與圖表背景色一致，視覺上消除所有縫隙
+    PAGE_BG = "#131722" 
 else:
     CHART_BG = "#ffffff"
     CHART_TEXT = "black"
     GRID_COLOR = "rgba(42, 46, 57, 0.1)"
+    PAGE_BG = "#ffffff"
 
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
 
-# ✅ CSS 設定 (隱藏 Header + 手機版優化 + 介面樣式 + 強制無縫排列)
+# ✅ CSS 設定 (強制無縫排列 + 視覺隱藏法)
 st.markdown(f"""
     <style>
-    /* ================= 隱藏 Streamlit 預設 Header 與 GitHub 圖示 ================= */
+    /* ================= 1. 隱藏 Streamlit 預設 Header ================= */
     header[data-testid="stHeader"] {{
         visibility: hidden;
     }}
-    /* 隱藏部署按鈕 (保險起見) */
-    .stDeployButton {{
-        display: none;
+    .stDeployButton {{ display: none; }}
+
+    /* ================= 2. 全域背景色設定 (視覺隱藏法) ================= */
+    /* 將整個 App 背景設為與圖表相同，這樣即便有縫隙也看不出來 */
+    .stApp {{
+        background-color: {PAGE_BG} !important;
     }}
-    /* 修正頂部留白，並讓寬度滿版 */
+    
+    /* ================= 3. 邊距暴力歸零 (The Zero Gap Strategy) ================= */
+    
+    /* 修正頂部留白，設為 0 */
     .block-container {{
-        padding-top: 0.5rem !important;
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
+        padding-top: 0rem !important;
+        padding-left: 0rem !important;
+        padding-right: 0rem !important;
         padding-bottom: 0rem !important;
         max-width: 100% !important;
+    }}
+
+    /* 消除水平排列 (Columns) 的間距 */
+    div[data-testid="stHorizontalBlock"] {{
+        gap: 0px !important;
+        padding: 0px !important;
+    }}
+    
+    /* 消除垂直排列 (Rows) 的間距 */
+    div[data-testid="stVerticalBlock"] {{
+        gap: 0px !important;
+        padding: 0px !important;
+    }}
+    
+    /* 消除 Column 內部的 Padding */
+    div[data-testid="column"] {{
+        padding: 0px !important;
+        min-width: 0px !important;
+        flex: 1 1 auto !important;
+    }}
+
+    /* 消除 Element Container 的 Margin */
+    div.element-container {{
+        margin: 0px !important;
+        padding: 0px !important;
+        border: none !important;
+    }}
+    
+    /* 消除 iframe (圖表) 底部的微小留白 */
+    iframe {{
+        display: block !important;
+        margin: 0px !important;
+        padding: 0px !important;
+        border: 0px !important;
+        width: 100% !important;
+    }}
+
+    /* 針對 Streamlit 圖片/HTML 容器強制滿版 */
+    div[data-testid="stImage"] {{
+        width: 100% !important;
+    }}
+    
+    /* 隱藏可能的空 Markdown 佔位符 */
+    div.stMarkdown p {{
+        margin-bottom: 0px !important;
     }}
 
     /* ================= 通用字體設定 ================= */
@@ -99,148 +153,37 @@ st.markdown(f"""
         color: #fafafa;
     }}
 
-    /* ================= 手機版 RWD (螢幕 < 768px) ================= */
-    @media (max-width: 768px) {{
-        html, body, [class*="css"] {{ font-size: 15px !important; }}
-        .stDataFrame {{ font-size: 14px !important; }}
-        h1 {{ font-size: 1.8rem !important; }}
-        h2 {{ font-size: 1.5rem !important; }}
-        h3 {{ font-size: 1.3rem !important; }}
-        .metric-container {{ padding: 8px; gap: 5px; }}
-        .metric-label {{ font-size: 0.8rem; }}
-        .metric-value {{ font-size: 1rem; }}
-        
-        div[data-testid="stVerticalBlock"]:has(> .element-container .desktop-marker) {{
-            display: none !important;
-        }}
-
-        div[data-testid="stRadio"] > div[role="radiogroup"] {{
-            gap: 2px !important; 
-        }}
-        div[data-testid="stRadio"] > div[role="radiogroup"] label {{
-            padding: 6px 8px !important; 
-            font-size: 14px !important; 
-        }}
-    }}
-
-    /* ================= 電腦版 RWD (螢幕 > 768px) ================= */
-    @media (min-width: 769px) {{
-        div[data-testid="stVerticalBlock"]:has(> .element-container .mobile-marker) {{
-            display: none !important;
-        }}
-    }}
-
-    /* ================= [CSS 強制修正] Radio Button 樣式 ================= */
+    /* ================= Radio Button 樣式 ================= */
+    /* 在多股比較模式下，可能希望選單不要太搶眼，維持原樣即可 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{
         display: none !important;
     }}
-
     div[data-testid="stRadio"] > div[role="radiogroup"] {{
         background-color: transparent;
         border: none;
-        box-shadow: none;
-        padding: 0;
         gap: 10px;
         display: flex;
         flex-direction: row;
-        flex-wrap: nowrap !important;
         overflow-x: auto !important;
         white-space: nowrap !important;
-        margin-bottom: 5px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
-        width: 100%;
         scrollbar-width: none; 
-        -ms-overflow-style: none;
     }}
-    
-    div[data-testid="stRadio"] > div[role="radiogroup"]::-webkit-scrollbar {{
-        display: none;
-    }}
-
     div[data-testid="stRadio"] > div[role="radiogroup"] label {{
-        background-color: transparent !important;
-        border: none;
-        border-radius: 6px 6px 0 0;
         color: #8b92a2 !important;
         padding: 8px 16px !important;
-        margin: 0 !important;
-        font-weight: 500;
-        font-size: 16px;
-        transition: all 0.15s ease-in-out;
         border-bottom: 3px solid transparent;
         cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex: 0 0 auto;
     }}
-
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {{
         color: #ffffff !important;
         background-color: rgba(255, 255, 255, 0.05) !important;
     }}
-
     div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {{
         color: #ef5350 !important;
         border-bottom: 3px solid #ef5350 !important;
         background-color: rgba(239, 83, 80, 0.15) !important;
         font-weight: bold !important;
-    }}
-    
-    div[data-testid="stRadio"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {{
-        margin: 0 !important;
-        padding-top: 2px !important;
-        transform: translateX(-5px) !important; 
-        white-space: nowrap !important;
-    }}
-    
-    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) div[data-testid="stMarkdownContainer"] p {{
-        color: #ef5350 !important;
-        font-weight: bold !important;
-        margin: 0 !important;
-        padding-top: 2px !important; 
-    }}
-    
-    /* ================= [NEW] 絕對無縫隙排版 (Absolute Zero Gap Grid) ================= */
-    
-    /* 1. 消除 Column 之間的水平間距 (Gap) */
-    div[data-testid="stHorizontalBlock"] {{
-        gap: 0 !important;
-    }}
-    
-    /* 2. 消除 Column 內部的 Padding */
-    div[data-testid="column"] {{
-        padding: 0 !important;
-        min-width: 0 !important; /* 防止內容撐開 */
-    }}
-
-    /* 3. [關鍵] 消除垂直堆疊間距 (讓 Row 與 Row 之間無縫，圖表上下貼合) */
-    div[data-testid="stVerticalBlock"] {{
-        gap: 0 !important;
-    }}
-    
-    /* 4. 消除每個 Element (圖表/文字) 上下的 Margin */
-    div.element-container {{
-        margin-bottom: 0px !important;
-        margin-top: 0px !important;
-    }}
-    
-    /* 5. 確保 iframe (圖表本體) 沒有額外邊距且為區塊顯示 (消除底部微小留白) */
-    iframe {{
-        display: block !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        border: 0 !important;
-    }}
-    
-    /* 6. 針對多層嵌套的 Layout 做強制歸零 */
-    div[data-testid="column"] > div > div > div > div {{
-        gap: 0 !important;
-    }}
-
-    /* 7. 確保圖表容器寬度 100% */
-    div[data-testid="stImage"] {{
-        width: 100% !important;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -427,7 +370,7 @@ def resample_data(df, period):
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
 # ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (使用固定數值)
-def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.05, bottom_margin=0.05):
+def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.02, bottom_margin=0.02):
     
     # ✅ 移除縮放倍率，使用傳入參數
     h = height
@@ -457,7 +400,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "minimumWidth": min_w, 
             "autoScale": True,
             "scaleMargins": {
-                "top": top_margin,
+                "top": top_margin, # ✅ [FIX] 將上下邊距縮小，讓圖表更滿
                 "bottom": bottom_margin
             }
         },
@@ -1733,7 +1676,7 @@ elif selected_page == "多股比較":
                                     chart_title += " (張)"
                                 
                                 # ✅ [MODIFIED] 副圖高度調整為 200px (加大防截斷)，字體 10px，top margin 縮小至 0.1
-                                chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.1, bottom_margin=0.1)
+                                chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.05, bottom_margin=0.05)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
                                 payload.append({"chart": chart_opts, "series": sub_series})
                             
