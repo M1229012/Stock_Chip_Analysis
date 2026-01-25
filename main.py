@@ -1472,6 +1472,221 @@ elif selected_page == "多股比較":
                         else:
                             st.warning(f"⚠️ {code} 無資料")
 
+# ==================== Tab 8: 選股 (New) ====================
+elif selected_page == "選股":
+    st.subheader("⚡ 飆股篩選器")
+    st.markdown("""
+    **篩選條件 (嚴格)**：
+    系統將自動掃描所有上市與上櫃「大戶持股增加」的股票，並列出**同時符合**以下所有條件者：
+    1. **大戶籌碼增加** (排行榜入列)
+    2. **法人連買 3 日**
+    3. **主力近期買超**
+    
+    *註：此功能需逐檔即時爬取資料，請耐心等候。*
+    """)
+    
+    if st.button("開始自動掃描"):
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        try:
+            status_text.text("正在抓取大戶排行資料 (上市 + 上櫃)...")
+            
+            df_listed = get_norway_rank_data("https://norway.twsthr.info/StockHoldersTopWeek.aspx")
+            df_otc = get_norway_rank_data("https://norway.twsthr.info/StockHoldersTopWeek.aspx?CID=100&Show=1")
+            
+            def process_rank_df(df, label):
+                if df is None or df.empty: return []
+                processed = []
+                for _, row in df.iterrows():
+                    try:
+                        stock_str = str(row[0]) 
+                        match = re.search(r'(\d{4})', stock_str)
+                        if not match: continue
+                        code = match.group(1)
+                        
+                        change_val_str = str(row['總增減']).replace(',', '').strip()
+                        pct_val_str = str(row['上週持有%']).replace('%', '').replace(',', '').strip()
+                        
+                        change_val = float(change_val_str) if change_val_str else 0
+                        pct_val = float(pct_val_str) if pct_val_str else 0
+                        
+                        processed.append({
+                            "code": code,
+                            "name": stock_str,
+                            "change": change_val, 
+                            "pct": pct_val,
+                            "type": label
+                        })
+                    except: continue
+                return processed
+
+            list_data = process_rank_df(df_listed, "上市")
+            otc_data = process_rank_df(df_otc, "上櫃")
+            
+            all_candidates = list_data + otc_data
+            
+            final_results = []
+            
+            total_checks = len(all_candidates)
+            
+            for idx, item in enumerate(all_candidates):
+                code = item['code']
+                name = item['name']
+                
+                status_text.text(f"正在檢查 ({idx+1}/{total_checks}): {name} ...")
+                progress_bar.progress((idx + 1) / total_checks)
+                
+                is_inst_ok = False
+                is_main_ok = False
+                
+                s_date, e_date = calculate_date_range(code, 10)
+                
+                try:
+                    inst_df = get_institutional_data(code, s_date, e_date)
+                    if inst_df is not None and len(inst_df) >= 3:
+                        inst_df['total'] = inst_df['外資買賣超'] + inst_df['投信買賣超'] + inst_df['自營商買賣超']
+                        last_3 = inst_df.tail(3)
+                        if (last_3['total'] > 0).all():
+                            is_inst_ok = True
+                except:
+                    pass
+                
+                if is_inst_ok:
+                    try:
+                        wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
+                        if wg_df is not None and not wg_df.empty:
+                            last_row = wg_df.iloc[-1]
+                            if last_row['買賣超'] > 0:
+                                is_main_ok = True
+                    except:
+                        pass
+                
+                if is_inst_ok and is_main_ok:
+                    final_results.append({
+                        "代號/名稱": name,
+                        "大戶總增減": item['change'],
+                        "大戶持股%": item['pct'],
+                        "法人連買3日": True,
+                        "主力近期買超": True
+                    })
+            
+            final_results.sort(key=lambda x: x['大戶總增減'], reverse=True)
+            
+            status_text.text("篩選完成！")
+            progress_bar.progress(100)
+            
+            if final_results:
+                st.success(f"共找到 {len(final_results)} 檔符合所有條件的強勢股！")
+                res_df = pd.DataFrame(final_results)
+                
+                def highlight_result(val):
+                    if isinstance(val, (int, float)):
+                        if val > 0: return f'color: {COLOR_UP}; font-weight: bold' 
+                        elif val < 0: return f'color: {COLOR_DOWN}; font-weight: bold' 
+                    return ''
+                
+                event = st.dataframe(
+                    res_df.style.map(highlight_result, subset=['大戶總增減']),
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    column_config={
+                        "法人連買3日": st.column_config.CheckboxColumn(
+                            "法人連買3日",
+                            default=False,
+                            disabled=True 
+                        ),
+                        "主力近期買超": st.column_config.CheckboxColumn(
+                            "主力近期買超",
+                            default=False,
+                            disabled=True
+                        ),
+                        "大戶總增減": st.column_config.NumberColumn(
+                            "大戶總增減",
+                            format="%.2f",
+                        ),
+                        "大戶持股%": st.column_config.NumberColumn(
+                            "大戶持股%",
+                            format="%.2f%%",
+                        )
+                    }
+                )
+
+                if len(event.selection.rows) > 0:
+                    selected_row_idx = event.selection.rows[0]
+                    stock_str = str(res_df.iloc[selected_row_idx]['代號/名稱'])
+                    if stock_str:
+                        match = re.search(r'(\d{4})', stock_str)
+                        if match:
+                            code = match.group(1)
+                            st.session_state["__jump_stock_code"] = code
+                            st.session_state["__jump_page"] = "K線"
+                            st.session_state.search_counts[code] = st.session_state.search_counts.get(code, 0) + 1
+                            st.rerun()
+
+            else:
+                st.warning("沒有股票同時符合三大條件。")
+                
+        except Exception as e:
+            st.error(f"篩選過程發生錯誤: {str(e)}")
+            st.code(traceback.format_exc())
+
+elif stock_input:
+    stock_name = get_stock_name(stock_input)
+    stock_display = f"{stock_input} {stock_name}" if stock_name else stock_input
+
+    current_days_label = st.session_state.days_label
+    selected_days = days_map.get(current_days_label, 20) 
+    st.session_state.selected_days = selected_days 
+
+    rank_start_date, rank_end_date = calculate_date_range(stock_input, selected_days)
+    
+    df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = None, None, None, None, None, None
+    
+    with st.spinner(f"正在分析 {stock_display} ..."):
+        df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
+        
+    df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
+    
+    df_price = df_price_daily.copy() if df_price_daily is not None else None
+    
+    if df_buy is not None and df_sell is not None:
+        st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
+
+        def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
+            opts = {
+                "layout": {"textColor": CHART_TEXT, "background": {"type": "solid", "color": CHART_BG}},
+                "localization": {"locale": "zh-TW", "dateFormat": "yyyy年MM月dd日"},
+                "grid": {"vertLines": {"color": GRID_COLOR}, "horzLines": {"color": GRID_COLOR}},
+                "timeScale": {
+                    "borderColor": "rgba(197, 203, 206, 0.8)", 
+                    "visible": time_visible, 
+                    "timeVisible": True, 
+                    "secondsVisible": False,
+                    "barSpacing": 12, 
+                    "rightOffset": 5, 
+                },
+                "rightPriceScale": {"borderColor": "rgba(197, 203, 206, 0.8)", "visible": True, "minimumWidth": 75, "autoScale": True},
+                "crosshair": {
+                    "mode": 1,
+                    "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
+                    "horzLine": {
+                        "visible": True, 
+                        "labelVisible": True,
+                        "labelBackgroundColor": '#1E88E5' 
+                    }
+                },
+                "height": height,
+            }
+            if scale_mode == "rsi":
+                opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
+            if title:
+                watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
+                opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
+            
+            return opts
 
         # ==================== Tab 1: K線 ====================
         if selected_page == "K線":
