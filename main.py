@@ -36,6 +36,16 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
+# ✅ [CRITICAL FIX] 初始化 K線指標選擇狀態，防止切換主題時重置
+if "kline_indicators_selector" not in st.session_state:
+    st.session_state.kline_indicators_selector = ["成交量", "KD", "MACD"]
+
+# ✅ [NEW] 初始化 K線分點相關狀態
+if "kline_broker_days" not in st.session_state:
+    st.session_state.kline_broker_days = "20日"
+if "kline_selected_brokers" not in st.session_state:
+    st.session_state.kline_selected_brokers = []
+
 # ✅ 定義顏色變數 (PAGE_BG 固定，只切換圖表顏色)
 PAGE_BG = "#131722" 
 
@@ -1390,6 +1400,9 @@ if selected_page == "主力":
                 # ✅ [FIX] Key changed to include stock_input to force reset on stock change
                 renderLightweightCharts([chart1, chart2, chart3], key=f"wg_charts_{stock_input}")
                 
+                # ✅ [REQ 1] 增加間距，讓數據表格往下移
+                st.markdown("<br><br>", unsafe_allow_html=True)
+
                 # Data Table
                 st.markdown("#### 詳細數據")
                 # Sort desc for table
@@ -1936,15 +1949,51 @@ elif stock_input:
                         "主力買賣超", "家數差",
                         "分點買賣超" # New Option
                     ]
-                    default_indicators = ["成交量", "KD", "MACD"]
-                    # ✅ [FIX] 增加 key 以確保在主題切換 (Rerun) 時保留狀態
+                    # ✅ [REQ 3] 修復主題切換狀態重置：使用全域 session_state 鍵值，並移除 default
                     selected_indicators = st.multiselect(
                         "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
                         options=indicator_options,
-                        default=default_indicators,
                         key="kline_indicators_selector"
                     )
-            
+
+            # ✅ [REQ 2] K線分頁「分點買賣超」增強功能 (統計天數 + 多選分點)
+            if "分點買賣超" in selected_indicators:
+                with st.expander("🛠️ 分點買賣超設定 (選擇天數與券商)", expanded=True):
+                    c_days, c_brokers = st.columns([1, 4])
+                    
+                    with c_days:
+                         # 使用 session_state 來保持選擇
+                        target_days_label = st.selectbox(
+                            "統計天數",
+                            list(days_map.keys()),
+                            key="kline_broker_days"
+                        )
+                        target_days = days_map.get(target_days_label, 20)
+
+                    # 根據天數重新抓取前 15 大券商 (如果不一樣)
+                    # 為了避免每次都重抓，這裡簡單用 memoize 或者即時抓取 (get_real_data_matrix 已有 cache)
+                    s_d, e_d = calculate_date_range(stock_input, target_days)
+                    # 呼叫 API 取得該區間的買賣超矩陣
+                    _df_buy, _df_sell, _, _, _broker_info, _ = get_real_data_matrix(stock_input, s_d, e_d, st.session_state.refresh_nonce)
+                    
+                    # 整合買賣超券商清單
+                    broker_options = []
+                    if _df_buy is not None and not _df_buy.empty:
+                        broker_options.extend(_df_buy['broker'].tolist())
+                    if _df_sell is not None and not _df_sell.empty:
+                        broker_options.extend(_df_sell['broker'].tolist())
+                    
+                    # 去除重複並保持順序
+                    broker_options = list(dict.fromkeys(broker_options))
+
+                    with c_brokers:
+                        # 讓使用者多選
+                        selected_brokers_kline = st.multiselect(
+                            f"券商分點 (統計區間前 15 大買賣超，可多選)",
+                            options=broker_options,
+                            key="kline_selected_brokers"
+                        )
+
             # 畫一條分隔線或留白，讓控制區與圖表區分開
             st.markdown("<br>", unsafe_allow_html=True)
             
@@ -2015,43 +2064,51 @@ elif stock_input:
                     except:
                         pass # 抓不到就跳過
                 
-                # 4. 分點數據 (券商)
-                # ✅ [NEW] 處理 K 線分頁的分點顯示邏輯
+                # 4. 分點數據 (多選券商邏輯)
+                # ✅ [REQ 2] 處理多個券商的資料合併
                 if "分點買賣超" in selected_indicators:
-                    target_broker_kline = st.session_state.get('active_broker')
+                    target_brokers = st.session_state.get('kline_selected_brokers', [])
                     
-                    # 如果使用者還沒在分點頁面選過券商，自動抓買超第一名
-                    if not target_broker_kline:
-                        if df_buy is not None and not df_buy.empty:
-                            target_broker_kline = df_buy.iloc[0]['broker']
-                            st.session_state.active_broker = target_broker_kline
-                    
-                    if target_broker_kline:
-                         # 取得券商代碼
-                        target_key = normalize_name(target_broker_kline)
+                    # 遍歷每一個選中的券商
+                    for b_name in target_brokers:
+                        target_key = normalize_name(b_name)
                         broker_params = None
-                        if broker_info:
-                            if target_key in broker_info: broker_params = broker_info[target_key]
+                        
+                        # 嘗試從 broker_info 找 (需使用當前統計天數抓到的 broker_info)
+                        # 注意：此處 _broker_info 可能未定義，需重新抓取或使用上方的全域變數
+                        # 為了保險，我們使用上方 cache 抓到的 broker_info (它是基於統計天數的)
+                        current_days_val = days_map.get(st.session_state.kline_broker_days, 20)
+                        s_d_b, e_d_b = calculate_date_range(stock_input, current_days_val)
+                        _, _, _, _, b_info_map, _ = get_real_data_matrix(stock_input, s_d_b, e_d_b, st.session_state.refresh_nonce)
+                        
+                        if b_info_map:
+                            if target_key in b_info_map: broker_params = b_info_map[target_key]
                             else:
-                                for k, v in broker_info.items():
+                                for k, v in b_info_map.items():
                                     if target_key in k or k in target_key:
                                         broker_params = v
                                         break
                         
                         if broker_params:
-                            long_start_date = df_price['DateStr'].iloc[0] 
-                            long_end_date = df_price['DateStr'].iloc[-1] 
-                            broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
+                            # 為了畫圖，我們需要抓取跟 K 線圖一樣長的區間 (而不只是統計天數)
+                            long_s_date = plot_df['DateStr'].iloc[0]
+                            long_e_date = plot_df['DateStr'].iloc[-1]
                             
-                            # 嘗試抓取明細
-                            broker_daily_df, _ = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce)
+                            b_key_tuple = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
                             
-                            if broker_daily_df is not None and not broker_daily_df.empty:
-                                broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last")
-                                # 合併到主表
-                                plot_df = pd.merge(plot_df, broker_daily_df[['DateStr', '買賣超_Calc']], on='DateStr', how='left')
-                                plot_df['分點買賣超'] = plot_df['買賣超_Calc'].fillna(0)
-                                plot_df['分點累積'] = plot_df['分點買賣超'].cumsum()
+                            b_df, _ = get_specific_broker_daily(stock_input, b_key_tuple, long_s_date, long_e_date, st.session_state.refresh_nonce)
+                            
+                            if b_df is not None and not b_df.empty:
+                                b_df = b_df.drop_duplicates(subset=["DateStr"], keep="last")
+                                # 重新命名欄位以避免衝突
+                                temp_b = b_df[['DateStr', '買賣超_Calc']].copy()
+                                col_name = f"broker_{target_key}" # 使用 broker_券商名
+                                temp_b.columns = ['DateStr', col_name]
+                                
+                                plot_df = pd.merge(plot_df, temp_b, on='DateStr', how='left')
+                                plot_df[col_name] = plot_df[col_name].fillna(0)
+                                # 計算累積
+                                plot_df[f"{col_name}_cum"] = plot_df[col_name].cumsum()
 
 
             show_ma5 = "MA5" in selected_mas
@@ -2090,7 +2147,14 @@ elif stock_input:
                 
                 main_force_data, main_diff_data = [], []
                 
-                broker_chip_data, broker_chip_line = [], [] # 分點資料容器
+                # ✅ [REQ 2] 多券商資料容器 (使用字典儲存)
+                brokers_data_map = {} 
+                # brokers_data_map = { "券商A": {"hist": [], "line": []}, "券商B": ... }
+
+                # 預先為選中的券商初始化容器
+                if "分點買賣超" in selected_indicators:
+                    for b_name in st.session_state.get('kline_selected_brokers', []):
+                         brokers_data_map[b_name] = {"hist": [], "line": []}
 
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
@@ -2186,19 +2250,28 @@ elif stock_input:
                             # 家數差負數代表籌碼集中(好)，正數代表分散(壞)，所以負數給紅，正數給綠
                             main_diff_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v < 0 else COLOR_DOWN})
                         
-                        # ✅ [NEW] 分點買賣超資料處理
-                        if '分點買賣超' in plot_df.columns:
-                            v = row['分點買賣超']
-                            c = row['分點累積']
-                            # 判斷是否在區間內，決定顏色深淺 (rank_start_date ~ rank_end_date)
-                            is_in_range = rank_start_date <= row['DateStr'] <= rank_end_date
-                            if v > 0:
-                                color = COLOR_UP if is_in_range else 'rgba(239, 83, 80, 0.3)'
-                            else:
-                                color = COLOR_DOWN if is_in_range else 'rgba(38, 166, 154, 0.3)'
+                        # ✅ [REQ 2] 多券商數據填充
+                        for b_name in st.session_state.get('kline_selected_brokers', []):
+                            target_key = normalize_name(b_name)
+                            col_name = f"broker_{target_key}"
+                            if col_name in plot_df.columns:
+                                val = row.get(col_name, 0)
+                                cum = row.get(f"{col_name}_cum", 0)
                                 
-                            broker_chip_data.append({"time": t_val, "value": float(v), "color": color})
-                            broker_chip_line.append({"time": t_val, "value": float(c)})
+                                # 使用統計天數判斷顏色深淺 (與分點分頁邏輯一致)
+                                # 需計算 date range for current statistical period
+                                # 這裡直接判斷是否在區間內
+                                s_d_b, e_d_b = calculate_date_range(stock_input, days_map.get(st.session_state.kline_broker_days, 20))
+                                
+                                is_in_range = s_d_b <= row['DateStr'] <= e_d_b
+                                if val > 0:
+                                    color = COLOR_UP if is_in_range else 'rgba(239, 83, 80, 0.3)'
+                                else:
+                                    color = COLOR_DOWN if is_in_range else 'rgba(38, 166, 154, 0.3)'
+
+                                brokers_data_map[b_name]["hist"].append({"time": t_val, "value": float(val), "color": color})
+                                brokers_data_map[b_name]["line"].append({"time": t_val, "value": float(cum)})
+
 
                 # ✅ [FIX] 禁用固定標籤
                 # ✅ [FIX] MA Title spacing: "MA5  " (two spaces)
@@ -2324,16 +2397,18 @@ elif stock_input:
                             "series": [{"type": "Histogram", "data": main_diff_data, "options": {"title": "家數差  ", **common_sub_opts}}]
                         })
                     
-                    # ✅ [NEW] 分點買賣超副圖
+                    # ✅ [REQ 2] 多券商分點買賣超副圖 (為每個選中的券商生成一個圖表)
                     elif indicator == "分點買賣超":
-                        active_b = st.session_state.get('active_broker', '未選擇')
-                        charts_payload.append({
-                            "chart": make_opts(150, f"{active_b} (張)", False),
-                            "series": [
-                                {"type": "Histogram", "data": broker_chip_data, "options": {"title": "買賣超  ", **common_sub_opts}},
-                                {"type": "Line", "data": broker_chip_line, "options": {"title": "累  ", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
-                            ]
-                        })
+                        for b_name in st.session_state.get('kline_selected_brokers', []):
+                            if b_name in brokers_data_map:
+                                b_data = brokers_data_map[b_name]
+                                charts_payload.append({
+                                    "chart": make_opts(150, f"{b_name} (張)", False),
+                                    "series": [
+                                        {"type": "Histogram", "data": b_data["hist"], "options": {"title": "買賣超  ", **common_sub_opts}},
+                                        {"type": "Line", "data": b_data["line"], "options": {"title": "累  ", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                                    ]
+                                })
                 
                 # ✅ [FIX] Key changed to include stock_input to force reset on stock change
                 renderLightweightCharts(charts_payload, key=f"tab1_kline_{stock_input}")
