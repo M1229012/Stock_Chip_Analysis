@@ -333,7 +333,7 @@ def resample_data(df, period):
 
 # ✅ [FIX] Move make_opts to Global Scope to avoid NameError
 # ✅ [MODIFIED] 增加 font_size, top_margin 等參數 (使用固定數值)
-def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.0, bottom_margin=0.0):
+def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.0, bottom_margin=0.0, right_offset=5):
     
     # ✅ 移除縮放倍率，使用傳入參數
     h = height
@@ -354,7 +354,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "timeVisible": True, 
             "secondsVisible": False,
             "barSpacing": 12, 
-            "rightOffset": 5, 
+            "rightOffset": right_offset,  # ✅ 支援右側留白設定
         },
         # ✅ 設定 scaleMargins 與縮放後的寬度
         "rightPriceScale": {
@@ -363,7 +363,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "minimumWidth": min_w, 
             "autoScale": True,
             "scaleMargins": {
-                # ✅ [FIX] 將上下邊距設為 0，讓圖表徹底撐滿
+                # ✅ [FIX] 控制上下邊距
                 "top": top_margin, 
                 "bottom": bottom_margin
             }
@@ -1355,8 +1355,9 @@ if selected_page == "主力":
                     })
 
                 # Plot 1: K-Line
+                # ✅ [FIX] 調整高度比例與字體，使其與其他分頁一致
                 chart1 = {
-                    "chart": make_opts(350, "股價", True),
+                    "chart": make_opts(400, "股價", True, font_size=10),
                     "series": [
                         {"type": "Candlestick", "data": candlestick_data, "options": {"upColor": COLOR_UP, "downColor": COLOR_DOWN, "borderUpColor": COLOR_UP, "borderDownColor": COLOR_DOWN, "wickUpColor": COLOR_UP, "wickDownColor": COLOR_DOWN}},
                         # ✅ [FIX] 移除主力分頁 MA 線上的水平價格線 (priceLineVisible: False)
@@ -1368,8 +1369,9 @@ if selected_page == "主力":
                 
                 # Plot 2: Net Buy
                 # ✅ [FIX] 移除 "數值:", 標示單位, 整數顯示 (type: 'price', precision: 0)
+                # ✅ [FIX] 調整高度比例與字體
                 chart2 = {
-                    "chart": make_opts(150, "主力買賣超 (張)", False),
+                    "chart": make_opts(150, "主力買賣超 (張)", False, font_size=10),
                     "series": [
                         {"type": "Histogram", "data": net_buy_data, "options": {"title": "買賣超  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "lastValueVisible": False, "priceLineVisible": False}}
                     ]
@@ -1377,8 +1379,9 @@ if selected_page == "主力":
                 
                 # Plot 3: Broker Diff
                 # ✅ [FIX] 移除 "數值:", 標示單位, 整數顯示
+                # ✅ [FIX] 調整高度比例與字體
                 chart3 = {
-                    "chart": make_opts(150, "買賣家數差 (家)", False),
+                    "chart": make_opts(150, "買賣家數差 (家)", False, font_size=10),
                     "series": [
                         {"type": "Histogram", "data": diff_data, "options": {"title": "家數差  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", "lastValueVisible": False, "priceLineVisible": False}}
                     ]
@@ -1566,8 +1569,8 @@ elif selected_page == "多股比較":
                             ]
                             
                             # ✅ [MODIFIED] 主圖還原高度 400px，字體 10px，標題顯示於浮水印
-                            # ✅ [FIX] 移除 top_margin，讓圖填滿
-                            payload = [{"chart": make_opts(400, display_title, False, font_size=10, top_margin=0.0, bottom_margin=0.0), "series": main_series}]
+                            # ✅ [FIX] 調整 top_margin 與 right_offset 讓圖表更寬鬆
+                            payload = [{"chart": make_opts(400, display_title, False, font_size=10, top_margin=0.2, bottom_margin=0.2, right_offset=20), "series": main_series}]
                             
                             # 2. Sub Chart
                             sub_data = []
@@ -1925,17 +1928,21 @@ elif stock_input:
                     
                 with c_k_ind:
                     # ✅ [NEW FEATURE] 擴充副圖指標選項 (法人、融資券、主力)
+                    # ✅ [FIX] 加入 "分點買賣超" 選項
                     indicator_options = [
                         "成交量", "KD", "MACD", "RSI", 
                         "外資", "投信", "自營商", "三大法人合計",
                         "融資", "融券",
-                        "主力買賣超", "家數差"
+                        "主力買賣超", "家數差",
+                        "分點買賣超" # New Option
                     ]
                     default_indicators = ["成交量", "KD", "MACD"]
+                    # ✅ [FIX] 增加 key 以確保在主題切換 (Rerun) 時保留狀態
                     selected_indicators = st.multiselect(
                         "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
                         options=indicator_options,
-                        default=default_indicators
+                        default=default_indicators,
+                        key="kline_indicators_selector"
                     )
             
             # 畫一條分隔線或留白，讓控制區與圖表區分開
@@ -2007,6 +2014,45 @@ elif stock_input:
                             if '家數差' in plot_df.columns: plot_df['家數差'] = plot_df['家數差'].fillna(0)
                     except:
                         pass # 抓不到就跳過
+                
+                # 4. 分點數據 (券商)
+                # ✅ [NEW] 處理 K 線分頁的分點顯示邏輯
+                if "分點買賣超" in selected_indicators:
+                    target_broker_kline = st.session_state.get('active_broker')
+                    
+                    # 如果使用者還沒在分點頁面選過券商，自動抓買超第一名
+                    if not target_broker_kline:
+                        if df_buy is not None and not df_buy.empty:
+                            target_broker_kline = df_buy.iloc[0]['broker']
+                            st.session_state.active_broker = target_broker_kline
+                    
+                    if target_broker_kline:
+                         # 取得券商代碼
+                        target_key = normalize_name(target_broker_kline)
+                        broker_params = None
+                        if broker_info:
+                            if target_key in broker_info: broker_params = broker_info[target_key]
+                            else:
+                                for k, v in broker_info.items():
+                                    if target_key in k or k in target_key:
+                                        broker_params = v
+                                        break
+                        
+                        if broker_params:
+                            long_start_date = df_price['DateStr'].iloc[0] 
+                            long_end_date = df_price['DateStr'].iloc[-1] 
+                            broker_key = (broker_params['BHID'], broker_params['b'], broker_params.get('C', '1'))
+                            
+                            # 嘗試抓取明細
+                            broker_daily_df, _ = get_specific_broker_daily(stock_input, broker_key, long_start_date, long_end_date, st.session_state.refresh_nonce)
+                            
+                            if broker_daily_df is not None and not broker_daily_df.empty:
+                                broker_daily_df = broker_daily_df.drop_duplicates(subset=["DateStr"], keep="last")
+                                # 合併到主表
+                                plot_df = pd.merge(plot_df, broker_daily_df[['DateStr', '買賣超_Calc']], on='DateStr', how='left')
+                                plot_df['分點買賣超'] = plot_df['買賣超_Calc'].fillna(0)
+                                plot_df['分點累積'] = plot_df['分點買賣超'].cumsum()
+
 
             show_ma5 = "MA5" in selected_mas
             show_ma10 = "MA10" in selected_mas
@@ -2043,6 +2089,8 @@ elif stock_input:
                 short_data, short_line = [], []
                 
                 main_force_data, main_diff_data = [], []
+                
+                broker_chip_data, broker_chip_line = [], [] # 分點資料容器
 
                 for i, row in plot_df.iterrows():
                     if not pd.isna(row['Open']) and not pd.isna(row['Close']):
@@ -2137,6 +2185,20 @@ elif stock_input:
                             v = row['家數差']
                             # 家數差負數代表籌碼集中(好)，正數代表分散(壞)，所以負數給紅，正數給綠
                             main_diff_data.append({"time": t_val, "value": float(v), "color": COLOR_UP if v < 0 else COLOR_DOWN})
+                        
+                        # ✅ [NEW] 分點買賣超資料處理
+                        if '分點買賣超' in plot_df.columns:
+                            v = row['分點買賣超']
+                            c = row['分點累積']
+                            # 判斷是否在區間內，決定顏色深淺 (rank_start_date ~ rank_end_date)
+                            is_in_range = rank_start_date <= row['DateStr'] <= rank_end_date
+                            if v > 0:
+                                color = COLOR_UP if is_in_range else 'rgba(239, 83, 80, 0.3)'
+                            else:
+                                color = COLOR_DOWN if is_in_range else 'rgba(38, 166, 154, 0.3)'
+                                
+                            broker_chip_data.append({"time": t_val, "value": float(v), "color": color})
+                            broker_chip_line.append({"time": t_val, "value": float(c)})
 
                 # ✅ [FIX] 禁用固定標籤
                 # ✅ [FIX] MA Title spacing: "MA5  " (two spaces)
@@ -2260,6 +2322,17 @@ elif stock_input:
                         charts_payload.append({
                             "chart": make_opts(150, "買賣家數差", False),
                             "series": [{"type": "Histogram", "data": main_diff_data, "options": {"title": "家數差  ", **common_sub_opts}}]
+                        })
+                    
+                    # ✅ [NEW] 分點買賣超副圖
+                    elif indicator == "分點買賣超":
+                        active_b = st.session_state.get('active_broker', '未選擇')
+                        charts_payload.append({
+                            "chart": make_opts(150, f"{active_b} (張)", False),
+                            "series": [
+                                {"type": "Histogram", "data": broker_chip_data, "options": {"title": "買賣超  ", **common_sub_opts}},
+                                {"type": "Line", "data": broker_chip_line, "options": {"title": "累  ", "color": "#FFD700", "lineWidth": 2, "priceScaleId": "left", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                            ]
                         })
                 
                 # ✅ [FIX] Key changed to include stock_input to force reset on stock change
