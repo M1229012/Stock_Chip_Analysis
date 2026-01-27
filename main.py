@@ -1371,7 +1371,7 @@ elif selected_page == "多股比較":
             # ✅ [FIX] 增加 key 以保持選擇狀態
             indicator_type = st.selectbox(
                 "選擇副圖指標", 
-                ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超"],
+                ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超", "融資", "家數差"],
                 key="multi_stock_ind_selector"
             )
     
@@ -1458,13 +1458,13 @@ elif selected_page == "多股比較":
                                          {"type": "Line", "data": dea, "options": {"title": "DEA  ", "color": "#00FFFF", "lineWidth": 1, **common_opts}}
                                      ]
 
-                            elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
+                            elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超", "融資", "家數差"]:
                                 s_date = df['DateStr'].iloc[0]
                                 e_date = df['DateStr'].iloc[-1]
                                 inst_df = get_institutional_data(code, s_date, e_date)
                                 if inst_df is not None:
                                     m_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
-                                    col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超"}
+                                    col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超", "融資": "融資", "家數差" : "家數差"}
                                     target_col = col_map[indicator_type]
                                     
                                     bar_data = []
