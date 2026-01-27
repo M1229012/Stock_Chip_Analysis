@@ -648,7 +648,7 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
                 next_links = driver.find_elements(By.XPATH, "//a[contains(text(), '下一頁')]")
                 if next_links and next_links[0].is_enabled():
                     next_links[0].click()
-                    time.sleep(0.5) 
+                    time.sleep(0.1) 
                     page_count += 1
                 else: break 
             except: break
@@ -682,9 +682,11 @@ def get_shareholding_data(stock_id: str, refresh_nonce: int = 0):
     
     try:
         driver.get(url)
-        time.sleep(2)
-        
         summary_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[1]/table"
+
+        WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, summary_xpath))
+        
         summary_df = None
         try:
             tbl_summary = driver.find_element(By.XPATH, summary_xpath)
