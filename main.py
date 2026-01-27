@@ -135,7 +135,7 @@ st.markdown(f"""
     .metric-label {{ font-size: 0.9rem; color: #aaa; white-space: nowrap; }}
     .metric-value {{ font-size: 1.2rem; font-weight: bold; color: #fafafa; }}
 
-    /* ================= Radio Button Optimization (置中對齊修復) ================= */
+    /* ================= Radio Button Optimization (100% 置中對齊修復) ================= */
     div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{ display: none !important; }}
     
     div[data-testid="stRadio"] > div[role="radiogroup"] {{
@@ -148,13 +148,23 @@ st.markdown(f"""
     /* ✅ [FIX] 使用 Flexbox 強制文字垂直水平置中 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {{
         color: #8b92a2 !important; 
-        padding: 8px 16px !important;
+        padding: 10px 20px !important; /* 增加 Padding 讓點擊範圍更大且對稱 */
         border-bottom: 3px solid transparent; 
         cursor: pointer;
         display: flex !important;           /* 關鍵 */
         align-items: center !important;     /* 垂直置中 */
         justify-content: center !important; /* 水平置中 */
         height: 100% !important;
+        min-height: 50px !important;        /* 固定高度確保一致 */
+        transition: all 0.2s ease;
+    }}
+
+    /* ✅ [FIX] 針對 Streamlit 內部的 Markdown p 標籤消除 Margin，確保絕對置中 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] label p {{
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.2 !important; /* 收緊行高 */
+        vertical-align: middle !important;
     }}
     
     div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {{
@@ -1360,6 +1370,7 @@ elif selected_page == "多股比較":
     if "multi_stock_inputs" not in st.session_state:
         st.session_state.multi_stock_inputs = "2330 2317 2454"
 
+    # Inputs for comparison
     with st.expander("⚙️ 設定比較股票與指標", expanded=True):
         col_input, col_ind = st.columns([3, 1])
         with col_input:
@@ -1368,13 +1379,18 @@ elif selected_page == "多股比較":
                 key="multi_stock_inputs" 
             )
         with col_ind:
-            # ✅ [FIX] 增加 key 以保持選擇狀態
+            # ✅ [修改 1] 在這裡加入新的選項文字
             indicator_type = st.selectbox(
                 "選擇副圖指標", 
-                ["成交量", "KD", "MACD", "RSI", "外資買賣超", "投信買賣超", "自營商買賣超", "融資", "家數差"],
+                [
+                    "成交量", "KD", "MACD", "RSI", 
+                    "外資買賣超", "投信買賣超", "自營商買賣超",
+                    "融資", "融券", "主力買賣超", "家數差"  # 新增的選項
+                ],
                 key="multi_stock_ind_selector"
             )
     
+    # Process stocks
     raw_stocks = re.split(r'[ ,]+', user_input.strip())
     valid_stocks = [s.strip() for s in raw_stocks if s.strip()]
     
@@ -1383,7 +1399,6 @@ elif selected_page == "多股比較":
     
     if num_stocks > 0:
         cols_per_row = 2
-        
         rows = math.ceil(num_stocks / cols_per_row)
         
         for r in range(rows):
@@ -1396,9 +1411,11 @@ elif selected_page == "多股比較":
                     display_title = f"{code} {name}" if name else code
                     
                     with cols[c]:
+                        # Fetch Data
                         df = get_stock_price(code, st.session_state.refresh_nonce)
                         
                         if df is not None and not df.empty:
+                            # 1. Main Chart (K-Line + MA)
                             chart_data = []
                             ma5, ma20 = [], []
                             
@@ -1420,11 +1437,41 @@ elif selected_page == "多股比較":
                             
                             payload = [{"chart": make_opts(400, display_title, False, font_size=10, top_margin=0.2, bottom_margin=0.2, right_offset=20), "series": main_series}]
                             
+                            # 2. Sub Chart Preparation
                             sub_data = []
                             sub_series = []
-                            
                             common_opts = {"lastValueVisible": False, "priceLineVisible": False}
                             
+                            # ✅ [修改 2] 資料抓取邏輯 (依據選項去抓不同資料)
+                            merged_df = df # 預設只用股價資料
+                            
+                            # (A) 抓法人資料
+                            if indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
+                                s_date = df['DateStr'].iloc[0]
+                                e_date = df['DateStr'].iloc[-1]
+                                inst_df = get_institutional_data(code, s_date, e_date)
+                                if inst_df is not None:
+                                    merged_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
+                            
+                            # (B) 抓融資券資料
+                            elif indicator_type in ["融資", "融券"]:
+                                end_dt = datetime.now()
+                                start_dt = end_dt - timedelta(days=730)
+                                s_date = start_dt.strftime('%Y-%m-%d')
+                                e_date = end_dt.strftime('%Y-%m-%d')
+                                margin_df = get_margin_data(code, s_date, e_date)
+                                if margin_df is not None:
+                                    merged_df = pd.merge(df, margin_df, on='DateStr', how='left').fillna(0)
+
+                            # (C) 抓主力/家數差資料
+                            elif indicator_type in ["主力買賣超", "家數差"]:
+                                try:
+                                    wg_df = get_wantgoo_data(code, st.session_state.refresh_nonce)
+                                    if wg_df is not None:
+                                        merged_df = pd.merge(df, wg_df, on='DateStr', how='left').fillna(0)
+                                except: pass
+
+                            # ✅ [修改 3] 繪圖邏輯 (決定怎麼畫)
                             if indicator_type == "成交量":
                                 for _, row in df.iterrows():
                                      if not pd.isna(row['Volume']):
@@ -1432,6 +1479,7 @@ elif selected_page == "多股比較":
                                 sub_series = [{"type": "Histogram", "data": sub_data, "options": {"title": "成交量(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", **common_opts}}]
                                 
                             elif indicator_type in ["KD", "MACD", "RSI"]:
+                                 # (維持原本技術指標邏輯)
                                  if indicator_type == "KD":
                                      k, d = [], []
                                      for _, row in df.iterrows():
@@ -1458,35 +1506,67 @@ elif selected_page == "多股比較":
                                          {"type": "Line", "data": dea, "options": {"title": "DEA  ", "color": "#00FFFF", "lineWidth": 1, **common_opts}}
                                      ]
 
-                            elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超", "融資", "家數差"]:
-                                s_date = df['DateStr'].iloc[0]
-                                e_date = df['DateStr'].iloc[-1]
-                                inst_df = get_institutional_data(code, s_date, e_date)
-                                if inst_df is not None:
-                                    m_df = pd.merge(df, inst_df, on='DateStr', how='left').fillna(0)
-                                    col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超", "融資": "融資", "家數差" : "家數差"}
-                                    target_col = col_map[indicator_type]
-                                    
-                                    bar_data = []
-                                    line_data = []
+                            # 處理買賣超 (法人)
+                            elif indicator_type in ["外資買賣超", "投信買賣超", "自營商買賣超"]:
+                                col_map = {"外資買賣超": "外資買賣超", "投信買賣超": "投信買賣超", "自營商買賣超": "自營商買賣超"}
+                                target_col = col_map[indicator_type]
+                                if target_col in merged_df.columns:
+                                    bar_data, line_data = [], []
                                     cum_val = 0
-                                    for _, row in m_df.iterrows():
+                                    for _, row in merged_df.iterrows():
                                         val = row[target_col]
                                         cum_val += val
                                         bar_data.append({"time": row['DateStr'], "value": val, "color": COLOR_UP if val > 0 else COLOR_DOWN})
                                         line_data.append({"time": row['DateStr'], "value": cum_val})
                                         
                                     title_str = f"{indicator_type[:2]}  " if len(indicator_type)>2 else f"{indicator_type}  "
-                                    # ✅ [FIX] 使用動態顏色 (暗色用白，亮色用黑)
                                     sub_series = [
                                         {"type": "Histogram", "data": bar_data, "options": {"title": title_str, "priceScaleId": "right", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}},
                                         {"type": "Line", "data": line_data, "options": {"title": "累  ", "color": MULTI_LINE_COLOR, "lineWidth": 2, "priceScaleId": "left", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}}
                                     ]
-                            
+
+                            # 處理融資 / 融券
+                            elif indicator_type in ["融資", "融券"]:
+                                diff_col = "融資增減" if indicator_type == "融資" else "融券增減"
+                                bal_col = "融資餘額" if indicator_type == "融資" else "融券餘額"
+                                
+                                if diff_col in merged_df.columns:
+                                    bar_data, line_data = [], []
+                                    for _, row in merged_df.iterrows():
+                                        v_diff = row[diff_col]
+                                        v_bal = row[bal_col]
+                                        bar_data.append({"time": row['DateStr'], "value": v_diff, "color": COLOR_UP if v_diff > 0 else COLOR_DOWN})
+                                        if v_bal > 0: line_data.append({"time": row['DateStr'], "value": v_bal})
+                                    
+                                    sub_series = [
+                                        {"type": "Histogram", "data": bar_data, "options": {"title": "增減  ", "priceScaleId": "right", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}},
+                                        {"type": "Line", "data": line_data, "options": {"title": "餘額  ", "color": "orange", "lineWidth": 2, "priceScaleId": "left", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}}
+                                    ]
+
+                            # 處理主力 / 家數差
+                            elif indicator_type in ["主力買賣超", "家數差"]:
+                                target_col = "買賣超" if indicator_type == "主力買賣超" else "家數差"
+                                if target_col in merged_df.columns:
+                                    bar_data = []
+                                    for _, row in merged_df.iterrows():
+                                        val = row[target_col]
+                                        # 家數差顏色邏輯：負數(集中)為紅，正數(分散)為綠
+                                        if indicator_type == "家數差":
+                                            c = COLOR_UP if val < 0 else COLOR_DOWN
+                                        else:
+                                            c = COLOR_UP if val > 0 else COLOR_DOWN
+                                        bar_data.append({"time": row['DateStr'], "value": val, "color": c})
+                                        
+                                    title_name = "主力  " if indicator_type == "主力買賣超" else "家數差  "
+                                    sub_series = [{"type": "Histogram", "data": bar_data, "options": {"title": title_name, "priceScaleId": "right", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, **common_opts}}]
+
+                            # Render Sub Chart
                             if sub_series:
                                 chart_title = indicator_type
-                                if "成交量" in chart_title or "買賣超" in chart_title:
+                                if "成交量" in chart_title or "買賣超" in chart_title or "融" in chart_title:
                                     chart_title += " (張)"
+                                elif "家數差" in chart_title:
+                                    chart_title += " (家)"
                                 
                                 chart_opts = make_opts(200, chart_title, True, font_size=10, top_margin=0.05, bottom_margin=0.05)
                                 if indicator_type == "RSI": chart_opts["rightPriceScale"] = {"visible":True, "autoScale":False, "mode":0, "maxValue":100, "minValue":0}
