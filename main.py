@@ -394,13 +394,34 @@ def get_driver_path():
 
 def get_driver():
     options = Options()
-    options.page_load_strategy = 'eager'
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920,1080')
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    # 1. 開啟 Eager 模式 (不等待資源載入完畢)
+    options.page_load_strategy = 'eager'
+
+    # 2. 禁止圖片、CSS、通知等資源載入
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,          # 禁止圖片
+        "profile.default_content_setting_values.notifications": 2,     # 禁止通知
+        "profile.managed_default_content_settings.stylesheets": 2,     # 禁止 CSS (若爬蟲報錯可註解掉這行)
+        "profile.managed_default_content_settings.cookies": 2,         # 禁止 Cookies (部分網站可能會擋，可視情況開啟)
+        "profile.managed_default_content_settings.javascript": 1,      # JS 建議開啟 (因為你是爬動態網頁)
+        "profile.managed_default_content_settings.plugins": 1,
+        "profile.managed_default_content_settings.popups": 2,
+        "profile.managed_default_content_settings.geolocation": 2,
+        "profile.managed_default_content_settings.media_stream": 2,
+    }
+    options.add_experimental_option("prefs", prefs)
+    
+    # 額外參數減少渲染負擔
+    options.add_argument('--blink-settings=imagesEnabled=false')
+    options.add_argument('--disable-extensions')
+    options.add_argument('--disable-infobars')
     
     if shutil.which("chromium"):
         options.binary_location = shutil.which("chromium")
