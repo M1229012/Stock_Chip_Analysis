@@ -686,7 +686,7 @@ def get_shareholding_data(stock_id: str, refresh_nonce: int = 0):
 
         WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, summary_xpath))
-        
+        )
         summary_df = None
         try:
             tbl_summary = driver.find_element(By.XPATH, summary_xpath)
