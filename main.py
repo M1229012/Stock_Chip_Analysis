@@ -394,6 +394,7 @@ def get_driver_path():
 
 def get_driver():
     options = Options()
+    options.page_load_strategy = 'eager'
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
