@@ -36,9 +36,9 @@ st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ [CRITICAL FIX] 初始化 K線指標選擇狀態，防止切換主題或分頁時重置
+# ✅ [CRITICAL FIX] 初始化 K線指標選擇狀態 (KD -> KDJ)
 if "kline_indicators_selector" not in st.session_state:
-    st.session_state.kline_indicators_selector = ["成交量", "KD", "MACD"]
+    st.session_state.kline_indicators_selector = ["成交量", "KDJ", "MACD"]
 
 # ✅ [NEW] 初始化 K線分點相關狀態
 if "kline_broker_days" not in st.session_state:
@@ -292,6 +292,9 @@ def calculate_technical_indicators(df):
         
     df['K'] = k_list
     df['D'] = d_list
+    
+    # ✅ [NEW] 計算 J 值: J = 3K - 2D
+    df['J'] = 3 * df['K'] - 2 * df['D']
 
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
     exp26 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -376,7 +379,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             }
         },
         "crosshair": {
-            "mode": 1,
+            "mode": 1, # 1: Magnet, 0: Normal
             "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
             "horzLine": {
                 "visible": True, 
@@ -385,6 +388,14 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             }
         },
         "height": h, 
+        # ✅ [FIX] 嘗試開啟圖表配置以支援更好的繪圖互動 (若套件支援)
+        "handleScale": {
+            "axisPressedMouseMove": True,
+        },
+        "handleScroll": {
+            "mouseWheel": True,
+            "pressedMouseMove": True,
+        },
     }
     if scale_mode == "rsi":
         opts["rightPriceScale"] = {
@@ -799,6 +810,8 @@ def get_stock_price(stock_id, refresh_nonce=0):
             stock = yf.Ticker(ticker)
             temp_df = stock.history(period="10y") 
             if not temp_df.empty:
+                # ✅ [FIX] 將成交量單位由「股」轉為「張」 (除以 1000)
+                temp_df['Volume'] = temp_df['Volume'] / 1000
                 df = temp_df
                 break
         except: continue
@@ -830,6 +843,8 @@ def get_intraday_data(stock_id, interval):
             stock = yf.Ticker(ticker)
             temp_df = stock.history(period="60d", interval=yf_interval)
             if not temp_df.empty:
+                # ✅ [FIX] 將成交量單位由「股」轉為「張」 (除以 1000)
+                temp_df['Volume'] = temp_df['Volume'] / 1000
                 df = temp_df
                 break
         except: continue
@@ -1379,11 +1394,11 @@ elif selected_page == "多股比較":
                 key="multi_stock_inputs" 
             )
         with col_ind:
-            # ✅ [修改 1] 在這裡加入新的選項文字
+            # ✅ [修改 1] 在這裡加入新的選項文字，將 KD 改為 KDJ
             indicator_type = st.selectbox(
                 "選擇副圖指標", 
                 [
-                    "成交量", "KD", "MACD", "RSI", 
+                    "成交量", "KDJ", "MACD", "RSI", 
                     "外資買賣超", "投信買賣超", "自營商買賣超",
                     "融資", "融券", "主力買賣超", "家數差"  # 新增的選項
                 ],
@@ -1478,16 +1493,19 @@ elif selected_page == "多股比較":
                                          sub_data.append({"time": row['DateStr'], "value": row['Volume'], "color": COLOR_UP if row['Close'] >= row['Open'] else COLOR_DOWN})
                                 sub_series = [{"type": "Histogram", "data": sub_data, "options": {"title": "成交量(張)  ", "priceFormat": {"type": "price", "precision": 0, "minMove": 1}, "priceScaleId": "right", **common_opts}}]
                                 
-                            elif indicator_type in ["KD", "MACD", "RSI"]:
-                                 # (維持原本技術指標邏輯)
-                                 if indicator_type == "KD":
-                                     k, d = [], []
+                            elif indicator_type in ["KDJ", "MACD", "RSI"]:
+                                 # ✅ [FIX] 改為 KDJ 繪圖
+                                 if indicator_type == "KDJ":
+                                     k, d, j = [], [], []
                                      for _, row in df.iterrows():
                                          if not pd.isna(row['K']): k.append({"time": row['DateStr'], "value": row['K']})
                                          if not pd.isna(row['D']): d.append({"time": row['DateStr'], "value": row['D']})
+                                         if not pd.isna(row['J']): j.append({"time": row['DateStr'], "value": row['J']})
                                      sub_series = [
                                          {"type": "Line", "data": k, "options": {"title": "K  ", "color": "orange", "lineWidth": 1, **common_opts}},
-                                         {"type": "Line", "data": d, "options": {"title": "D  ", "color": "cyan", "lineWidth": 1, **common_opts}}
+                                         {"type": "Line", "data": d, "options": {"title": "D  ", "color": "cyan", "lineWidth": 1, **common_opts}},
+                                         # J 線通常使用紫色或紫紅色
+                                         {"type": "Line", "data": j, "options": {"title": "J  ", "color": "#E040FB", "lineWidth": 1, **common_opts}}
                                      ]
                                  elif indicator_type == "RSI":
                                      rsi = []
@@ -1783,6 +1801,14 @@ elif stock_input:
                     }
                 },
                 "height": height,
+                # ✅ [FIX] 嘗試開啟圖表配置以支援更好的繪圖互動
+                "handleScale": {
+                    "axisPressedMouseMove": True,
+                },
+                "handleScroll": {
+                    "mouseWheel": True,
+                    "pressedMouseMove": True,
+                },
             }
             if scale_mode == "rsi":
                 opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
@@ -1812,14 +1838,14 @@ elif stock_input:
                     )
                     
                 with c_k_ind:
+                    # ✅ [FIX] 這裡將 KD 選項改為 KDJ
                     indicator_options = [
-                        "成交量", "KD", "MACD", "RSI", 
+                        "成交量", "KDJ", "MACD", "RSI", 
                         "外資", "投信", "自營商", "三大法人合計",
                         "融資", "融券",
                         "主力買賣超", "家數差",
                         "分點買賣超" 
                     ]
-                    # ✅ [FIX] 確保使用 session_state 中的 key 來保持狀態，且不設置 default 避免衝突
                     selected_indicators = st.multiselect(
                         "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
                         options=indicator_options,
@@ -1964,7 +1990,8 @@ elif stock_input:
                 is_intraday = kline_period in ["5分", "15分", "30分", "60分"]
                 
                 vol_data = []
-                k_data, d_data = [], []
+                # ✅ [FIX] 增加 J 值陣列
+                k_data, d_data, j_data = [], [], []
                 dif_data, dea_data, hist_data = [], [], []
                 rsi_data, rsi_80_data, rsi_20_data = [], [], []
                 
@@ -2012,6 +2039,9 @@ elif stock_input:
                     if 'K' in plot_df.columns:
                         if not pd.isna(row['K']): k_data.append({"time": t_val, "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": t_val, "value": float(row['D'])})
+                        # ✅ [FIX] 收集 J 值數據
+                        if 'J' in row and not pd.isna(row['J']): j_data.append({"time": t_val, "value": float(row['J'])})
+                        
                     if 'DIF' in plot_df.columns:
                         if not pd.isna(row['DIF']): dif_data.append({"time": t_val, "value": float(row['DIF'])})
                         if not pd.isna(row['DEA']): dea_data.append({"time": t_val, "value": float(row['DEA'])})
@@ -2111,12 +2141,14 @@ elif stock_input:
                             "series": [{"type": "Histogram", "data": vol_data, "options": {"title": "成交量  ", **common_sub_opts}}]
                         })
 
-                    elif indicator == "KD":
+                    elif indicator == "KDJ": # ✅ [FIX] 改為 KDJ 判斷
                         charts_payload.append({
-                            "chart": make_opts(150, "KD", False), 
+                            "chart": make_opts(150, "KDJ", False), 
                             "series": [
                                 {"type": "Line", "data": k_data, "options": {"color": "orange", "lineWidth": 1, "title": "K  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
-                                {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
+                                {"type": "Line", "data": d_data, "options": {"color": "cyan", "lineWidth": 1, "title": "D  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}},
+                                # ✅ [FIX] 增加 J 線 (紫色)
+                                {"type": "Line", "data": j_data, "options": {"color": "#E040FB", "lineWidth": 1, "title": "J  ", "priceScaleId": "right", "priceLineVisible": False, "crosshairMarkerVisible": True, "lastValueVisible": False}}
                             ]
                         })
 
