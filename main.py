@@ -47,7 +47,7 @@ local_css("style.css")
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
 
-# ✅ [CRITICAL FIX] 初始化 K線指標選擇狀態
+# ✅ [CRITICAL FIX] 初始化 K線指標選擇狀態 (KD -> KDJ)
 if "kline_indicators_selector" not in st.session_state:
     st.session_state.kline_indicators_selector = ["成交量", "KDJ", "MACD"]
 
@@ -157,13 +157,11 @@ def render_broker_table(df, sum_data, color_hex, title, key_id):
 def calculate_technical_indicators(df):
     df = df.copy()
     
-    # BB
     df['BB_Mid'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Up'] = df['BB_Mid'] + 2 * df['BB_Std']
     df['BB_Low'] = df['BB_Mid'] - 2 * df['BB_Std']
 
-    # KDJ
     rsv_period = 9
     df['9_High'] = df['High'].rolling(window=rsv_period).max()
     df['9_Low'] = df['Low'].rolling(window=rsv_period).min()
@@ -188,16 +186,16 @@ def calculate_technical_indicators(df):
         
     df['K'] = k_list
     df['D'] = d_list
+    
+    # ✅ [NEW] 計算 J 值: J = 3K - 2D
     df['J'] = 3 * df['K'] - 2 * df['D']
 
-    # MACD
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
     exp26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['DIF'] = exp12 - exp26
     df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = 2 * (df['DIF'] - df['DEA'])
 
-    # RSI
     delta = df['Close'].diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
@@ -206,7 +204,6 @@ def calculate_technical_indicators(df):
     rs = ema_up / ema_down
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    # MA
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA10'] = df['Close'].rolling(window=10).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
@@ -242,6 +239,7 @@ def resample_data(df, period):
     resampled = calculate_technical_indicators(resampled)
     return resampled
 
+# ✅ [MODIFIED] 增加 font_size, top_margin 等參數
 def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_size=12, top_margin=0.0, bottom_margin=0.0, right_offset=5):
     h = height
     fs = font_size
@@ -261,7 +259,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "timeVisible": True, 
             "secondsVisible": False,
             "barSpacing": 12, 
-            "rightOffset": right_offset, 
+            "rightOffset": right_offset,  # ✅ 支援右側留白設定
         },
         "rightPriceScale": {
             "borderColor": "rgba(197, 203, 206, 0.8)", 
@@ -269,12 +267,13 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             "minimumWidth": min_w, 
             "autoScale": True,
             "scaleMargins": {
+                # ✅ [FIX] 控制上下邊距
                 "top": top_margin, 
                 "bottom": bottom_margin
             }
         },
         "crosshair": {
-            "mode": 1, 
+            "mode": 1, # 1: Magnet, 0: Normal
             "vertLine": {"visible": True, "style": 0, "width": 1, "color": 'rgba(255, 255, 255, 0.4)', "labelVisible": True},
             "horzLine": {
                 "visible": True, 
@@ -283,6 +282,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
             }
         },
         "height": h, 
+        # ✅ [FIX] 嘗試開啟圖表配置以支援更好的繪圖互動 (若套件支援)
         "handleScale": {
             "axisPressedMouseMove": True,
         },
@@ -316,14 +316,16 @@ def get_driver():
     options.add_argument('--window-size=1920,1080')
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
+    # 1. 開啟 Eager 模式 (不等待資源載入完畢)
     options.page_load_strategy = 'eager'
 
+    # 2. 禁止圖片、CSS、通知等資源載入
     prefs = {
-        "profile.managed_default_content_settings.images": 2,          
-        "profile.default_content_setting_values.notifications": 2,     
-        "profile.managed_default_content_settings.stylesheets": 2,     
-        "profile.managed_default_content_settings.cookies": 2,         
-        "profile.managed_default_content_settings.javascript": 1,      
+        "profile.managed_default_content_settings.images": 2,          # 禁止圖片
+        "profile.default_content_setting_values.notifications": 2,     # 禁止通知
+        "profile.managed_default_content_settings.stylesheets": 2,     # 禁止 CSS (若爬蟲報錯可註解掉這行)
+        "profile.managed_default_content_settings.cookies": 2,         # 禁止 Cookies (部分網站可能會擋，可視情況開啟)
+        "profile.managed_default_content_settings.javascript": 1,      # JS 建議開啟 (因為你是爬動態網頁)
         "profile.managed_default_content_settings.plugins": 1,
         "profile.managed_default_content_settings.popups": 2,
         "profile.managed_default_content_settings.geolocation": 2,
@@ -331,6 +333,7 @@ def get_driver():
     }
     options.add_experimental_option("prefs", prefs)
     
+    # 額外參數減少渲染負擔
     options.add_argument('--blink-settings=imagesEnabled=false')
     options.add_argument('--disable-extensions')
     options.add_argument('--disable-infobars')
@@ -1696,14 +1699,6 @@ elif stock_input:
                     }
                 },
                 "height": height,
-                # ✅ [FIX] 嘗試開啟圖表配置以支援更好的繪圖互動
-                "handleScale": {
-                    "axisPressedMouseMove": True,
-                },
-                "handleScroll": {
-                    "mouseWheel": True,
-                    "pressedMouseMove": True,
-                },
             }
             if scale_mode == "rsi":
                 opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
@@ -1718,64 +1713,73 @@ elif stock_input:
             st.markdown("<br>", unsafe_allow_html=True) 
             
             with st.container():
-                c_k_period, c_k_ma, c_k_ind = st.columns([1, 3, 5], gap="large")
+                # ✅ [LAYOUT CHANGE] K線控制區 (Columns)
+                # 左邊放週期選擇器(1.5)，右邊放設定按鈕(8.5)
+                # 設定按鈕使用 st.popover 以節省空間
+                col_k1, col_k2 = st.columns([1.5, 8.5], gap="small")
                 
-                with c_k_period:
-                    kline_period = st.selectbox("📅 週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
+                with col_k1:
+                    kline_period = st.selectbox(
+                        "📅 週期", 
+                        ["日K", "週K", "月K", "5分", "15分", "30分", "60分"],
+                        label_visibility="collapsed" # 隱藏標籤
+                    )
                 
-                with c_k_ma:
-                    ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
-                    ma_default = ["MA5", "MA10", "MA20", "MA60"]
-                    selected_mas = st.multiselect(
-                        "📈 均線 / 布林",
-                        options=ma_options_list,
-                        default=ma_default
-                    )
-                    
-                with c_k_ind:
-                    # ✅ [FIX] 這裡將 KD 選項改為 KDJ
-                    indicator_options = [
-                        "成交量", "KDJ", "MACD", "RSI", 
-                        "外資", "投信", "自營商", "三大法人合計",
-                        "融資", "融券",
-                        "主力買賣超", "家數差",
-                        "分點買賣超" 
-                    ]
-                    selected_indicators = st.multiselect(
-                        "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
-                        options=indicator_options,
-                        key="kline_indicators_selector"
-                    )
-
-            if "分點買賣超" in selected_indicators:
-                with st.expander("🛠️ 分點買賣超設定 (選擇天數與券商)", expanded=True):
-                    c_days, c_brokers = st.columns([1, 4])
-                    
-                    with c_days:
-                        target_days_label = st.selectbox(
-                            "統計天數",
-                            list(days_map.keys()),
-                            key="kline_broker_days"
+                with col_k2:
+                    with st.popover("⚙️ 指標與均線設定", use_container_width=True):
+                        st.markdown("##### 均線設定")
+                        ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
+                        ma_default = ["MA5", "MA10", "MA20", "MA60"]
+                        selected_mas = st.multiselect(
+                            "選擇均線 / 布林",
+                            options=ma_options_list,
+                            default=ma_default
                         )
-                        target_days = days_map.get(target_days_label, 20)
-
-                    s_d, e_d = calculate_date_range(stock_input, target_days)
-                    _df_buy, _df_sell, _, _, _broker_info, _ = get_real_data_matrix(stock_input, s_d, e_d, st.session_state.refresh_nonce)
-                    
-                    broker_options = []
-                    if _df_buy is not None and not _df_buy.empty:
-                        broker_options.extend(_df_buy['broker'].tolist())
-                    if _df_sell is not None and not _df_sell.empty:
-                        broker_options.extend(_df_sell['broker'].tolist())
-                    
-                    broker_options = list(dict.fromkeys(broker_options))
-
-                    with c_brokers:
-                        selected_brokers_kline = st.multiselect(
-                            f"券商分點 (統計區間前 15 大買賣超，可多選)",
-                            options=broker_options,
-                            key="kline_selected_brokers"
+                        
+                        st.divider()
+                        st.markdown("##### 副圖指標")
+                        indicator_options = [
+                            "成交量", "KDJ", "MACD", "RSI", 
+                            "外資", "投信", "自營商", "三大法人合計",
+                            "融資", "融券",
+                            "主力買賣超", "家數差",
+                            "分點買賣超" 
+                        ]
+                        selected_indicators = st.multiselect(
+                            "選擇副圖指標 (依選擇順序排列)",
+                            options=indicator_options,
+                            key="kline_indicators_selector"
                         )
+                        
+                        # 如果選了「分點買賣超」，在 popover 內顯示分點設定
+                        if "分點買賣超" in selected_indicators:
+                            st.divider()
+                            st.markdown("##### 分點買賣超設定")
+                            target_days_label = st.selectbox(
+                                "統計天數",
+                                list(days_map.keys()),
+                                key="kline_broker_days"
+                            )
+                            target_days = days_map.get(target_days_label, 20)
+
+                            s_d, e_d = calculate_date_range(stock_input, target_days)
+                            # 為了不卡頓，這裡可以考慮是否要即時抓取，或者依賴快取
+                            # 由於 popover 打開時已經 rerun，理論上可以直接抓
+                            _df_buy, _df_sell, _, _, _broker_info, _ = get_real_data_matrix(stock_input, s_d, e_d, st.session_state.refresh_nonce)
+                            
+                            broker_options = []
+                            if _df_buy is not None and not _df_buy.empty:
+                                broker_options.extend(_df_buy['broker'].tolist())
+                            if _df_sell is not None and not _df_sell.empty:
+                                broker_options.extend(_df_sell['broker'].tolist())
+                            
+                            broker_options = list(dict.fromkeys(broker_options))
+
+                            selected_brokers_kline = st.multiselect(
+                                f"選擇券商分點 (統計區間前 15 大)",
+                                options=broker_options,
+                                key="kline_selected_brokers"
+                            )
 
             st.markdown("<br>", unsafe_allow_html=True)
             
