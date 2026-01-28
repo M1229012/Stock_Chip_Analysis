@@ -1,0 +1,152 @@
+/* 隱藏 Header */
+header[data-testid="stHeader"] { visibility: hidden; }
+.stDeployButton { display: none; }
+
+/* 全域背景色 - 對應 Python 中的 PAGE_BG */
+.stApp { background-color: #131722 !important; }
+
+/* ================= 1. 電腦版通用設定 ================= */
+.block-container {
+    padding-top: 3rem !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 100% !important;
+}
+
+/* 圖表容器負邊距 (電腦版) */
+div.element-container:has(iframe) {
+    margin-bottom: -80px !important;
+    padding: 0px !important;
+}
+
+iframe {
+    display: block !important;
+    margin: 0px !important;
+    padding: 0px !important;
+    border: 0px !important;
+    width: 100% !important;
+}
+
+/* 消除 Grid 佈局間隙 */
+div[data-testid="stHorizontalBlock"] {
+    gap: 15px !important;
+    padding: 0px !important;
+}
+
+div[data-testid="stVerticalBlock"] {
+    gap: 10px !important;
+    padding: 0px !important;
+}
+
+div[data-testid="column"] {
+    padding: 0px !important;
+    min-width: 0px !important;
+    flex: 1 1 auto !important;
+}
+
+div[data-testid="stImage"] { width: 100% !important; }
+
+/* 字體大小 (電腦版) */
+html, body, [class*="css"] { font-size: 18px !important; }
+.stDataFrame { font-size: 16px !important; }
+  
+.metric-container {
+    display: flex;
+    justify-content: space-between;
+    background-color: #262730;
+    padding: 10px;
+    border-radius: 5px;
+    margin-top: 5px;
+    flex-wrap: wrap;
+}
+.metric-item { text-align: center; width: 48%; min-width: 100px; }
+.metric-label { font-size: 0.9rem; color: #aaa; white-space: nowrap; }
+.metric-value { font-size: 1.2rem; font-weight: bold; color: #fafafa; }
+
+/* ================= Radio Button Optimization (導覽列) ================= */
+div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child { display: none !important; }
+
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    background-color: transparent; border: none; gap: 10px;
+    display: flex; flexDirection: row; overflow-x: auto !important;
+    white-space: nowrap !important; border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
+    scrollbar-width: none; 
+}
+
+/* ✅ 使用 Flexbox 強制文字垂直水平置中 (解決歪掉問題) */
+div[data-testid="stRadio"] > div[role="radiogroup"] label {
+    color: #8b92a2 !important; 
+    padding: 10px 20px !important; /* 增加 Padding 讓點擊範圍更大且對稱 */
+    border-bottom: 3px solid transparent; 
+    cursor: pointer;
+    display: flex !important;           /* 關鍵 */
+    align-items: center !important;     /* 垂直置中 */
+    justify-content: center !important; /* 水平置中 */
+    height: 100% !important;
+    min-height: 50px !important;        /* 固定高度確保一致 */
+    transition: all 0.2s ease;
+}
+
+/* ✅ 針對 Streamlit 內部的 Markdown p 標籤消除 Margin，確保絕對置中 */
+div[data-testid="stRadio"] > div[role="radiogroup"] label p {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.2 !important; /* 收緊行高 */
+    vertical-align: middle !important;
+}
+
+div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
+    color: #ffffff !important; background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ✅ 選中時背景色對齊 */
+div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
+    color: #ef5350 !important; 
+    border-bottom: 3px solid #ef5350 !important;
+    background-color: rgba(239, 83, 80, 0.15) !important; 
+    font-weight: bold !important;
+}
+
+/* ================= 📱 手機版專用 CSS (Mobile Responsive) ================= */
+@media only screen and (max-width: 768px) {
+    
+    /* 1. 全局字體縮小，避免手機版面太擠 */
+    html, body, [class*="css"] { font-size: 16px !important; }
+    
+    /* 2. 導覽列 (NavBar) 改為可橫向滑動 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        flex-wrap: nowrap !important;     /* 禁止換行 */
+        overflow-x: auto !important;      /* 允許左右滑動 */
+        -webkit-overflow-scrolling: touch; /* iOS 滑動優化 */
+        justify-content: flex-start !important; /* 從左邊開始 */
+        padding-bottom: 5px; /* 預留捲軸空間 */
+    }
+    
+    div[data-testid="stRadio"] > div[role="radiogroup"] label {
+        flex: 0 0 auto !important; /* 保持按鈕寬度，不壓縮 */
+        min-width: 80px; /* 最小寬度，確保好點擊 */
+        padding: 8px 15px !important;
+    }
+
+    /* 3. 調整上方容器邊距 */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+    }
+
+    /* 4. 圖表間距調整 (手機上不需太激進的負邊距) */
+    div.element-container:has(iframe) {
+        margin-bottom: -20px !important; 
+    }
+
+    /* 5. 數據指標卡片改為直式或滿版 */
+    .metric-item {
+        width: 100% !important;
+        margin-bottom: 5px;
+    }
+    
+    /* 6. 表格字體再縮小一點 */
+    .stDataFrame { font-size: 14px !important; }
+}
