@@ -9,8 +9,8 @@ footer { visibility: hidden; }
 /* ================= 1. 版面容器設定 ================= */
 .block-container {
     padding-top: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
     padding-bottom: 4rem !important;
     max-width: 100% !important;
 }
@@ -34,68 +34,67 @@ div[data-testid="stHorizontalBlock"] { gap: 5px !important; }
 div[data-testid="stVerticalBlock"] { gap: 5px !important; }
 div[data-testid="column"] { min-width: 0px !important; padding: 0 !important; }
 
-/* ================= 2. 仿 App 按鈕列 (Segmented Control) - 修正版 ================= */
+/* ================= 2. 導覽列 (Radio Button) 強制滿版修正 ================= */
 
-/* 讓 Radio 元件佔滿整行 */
+/* 1. 外層容器寬度 100% */
 div[data-testid="stRadio"] {
     width: 100% !important;
 }
 
-/* 隱藏 Radio 的標題 label */
+/* 2. 隱藏標題 */
 div[data-testid="stRadio"] > label {
     display: none !important;
 }
 
-/* Radio Group 容器設定：強制滿版、橫向排列 */
+/* 3. 按鈕群組容器：強制滿版、Flex排列 */
 div[data-testid="stRadio"] > div[role="radiogroup"] {
     background-color: #2a2e39;
     padding: 4px;
     border-radius: 8px;
     display: flex !important;
     flex-direction: row !important;
-    width: 100% !important; /* 強制佔滿寬度 */
-    overflow-x: auto;       /* 手機版超出可滑動 */
-    gap: 0px;
+    width: 100% !important;         /* 關鍵：強制佔滿 */
+    overflow-x: auto;               /* 小螢幕可滑動 */
+    gap: 2px;
     border: 1px solid #363a45;
     scrollbar-width: none;
 }
 
-/* 單個選項按鈕設定 */
+/* 4. 單顆按鈕：強制平均分配寬度 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label {
-    flex: 1 1 auto !important;      /* 讓按鈕自動伸縮填滿空間 */
+    flex: 1 1 0px !important;       /* 關鍵：讓所有按鈕平均分配空間 */
+    width: 100% !important;         /* 確保填滿分配到的空間 */
     text-align: center !important;
     color: #8b92a2 !important;
-    padding: 8px 4px !important;    /* 縮小左右 padding 以防擠壓 */
-    margin: 0 2px !important;
+    padding: 8px 2px !important;
+    margin: 0 !important;
     border-radius: 6px;
     border: none !important;
     background-color: transparent !important;
     transition: all 0.2s;
     cursor: pointer;
-    display: flex !important;       /* 使用 Flexbox 讓文字置中 */
+    display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    min-height: 40px !important;    /* 增加高度好點擊 */
-    min-width: 0 !important;        /* 允許縮小以擠進一行 */
+    min-height: 40px !important;
+    white-space: nowrap !important;
 }
 
-/* ✅ [關鍵修正] 只隱藏 Radio 的圓圈，不隱藏文字 */
+/* 5. 隱藏原生圓圈 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {
     display: none !important;
 }
 
-/* ✅ [關鍵修正] 確保文字顯示且格式正確 */
+/* 6. 文字樣式 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-    font-size: 14px !important;
+    font-size: 15px !important;
     font-weight: 500 !important;
     margin: 0 !important;
     padding: 0 !important;
-    line-height: 1.2 !important;
-    color: inherit !important; /* 跟隨父元素顏色 */
-    white-space: nowrap !important; /* 不換行 */
+    line-height: 1 !important;
 }
 
-/* 選中狀態 (Highlight) */
+/* 7. 選中狀態 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
     background-color: #ef5350 !important;
     color: white !important;
@@ -103,7 +102,13 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
     box-shadow: 0 2px 5px rgba(0,0,0,0.3);
 }
 
-/* ================= 3. 下拉選單優化 ================= */
+/* Hover */
+div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
+    color: #ffffff !important; 
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ================= 3. 下拉選單與其他元件 ================= */
 div[data-testid="stSelectbox"] label {
     font-size: 12px !important;
     color: #8b92a2 !important;
@@ -118,50 +123,52 @@ div[data-baseweb="select"] > div {
     font-size: 14px;
 }
 
-/* ================= 4. 文字與數據顯示 ================= */
-.metric-container {
-    display: flex;
-    justify-content: space-between;
-    background-color: #262730;
-    padding: 8px;
-    border-radius: 5px;
-    margin-top: 5px;
-}
-.metric-item { width: 48%; text-align: center; }
-.metric-label { font-size: 12px; color: #aaa; }
-.metric-value { font-size: 16px; font-weight: bold; color: #fafafa; }
+/* ================= 4. RWD 顯示控制 (Desktop/Mobile 切換) ================= */
 
-/* 標題強制單行省略 */
-h1, h2, h3 {
+/* 預設電腦版顯示 (隱藏手機版元件) */
+.mobile-only { display: none !important; }
+.desktop-only { display: block !important; }
+
+/* 針對勾選框 (Checkbox) 的優化 */
+div[data-testid="stCheckbox"] label {
+    font-size: 14px !important;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-div[data-testid="stMarkdownContainer"] h3 {
-    font-size: 18px !important;
-    margin-bottom: 5px !important;
 }
 
-/* 表格優化 */
-.stDataFrame { font-size: 13px !important; }
-
-/* ================= 5. 手機版特定微調 ================= */
+/* ================= 5. 手機版專用 CSS (寬度 < 768px) ================= */
 @media only screen and (max-width: 768px) {
-    .stApp { font-size: 14px; }
     
-    /* 手機版按鈕列：允許橫向滑動，但不強制換行，保持單行 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
-        flex-wrap: nowrap !important;
-        overflow-x: auto !important;
-        justify-content: flex-start !important; /* 手機版從左邊開始排列 */
+    /* 切換顯示模式 */
+    .mobile-only { display: block !important; }
+    .desktop-only { display: none !important; }
+
+    /* 全局字體 */
+    html, body, [class*="css"] { font-size: 14px !important; }
+
+    /* 容器邊距 */
+    .block-container {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
     }
     
-    /* 手機版按鈕：固定最小寬度，避免文字太擠 */
+    /* 導覽列：手機版改為固定寬度滑動 (避免文字被壓扁) */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
-        flex: 0 0 auto !important;
-        min-width: 70px !important; /* 確保手指好點 */
+        flex: 0 0 auto !important; /* 解除平均分配，改為內容寬度 */
+        width: auto !important;
+        min-width: 70px !important;
         padding: 8px 12px !important;
     }
     
-    div[data-testid="column"] { padding: 0 2px !important; }
+    /* 標題省略 */
+    div[data-testid="stMarkdownContainer"] h3 {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        font-size: 1.2rem !important;
+        margin-bottom: 5px !important;
+    }
+
+    /* 數據卡片 */
+    .metric-item { width: 100% !important; margin-bottom: 5px; }
+    .stDataFrame { font-size: 13px !important; }
 }
