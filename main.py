@@ -1642,103 +1642,107 @@ elif stock_input:
         if selected_page in ["分點"]:
              st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
 
-        # ==================== Tab 1: K線 (修改處) ====================
+        # ==================== Tab 1: K線 (完全修正版) ====================
         if selected_page == "K線":
             st.markdown("<br>", unsafe_allow_html=True) 
             
+            ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
+            indicator_options = ["成交量", "KDJ", "MACD", "RSI", "外資", "投信", "自營商", "三大法人合計", "融資", "融券", "主力買賣超", "家數差", "分點買賣超"]
+
+            # 【1. 電腦版控制區塊】
+            # 使用 container 包裹並插入 marker，讓 CSS 控制顯示
             with st.container():
-                # ✅ K線控制區 (RWD版面配置)
-                # 電腦版: [週期] [勾選框 + Multiselect]
-                # 手機版: [週期] [齒輪]
+                st.markdown('<span id="desktop-controls"></span>', unsafe_allow_html=True)
                 
-                ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
-                indicator_options = ["成交量", "KDJ", "MACD", "RSI", "外資", "投信", "自營商", "三大法人合計", "融資", "融券", "主力買賣超", "家數差", "分點買賣超"]
-
-                # 1. 週期選擇 (左右版面分配)
-                col_k_period, col_k_desktop, col_k_mobile = st.columns([1.5, 7.5, 1], gap="small")
-
-                with col_k_period:
+                # 版面分配：[週期選擇(小)] [Checkbox區(大)] [Multiselect(中)]
+                c1, c2, c3 = st.columns([1.5, 6, 2.5], gap="small")
+                
+                with c1:
                     kline_period = st.selectbox(
                         "📅 週期", 
                         ["日K", "週K", "月K", "5分", "15分", "30分", "60分"],
-                        label_visibility="collapsed" 
+                        label_visibility="collapsed",
+                        key="desk_period_selector"
                     )
-                
-                # 2. 電腦版控制 (Desktop Only - 透過 CSS 顯示)
-                with col_k_desktop:
-                    st.markdown('<div class="desktop-only">', unsafe_allow_html=True)
-                    
-                    # 第一列：均線 Checkbox
-                    d_cols = st.columns(len(ma_options_list))
+
+                with c2:
+                    # 使用 columns 將 checkbox 橫向排列
+                    chk_cols = st.columns(len(ma_options_list))
                     updated_mas = st.session_state.selected_mas.copy()
                     for i, ma_name in enumerate(ma_options_list):
-                        with d_cols[i]:
+                        with chk_cols[i]:
                             is_checked = ma_name in st.session_state.selected_mas
-                            new_state = st.checkbox(ma_name, value=is_checked, key=f"desktop_chk_{ma_name}")
+                            new_state = st.checkbox(ma_name, value=is_checked, key=f"d_chk_{ma_name}")
                             if new_state and ma_name not in updated_mas: updated_mas.append(ma_name)
                             elif not new_state and ma_name in updated_mas: updated_mas.remove(ma_name)
-                    
-                    # 第二列：副圖指標 Multiselect (直接顯示，不隱藏在 Popover)
-                    desk_ind = st.multiselect(
-                        "選擇副圖指標", 
-                        options=indicator_options, 
-                        default=st.session_state.kline_indicators_selector,
-                        key="desktop_ind_multiselect"
-                    )
                     
                     if set(updated_mas) != set(st.session_state.selected_mas):
                         st.session_state.selected_mas = updated_mas
                         st.rerun()
-                    
+
+                with c3:
+                    # 電腦版直接顯示 Multiselect
+                    desk_ind = st.multiselect(
+                        "選擇副圖指標", 
+                        options=indicator_options, 
+                        default=st.session_state.kline_indicators_selector,
+                        key="desk_ind_multi",
+                        label_visibility="collapsed",
+                        placeholder="選擇副圖指標"
+                    )
                     if set(desk_ind) != set(st.session_state.kline_indicators_selector):
                         st.session_state.kline_indicators_selector = desk_ind
                         st.rerun()
 
-                    # 分點設定 (如果有選)
-                    if "分點買賣超" in st.session_state.kline_indicators_selector:
-                        desk_broker_days = st.selectbox("統計天數 (分點)", list(days_map.keys()), key="desk_broker_days")
-                        if desk_broker_days != st.session_state.kline_broker_days:
-                            st.session_state.kline_broker_days = desk_broker_days
-                            st.rerun()
-                        # (分點清單可視需求加入，但為了版面簡潔，這裡從略，使用預設前15大)
+            # 【2. 手機版控制區塊】
+            # 使用 container 包裹並插入 marker，讓 CSS 控制顯示
+            with st.container():
+                st.markdown('<span id="mobile-controls"></span>', unsafe_allow_html=True)
+                
+                # 版面分配：[週期選擇] [Spacer] [齒輪]
+                m1, m2 = st.columns([2, 8], gap="small")
+                
+                with m1:
+                    # 手機版的 Selectbox 雖然功能一樣，但建議 key 分開避免衝突，再同步變數
+                    # 但為了簡單，這裡共用 kline_period 變數，但 Selectbox 本身只會渲染一個 (因為 CSS 隱藏)
+                    # 不過 Streamlit 若兩個 widget key 不同但功能一樣，需要手動同步。
+                    # 這裡簡化處理：手機版直接讀取電腦版的變數值
+                    st.write("") # Placeholder aligned with desktop logic
 
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                # 3. 手機版控制 (Mobile Only - 透過 CSS 顯示)
-                with col_k_mobile:
-                    st.markdown('<div class="mobile-only">', unsafe_allow_html=True)
-                    with st.popover("⚙️", use_container_width=True):
+                with m2:
+                    with st.popover("⚙️ 設定", use_container_width=True):
                         st.markdown("##### 均線設定")
-                        mobile_selection = st.multiselect(
+                        mob_ma = st.multiselect(
                             "選擇均線 / 布林",
                             options=ma_options_list,
                             default=st.session_state.selected_mas,
-                            key="mobile_ma_selector"
+                            key="mob_ma_selector"
                         )
-                        if set(mobile_selection) != set(st.session_state.selected_mas):
-                            st.session_state.selected_mas = mobile_selection
+                        if set(mob_ma) != set(st.session_state.selected_mas):
+                            st.session_state.selected_mas = mob_ma
                             st.rerun()
 
                         st.divider()
                         st.markdown("##### 副圖指標")
-                        mobile_ind = st.multiselect("選擇副圖指標", options=indicator_options, key="mobile_ind_selector", default=st.session_state.kline_indicators_selector)
-                        if set(mobile_ind) != set(st.session_state.kline_indicators_selector):
-                             st.session_state.kline_indicators_selector = mobile_ind
-                             st.rerun()
-
+                        mob_ind = st.multiselect(
+                            "選擇副圖指標", 
+                            options=indicator_options, 
+                            default=st.session_state.kline_indicators_selector,
+                            key="mob_ind_selector"
+                        )
+                        if set(mob_ind) != set(st.session_state.kline_indicators_selector):
+                            st.session_state.kline_indicators_selector = mob_ind
+                            st.rerun()
+                        
                         if "分點買賣超" in st.session_state.kline_indicators_selector:
                             st.divider()
                             st.markdown("##### 分點買賣超設定")
-                            st.selectbox("統計天數", list(days_map.keys()), key="mobile_broker_days")
-                            if st.session_state.mobile_broker_days != st.session_state.kline_broker_days:
-                                st.session_state.kline_broker_days = st.session_state.mobile_broker_days
-                                st.rerun()
+                            st.selectbox("統計天數", list(days_map.keys()), key="kline_broker_days")
                             broker_opts = []
                             if df_buy is not None: broker_opts.extend(df_buy['broker'].tolist())
                             if df_sell is not None: broker_opts.extend(df_sell['broker'].tolist())
                             broker_opts = list(dict.fromkeys(broker_opts))
                             st.multiselect("選擇券商分點", options=broker_opts, key="kline_selected_brokers")
-                    st.markdown('</div>', unsafe_allow_html=True)
 
             # ================= 繪圖邏輯 =================
             st.markdown("<br>", unsafe_allow_html=True)
