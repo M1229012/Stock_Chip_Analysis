@@ -32,6 +32,17 @@ from streamlit_lightweight_charts import renderLightweightCharts
 
 st.set_page_config(layout="wide", page_title="籌碼K線", initial_sidebar_state="auto")
 
+# ✅ 讀取並載入外部 CSS 檔案
+def local_css(file_name):
+    try:
+        with open(file_name) as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.warning(f"⚠️ 找不到 {file_name}，請確認檔案是否在同一目錄下。")
+
+# 呼叫 CSS 載入函式
+local_css("style.css")
+
 # ✅ 初始化主題狀態 (預設暗色圖表)
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark'
@@ -65,121 +76,6 @@ else:
 
 COLOR_UP = '#ef5350' # 紅色 (上漲)
 COLOR_DOWN = '#26a69a' # 綠色 (下跌)
-
-# ✅ CSS 設定 (修復頂部擠壓 + 強制圖表無縫 + 增加間距 + 按鈕置中對齊)
-st.markdown(f"""
-    <style>
-    /* 隱藏 Header */
-    header[data-testid="stHeader"] {{ visibility: hidden; }}
-    .stDeployButton {{ display: none; }}
-
-    /* 全域背景色 */
-    .stApp {{ background-color: {PAGE_BG} !important; }}
-    
-    /* ================= 1. 調整頂部空間 (稍微放寬一點) ================= */
-    .block-container {{
-        padding-top: 3rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
-        padding-bottom: 2rem !important;
-        max-width: 100% !important;
-    }}
-
-    /* ================= 2. 針對「圖表」暴力消除間隙 (不影響輸入框) ================= */
-    div.element-container:has(iframe) {{
-        margin-bottom: -80px !important;
-        padding: 0px !important;
-    }}
-    
-    iframe {{
-        display: block !important;
-        margin: 0px !important;
-        padding: 0px !important;
-        border: 0px !important;
-        width: 100% !important;
-    }}
-
-    /* ================= 3. 消除 Grid 佈局間隙 ================= */
-    div[data-testid="stHorizontalBlock"] {{
-        gap: 15px !important;
-        padding: 0px !important;
-    }}
-    
-    div[data-testid="stVerticalBlock"] {{
-        gap: 10px !important;
-        padding: 0px !important;
-    }}
-    
-    div[data-testid="column"] {{
-        padding: 0px !important;
-        min-width: 0px !important;
-        flex: 1 1 auto !important;
-    }}
-    
-    div[data-testid="stImage"] {{ width: 100% !important; }}
-    
-    /* ================= 其他 UI 樣式 ================= */
-    html, body, [class*="css"] {{ font-size: 18px !important; }}
-    .stDataFrame {{ font-size: 16px !important; }}
-      
-    .metric-container {{
-        display: flex;
-        justify-content: space-between;
-        background-color: #262730;
-        padding: 10px;
-        border-radius: 5px;
-        margin-top: 5px;
-        flex-wrap: wrap;
-    }}
-    .metric-item {{ text-align: center; width: 48%; min-width: 100px; }}
-    .metric-label {{ font-size: 0.9rem; color: #aaa; white-space: nowrap; }}
-    .metric-value {{ font-size: 1.2rem; font-weight: bold; color: #fafafa; }}
-
-    /* ================= Radio Button Optimization (100% 置中對齊修復) ================= */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {{ display: none !important; }}
-    
-    div[data-testid="stRadio"] > div[role="radiogroup"] {{
-        background-color: transparent; border: none; gap: 10px;
-        display: flex; flexDirection: row; overflow-x: auto !important;
-        white-space: nowrap !important; border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
-        scrollbar-width: none; 
-    }}
-    
-    /* ✅ [FIX] 使用 Flexbox 強制文字垂直水平置中 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label {{
-        color: #8b92a2 !important; 
-        padding: 10px 20px !important; /* 增加 Padding 讓點擊範圍更大且對稱 */
-        border-bottom: 3px solid transparent; 
-        cursor: pointer;
-        display: flex !important;           /* 關鍵 */
-        align-items: center !important;     /* 垂直置中 */
-        justify-content: center !important; /* 水平置中 */
-        height: 100% !important;
-        min-height: 50px !important;        /* 固定高度確保一致 */
-        transition: all 0.2s ease;
-    }}
-
-    /* ✅ [FIX] 針對 Streamlit 內部的 Markdown p 標籤消除 Margin，確保絕對置中 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label p {{
-        margin: 0 !important;
-        padding: 0 !important;
-        line-height: 1.2 !important; /* 收緊行高 */
-        vertical-align: middle !important;
-    }}
-    
-    div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {{
-        color: #ffffff !important; background-color: rgba(255, 255, 255, 0.05) !important;
-    }}
-    
-    /* ✅ [FIX] 選中時背景色對齊 */
-    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {{
-        color: #ef5350 !important; 
-        border-bottom: 3px solid #ef5350 !important;
-        background-color: rgba(239, 83, 80, 0.15) !important; 
-        font-weight: bold !important;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
 
 # ================= 2. 輔助函式 =================
 
@@ -1846,6 +1742,7 @@ elif stock_input:
                         "主力買賣超", "家數差",
                         "分點買賣超" 
                     ]
+                    # ✅ [FIX] 確保使用 session_state 中的 key 來保持狀態，且不設置 default 避免衝突
                     selected_indicators = st.multiselect(
                         "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
                         options=indicator_options,
