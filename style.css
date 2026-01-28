@@ -1,5 +1,6 @@
-/* 隱藏 Header */
+/* 隱藏 Header & Footer */
 header[data-testid="stHeader"] { visibility: hidden; }
+footer { visibility: hidden; }
 .stDeployButton { display: none; }
 
 /* 全域背景色 - 對應 Python 中的 PAGE_BG */
@@ -64,48 +65,91 @@ html, body, [class*="css"] { font-size: 18px !important; }
 .metric-label { font-size: 0.9rem; color: #aaa; white-space: nowrap; }
 .metric-value { font-size: 1.2rem; font-weight: bold; color: #fafafa; }
 
-/* ================= Radio Button Optimization (導覽列) ================= */
-div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child { display: none !important; }
+/* ================= 2. 仿 App 按鈕列 (Radio Button Optimization) ================= */
+/* 這是給「週期」和「分頁」用的樣式 */
 
-div[data-testid="stRadio"] > div[role="radiogroup"] {
-    background-color: transparent; border: none; gap: 10px;
-    display: flex; flexDirection: row; overflow-x: auto !important;
-    white-space: nowrap !important; border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
-    scrollbar-width: none; 
+/* 隱藏 Radio 的標題 label */
+div[data-testid="stRadio"] > label {
+    display: none !important;
 }
 
-/* 使用 Flexbox 強制文字垂直水平置中 */
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    background-color: #2a2e39;      /* 深灰背景 */
+    padding: 4px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;               /* 允許橫向滑動 */
+    gap: 0px;
+    border: 1px solid #363a45;
+    scrollbar-width: none;          /* 隱藏捲軸 */
+}
+
+/* 按鈕單體 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label {
-    color: #8b92a2 !important; 
-    padding: 10px 20px !important;
-    border-bottom: 3px solid transparent; 
+    flex: 1;                        /* 平均分配寬度 */
+    text-align: center;
+    color: #8b92a2 !important;
+    padding: 8px 12px !important;
+    margin: 0 !important;
+    border-radius: 6px;
+    border: none !important;
+    background-color: transparent !important;
+    transition: all 0.2s;
+    white-space: nowrap;            /* 不換行 */
     cursor: pointer;
+    justify-content: center;
+    
+    /* Flexbox 強制文字垂直水平置中 */
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;
     height: 100% !important;
-    min-height: 50px !important;
-    transition: all 0.2s ease;
+    min-height: 40px !important;    /* 固定高度確保一致 */
+}
+
+/* 為了讓文字垂直置中 */
+div[data-testid="stRadio"] > div[role="radiogroup"] label div {
+    display: none !important; /* 隱藏原始圓點 */
 }
 
 /* 針對 Streamlit 內部的 Markdown p 標籤消除 Margin，確保絕對置中 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label p {
+    font-size: 14px !important;
+    font-weight: 500 !important;
     margin: 0 !important;
     padding: 0 !important;
     line-height: 1.2 !important;
     vertical-align: middle !important;
 }
 
+/* Hover 效果 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
-    color: #ffffff !important; background-color: rgba(255, 255, 255, 0.05) !important;
+    color: #ffffff !important; 
+    background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
-/* 選中時背景色對齊 */
+/* 選中狀態 (Highlight) */
 div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
-    color: #ef5350 !important; 
-    border-bottom: 3px solid #ef5350 !important;
-    background-color: rgba(239, 83, 80, 0.15) !important; 
+    background-color: #ef5350 !important; /* 紅色高亮 */
+    color: white !important;
     font-weight: bold !important;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+/* ================= 3. 下拉選單優化 (Selectbox) ================= */
+/* 讓下拉選單在手機上不要太佔位 */
+div[data-testid="stSelectbox"] label {
+    font-size: 12px !important;
+    color: #8b92a2 !important;
+    margin-bottom: -5px !important; /* 標籤貼近輸入框 */
+}
+
+div[data-baseweb="select"] > div {
+    background-color: #2a2e39 !important;
+    border-color: #363a45 !important;
+    color: white !important;
+    min-height: 38px;
+    font-size: 14px;
 }
 
 /* ================= 平板/窄螢幕 CSS ================= */
@@ -117,9 +161,9 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
 @media only screen and (max-width: 768px) {
     
     /* 1. 全局字體縮小，避免手機版面太擠 */
-    html, body, [class*="css"] { font-size: 16px !important; }
+    html, body, [class*="css"] { font-size: 14px !important; }
     
-    /* 2. ✅ [修正] 導覽列 (NavBar) 強制不換行，改為橫向滑動 */
+    /* 2. 導覽列 (NavBar) 強制不換行，改為橫向滑動 */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         display: flex !important;
         flex-direction: row !important;
@@ -144,12 +188,13 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
         padding: 8px 15px !important;
     }
 
-    /* 3. ✅ [修正] 股票標題 (Subheader) 單行顯示，過長自動省略 (...) */
+    /* 3. 股票標題 (Subheader) 單行顯示，過長自動省略 (...) */
     div[data-testid="stMarkdownContainer"] h3 {
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important; /* 超出顯示 ... */
         font-size: 1.2rem !important; /* 字體再縮小一點以符合手機 */
+        margin-bottom: 5px !important;
     }
 
     /* 4. 調整上方容器邊距 */
@@ -157,12 +202,16 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
         padding-top: 1rem !important;
         padding-left: 0.5rem !important;
         padding-right: 0.5rem !important;
+        padding-bottom: 4rem !important;   /* 底部留白供手指操作 */
     }
 
     /* 5. 圖表間距調整 (手機上不需太激進的負邊距) */
     div.element-container:has(iframe) {
         margin-bottom: -20px !important; 
     }
+    
+    /* 調整列間距 */
+    div[data-testid="column"] { padding: 0 2px !important; }
 
     /* 6. 數據指標卡片改為直式或滿版 */
     .metric-item {
@@ -171,5 +220,5 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
     }
     
     /* 7. 表格字體再縮小一點 */
-    .stDataFrame { font-size: 14px !important; }
+    .stDataFrame { font-size: 13px !important; }
 }
