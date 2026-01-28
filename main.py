@@ -69,6 +69,7 @@ st.markdown("""
     /* 1. 外層容器：確保寬度為 100% */
     div[data-testid="stRadio"] {
         width: 100% !important;
+        margin-bottom: 10px;
     }
 
     /* 2. 隱藏預設標籤 */
@@ -76,7 +77,7 @@ st.markdown("""
         display: none !important;
     }
 
-    /* 3. 按鈕群組容器：Flex 佈局，強制撐滿 */
+    /* 3. 按鈕群組容器：Flex 佈局，強制撐滿，平均分配 */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         background-color: #2a2e39;
         padding: 4px;
@@ -84,21 +85,22 @@ st.markdown("""
         display: flex !important;
         flex-direction: row !important;
         flex-wrap: nowrap !important;
-        width: 100% !important;
+        width: 100% !important; /* 強制佔滿整行 */
         gap: 2px;
         border: 1px solid #363a45;
         overflow-x: auto;
         scrollbar-width: none;
+        justify-content: space-between; /* 確保內容平均分布 */
     }
 
     /* 4. 單顆按鈕：平分寬度 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
-        flex: 1 1 0px !important;
+        flex: 1 1 0px !important; /* 關鍵：平分空間 */
         width: 100% !important;
-        min-width: 50px !important;
+        min-width: 60px !important; /* 避免文字擠在一起 */
         text-align: center !important;
         color: #8b92a2 !important;
-        padding: 6px 2px !important;
+        padding: 8px 2px !important;
         margin: 0 !important;
         border-radius: 6px;
         border: none !important;
@@ -118,7 +120,7 @@ st.markdown("""
 
     /* 6. 文字樣式修正 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label p {
-        font-size: 14px !important;
+        font-size: 15px !important;
         font-weight: 500 !important;
         margin: 0 !important;
         padding: 0 !important;
@@ -139,29 +141,36 @@ st.markdown("""
         background-color: rgba(255, 255, 255, 0.05) !important;
     }
 
-    /* ================= RWD 顯示控制 (透過 CSS 隱藏特定的 Column) ================= */
+    /* ================= RWD 顯示控制 ================= */
     
-    /* 這裡我們假設 K線控制區有三個 Column：[週期] [電腦版設定] [手機版設定] */
-    
-    /* 當螢幕寬度大於 768px (電腦版) */
+    /* 電腦版 (寬度 > 768px) */
     @media (min-width: 769px) {
-        /* 隱藏第三個 Column (手機版設定) */
-        div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]) > div[data-testid="column"]:nth-child(3) {
+        .mobile-only {
             display: none !important;
         }
-        /* 電腦版 Checkbox 樣式優化 */
-        div[data-testid="stCheckbox"] {
-             margin-top: 5px;
+        .desktop-only {
+            display: block !important;
+        }
+        
+        /* 電腦版 Checkbox 排版優化 */
+        .desktop-ma-checkboxes {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 15px;
+            margin-top: 5px;
         }
         div[data-testid="stCheckbox"] label {
-             font-size: 13px !important;
+             font-size: 14px !important;
         }
     }
 
-    /* 當螢幕寬度小於等於 768px (手機版) */
+    /* 手機版 (寬度 <= 768px) */
     @media (max-width: 768px) {
-        /* 隱藏第二個 Column (電腦版設定) */
-        div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]) > div[data-testid="column"]:nth-child(2) {
+        .mobile-only {
+            display: block !important;
+        }
+        .desktop-only {
             display: none !important;
         }
         
@@ -171,7 +180,7 @@ st.markdown("""
         
         /* Radio 文字縮小 */
         div[data-testid="stRadio"] > div[role="radiogroup"] label p {
-            font-size: 12px !important;
+            font-size: 13px !important;
         }
     }
 
@@ -1794,14 +1803,16 @@ elif stock_input:
             st.markdown("<br>", unsafe_allow_html=True) 
             
             with st.container():
-                # ✅ K線控制區 (Columns佈局，透過 CSS 隱藏)
-                # 欄位分配：[週期] [電腦版勾選框] [手機版設定]
-                col_k_period, col_k_desktop, col_k_mobile = st.columns([1.5, 7.5, 1], gap="small")
+                # ✅ K線控制區 (RWD版面配置)
+                # 電腦版: [週期] [勾選框 + Multiselect]
+                # 手機版: [週期] [齒輪]
                 
                 ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
                 indicator_options = ["成交量", "KDJ", "MACD", "RSI", "外資", "投信", "自營商", "三大法人合計", "融資", "融券", "主力買賣超", "家數差", "分點買賣超"]
 
-                # 1. 週期選擇
+                # 1. 週期選擇 (左右版面分配)
+                col_k_period, col_k_desktop, col_k_mobile = st.columns([1.5, 7.5, 1], gap="small")
+
                 with col_k_period:
                     kline_period = st.selectbox(
                         "📅 週期", 
@@ -1809,12 +1820,13 @@ elif stock_input:
                         label_visibility="collapsed" 
                     )
                 
-                # 2. 電腦版控制 (Desktop Only) - 顯示勾選框
+                # 2. 電腦版控制 (Desktop Only - 透過 CSS 顯示)
                 with col_k_desktop:
-                    # 使用 columns 將 checkbox 橫向排列
+                    st.markdown('<div class="desktop-only">', unsafe_allow_html=True)
+                    
+                    # 第一列：均線 Checkbox
                     d_cols = st.columns(len(ma_options_list))
                     updated_mas = st.session_state.selected_mas.copy()
-                    
                     for i, ma_name in enumerate(ma_options_list):
                         with d_cols[i]:
                             is_checked = ma_name in st.session_state.selected_mas
@@ -1822,12 +1834,35 @@ elif stock_input:
                             if new_state and ma_name not in updated_mas: updated_mas.append(ma_name)
                             elif not new_state and ma_name in updated_mas: updated_mas.remove(ma_name)
                     
+                    # 第二列：副圖指標 Multiselect (直接顯示，不隱藏在 Popover)
+                    desk_ind = st.multiselect(
+                        "選擇副圖指標", 
+                        options=indicator_options, 
+                        default=st.session_state.kline_indicators_selector,
+                        key="desktop_ind_multiselect"
+                    )
+                    
                     if set(updated_mas) != set(st.session_state.selected_mas):
                         st.session_state.selected_mas = updated_mas
                         st.rerun()
+                    
+                    if set(desk_ind) != set(st.session_state.kline_indicators_selector):
+                        st.session_state.kline_indicators_selector = desk_ind
+                        st.rerun()
 
-                # 3. 手機版控制 (Mobile Only) - 顯示設定 Popover
+                    # 分點設定 (如果有選)
+                    if "分點買賣超" in st.session_state.kline_indicators_selector:
+                        desk_broker_days = st.selectbox("統計天數 (分點)", list(days_map.keys()), key="desk_broker_days")
+                        if desk_broker_days != st.session_state.kline_broker_days:
+                            st.session_state.kline_broker_days = desk_broker_days
+                            st.rerun()
+                        # (分點清單可視需求加入，但為了版面簡潔，這裡從略，使用預設前15大)
+
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                # 3. 手機版控制 (Mobile Only - 透過 CSS 顯示)
                 with col_k_mobile:
+                    st.markdown('<div class="mobile-only">', unsafe_allow_html=True)
                     with st.popover("⚙️", use_container_width=True):
                         st.markdown("##### 均線設定")
                         mobile_selection = st.multiselect(
@@ -1842,35 +1877,24 @@ elif stock_input:
 
                         st.divider()
                         st.markdown("##### 副圖指標")
-                        st.multiselect("選擇副圖指標", options=indicator_options, key="kline_indicators_selector")
-                        
+                        mobile_ind = st.multiselect("選擇副圖指標", options=indicator_options, key="mobile_ind_selector", default=st.session_state.kline_indicators_selector)
+                        if set(mobile_ind) != set(st.session_state.kline_indicators_selector):
+                             st.session_state.kline_indicators_selector = mobile_ind
+                             st.rerun()
+
                         if "分點買賣超" in st.session_state.kline_indicators_selector:
                             st.divider()
                             st.markdown("##### 分點買賣超設定")
-                            st.selectbox("統計天數", list(days_map.keys()), key="kline_broker_days")
+                            st.selectbox("統計天數", list(days_map.keys()), key="mobile_broker_days")
+                            if st.session_state.mobile_broker_days != st.session_state.kline_broker_days:
+                                st.session_state.kline_broker_days = st.session_state.mobile_broker_days
+                                st.rerun()
                             broker_opts = []
                             if df_buy is not None: broker_opts.extend(df_buy['broker'].tolist())
                             if df_sell is not None: broker_opts.extend(df_sell['broker'].tolist())
                             broker_opts = list(dict.fromkeys(broker_opts))
                             st.multiselect("選擇券商分點", options=broker_opts, key="kline_selected_brokers")
-
-            # 4. 電腦版副圖指標設定 (額外按鈕)
-            # 由於電腦版隱藏了手機版 Gear，這裡提供一個電腦版專用的副圖設定按鈕 (放在右側)
-            st.markdown('<div class="desktop-only" style="text-align: right; margin-top: -40px; margin-bottom: 10px;">', unsafe_allow_html=True)
-            with st.popover("📊 副圖設定", use_container_width=False):
-                st.multiselect("選擇副圖指標", options=indicator_options, key="desktop_ind_selector", default=st.session_state.kline_indicators_selector)
-                if set(st.session_state.desktop_ind_selector) != set(st.session_state.kline_indicators_selector):
-                    st.session_state.kline_indicators_selector = st.session_state.desktop_ind_selector
-                    st.rerun()
-                if "分點買賣超" in st.session_state.kline_indicators_selector:
-                     st.markdown("---")
-                     st.selectbox("統計天數", list(days_map.keys()), key="desk_broker_days")
-                     if st.session_state.desk_broker_days != st.session_state.kline_broker_days:
-                         st.session_state.kline_broker_days = st.session_state.desk_broker_days
-                         st.rerun()
-                     # (分點清單略，同步 session state 即可)
-            st.markdown('</div>', unsafe_allow_html=True)
-
+                    st.markdown('</div>', unsafe_allow_html=True)
 
             # ================= 繪圖邏輯 =================
             st.markdown("<br>", unsafe_allow_html=True)
@@ -1954,7 +1978,7 @@ elif stock_input:
 
                 is_intraday = kline_period in ["5分", "15分", "30分", "60分"]
                 
-                # 其他指標資料結構初始化 (略，保持原有邏輯)
+                # 其他指標資料結構初始化
                 inst_data = {"foreign": [], "trust": [], "dealer": [], "total": [], "f_line": [], "t_line": [], "d_line": [], "total_line": []}
                 margin_data_struct = {"m": [], "m_line": [], "s": [], "s_line": []}
                 main_force_data, main_diff_data = [], []
@@ -1977,7 +2001,7 @@ elif stock_input:
                         else:
                             if ma in row and not pd.isna(row[ma]): ma_series_data[ma].append({"time": time_val, "value": float(row[ma])})
 
-                    # (收集指標資料，邏輯保持不變)
+                    # (收集指標資料)
                     if 'K' in plot_df.columns:
                         if not pd.isna(row['K']): k_data.append({"time": time_val, "value": float(row['K'])})
                         if not pd.isna(row['D']): d_data.append({"time": time_val, "value": float(row['D'])})
@@ -1991,7 +2015,6 @@ elif stock_input:
                         rsi_80_data.append({"time": time_val, "value": 80})
                         rsi_20_data.append({"time": time_val, "value": 20})
                     
-                    # (法人/融資/主力/分點 資料收集...同上)
                     if kline_period == "日K":
                         if '外資買賣超' in plot_df.columns:
                             inst_data['foreign'].append({"time": time_val, "value": float(row['外資買賣超']), "color": COLOR_UP if row['外資買賣超']>0 else COLOR_DOWN})
@@ -2038,8 +2061,9 @@ elif stock_input:
                     if ma == "BB":
                         up_data = [{"time": x["time"], "value": x["up"]} for x in ma_series_data["BB"]]
                         low_data = [{"time": x["time"], "value": x["low"]} for x in ma_series_data["BB"]]
-                        main_series.append({"type": "Line", "data": up_data, "options": {"color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB上", "lastValueVisible": False, "priceLineVisible": False}})
-                        main_series.append({"type": "Line", "data": low_data, "options": {"color": "rgba(255, 255, 255, 0.5)", "lineWidth": 1, "title": "BB下", "lastValueVisible": False, "priceLineVisible": False}})
+                        # ✅ 修改 lineWidth 為 2
+                        main_series.append({"type": "Line", "data": up_data, "options": {"color": "rgba(255, 255, 255, 0.5)", "lineWidth": 2, "title": "BB上", "lastValueVisible": False, "priceLineVisible": False}})
+                        main_series.append({"type": "Line", "data": low_data, "options": {"color": "rgba(255, 255, 255, 0.5)", "lineWidth": 2, "title": "BB下", "lastValueVisible": False, "priceLineVisible": False}})
                     else:
                         main_series.append({"type": "Line", "data": ma_series_data[ma], "options": {"color": ma_colors.get(ma, "white"), "lineWidth": 2 if ma in ["MA20", "MA60"] else 1, "title": ma, "lastValueVisible": False, "priceLineVisible": False}})
                 
