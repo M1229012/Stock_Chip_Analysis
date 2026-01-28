@@ -300,7 +300,7 @@ def make_opts(height, title=None, time_visible=True, scale_mode="normal", font_s
         }
     if title:
         watermark_color = 'rgba(255, 255, 255, 0.2)' if st.session_state.theme == 'dark' else 'rgba(0, 0, 0, 0.1)'
-        opts["watermark"] = {"visible": True, "fontSize": 24, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
+        opts["watermark"] = {"visible": True, "fontSize": 20, "horzAlign": 'left', "vertAlign": 'top', "color": watermark_color, "text": title}
     return opts
 
 # ================= 3. 爬蟲核心 =================
@@ -1044,7 +1044,11 @@ if "selected_days" not in st.session_state:
 
 st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
 
-with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=True):
+# ✅ [LAYOUT CHANGE] 緊湊型搜尋欄 (Columns)
+# 比例分配: 搜尋框(6) | 查詢按鈕(1.5) | 更新按鈕(2.5)
+col_search_1, col_search_2, col_search_3 = st.columns([6, 1.5, 2.5], gap="small")
+
+with col_search_1:
     all_stocks = get_all_stock_options()
     
     def get_sort_key(stock_str):
@@ -1062,32 +1066,33 @@ with st.expander("🔍 股票搜尋與參數設定 (點擊收合)", expanded=Tru
                 break
         if sorted_stocks:
             st.session_state["stock_selector"] = sorted_stocks[default_index]
-                
-
+    
     stock_selection = st.selectbox(
         "搜尋股票", 
         options=sorted_stocks, 
         placeholder="請輸入股票代號...",
-        key="stock_selector"
+        key="stock_selector",
+        label_visibility="collapsed" # 隱藏標籤以節省空間
     )
-    
-    if stock_selection: stock_input = stock_selection.split()[0]
-    else: stock_input = ""
-    
-    col_btn1, col_btn2 = st.columns(2)
-    
-    with col_btn1:
-        if st.button("🔎 查詢", type="primary", use_container_width=True):
-            if stock_input: st.session_state.search_counts[stock_input] = st.session_state.search_counts.get(stock_input, 0) + 1
-            st.rerun()
-            
-    with col_btn2:
-        if "refresh_nonce" not in st.session_state: st.session_state.refresh_nonce = 0
-        if st.button("🔄 強制更新籌碼資料", use_container_width=True):
-            st.session_state.refresh_nonce = int(time.time())
-            st.rerun()
 
-    st.caption(f"🕒 資料抓取時間: {current_time}")
+if stock_selection: 
+    stock_input = stock_selection.split()[0]
+else: 
+    stock_input = ""
+
+with col_search_2:
+    if st.button("🔎 查詢", type="primary", use_container_width=True):
+        if stock_input: 
+            st.session_state.search_counts[stock_input] = st.session_state.search_counts.get(stock_input, 0) + 1
+        st.rerun()
+
+with col_search_3:
+    if "refresh_nonce" not in st.session_state: st.session_state.refresh_nonce = 0
+    if st.button("🔄 更新籌碼", use_container_width=True):
+        st.session_state.refresh_nonce = int(time.time())
+        st.rerun()
+
+st.caption(f"🕒 資料抓取時間: {current_time}")
 
 st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
@@ -1697,14 +1702,6 @@ elif stock_input:
                     }
                 },
                 "height": height,
-                # ✅ [FIX] 嘗試開啟圖表配置以支援更好的繪圖互動
-                "handleScale": {
-                    "axisPressedMouseMove": True,
-                },
-                "handleScroll": {
-                    "mouseWheel": True,
-                    "pressedMouseMove": True,
-                },
             }
             if scale_mode == "rsi":
                 opts["rightPriceScale"] = {"visible": True, "autoScale": False, "mode": 0, "maxValue": 100, "minValue": 0, "minimumWidth": 75}
@@ -1719,65 +1716,73 @@ elif stock_input:
             st.markdown("<br>", unsafe_allow_html=True) 
             
             with st.container():
-                c_k_period, c_k_ma, c_k_ind = st.columns([1, 3, 5], gap="large")
+                # ✅ [LAYOUT CHANGE] K線控制區 (Columns)
+                # 左邊放週期選擇器(1.5)，右邊放設定按鈕(8.5)
+                # 設定按鈕使用 st.popover 以節省空間
+                col_k1, col_k2 = st.columns([1.5, 8.5], gap="small")
                 
-                with c_k_period:
-                    kline_period = st.selectbox("📅 週期", ["日K", "週K", "月K", "5分", "15分", "30分", "60分"])
+                with col_k1:
+                    kline_period = st.selectbox(
+                        "📅 週期", 
+                        ["日K", "週K", "月K", "5分", "15分", "30分", "60分"],
+                        label_visibility="collapsed" # 隱藏標籤
+                    )
                 
-                with c_k_ma:
-                    ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
-                    ma_default = ["MA5", "MA10", "MA20", "MA60"]
-                    selected_mas = st.multiselect(
-                        "📈 均線 / 布林",
-                        options=ma_options_list,
-                        default=ma_default
-                    )
-                    
-                with c_k_ind:
-                    # ✅ [FIX] 這裡將 KD 選項改為 KDJ
-                    indicator_options = [
-                        "成交量", "KDJ", "MACD", "RSI", 
-                        "外資", "投信", "自營商", "三大法人合計",
-                        "融資", "融券",
-                        "主力買賣超", "家數差",
-                        "分點買賣超" 
-                    ]
-                    # ✅ [FIX] 確保使用 session_state 中的 key 來保持狀態，且不設置 default 避免衝突
-                    selected_indicators = st.multiselect(
-                        "📊 副圖指標 (依選擇順序排列，支援籌碼與主力)",
-                        options=indicator_options,
-                        key="kline_indicators_selector"
-                    )
-
-            if "分點買賣超" in selected_indicators:
-                with st.expander("🛠️ 分點買賣超設定 (選擇天數與券商)", expanded=True):
-                    c_days, c_brokers = st.columns([1, 4])
-                    
-                    with c_days:
-                        target_days_label = st.selectbox(
-                            "統計天數",
-                            list(days_map.keys()),
-                            key="kline_broker_days"
+                with col_k2:
+                    with st.popover("⚙️ 指標與均線設定", use_container_width=True):
+                        st.markdown("##### 均線設定")
+                        ma_options_list = ["MA5", "MA10", "MA20", "MA60", "MA120", "MA240", "BB"]
+                        ma_default = ["MA5", "MA10", "MA20", "MA60"]
+                        selected_mas = st.multiselect(
+                            "選擇均線 / 布林",
+                            options=ma_options_list,
+                            default=ma_default
                         )
-                        target_days = days_map.get(target_days_label, 20)
-
-                    s_d, e_d = calculate_date_range(stock_input, target_days)
-                    _df_buy, _df_sell, _, _, _broker_info, _ = get_real_data_matrix(stock_input, s_d, e_d, st.session_state.refresh_nonce)
-                    
-                    broker_options = []
-                    if _df_buy is not None and not _df_buy.empty:
-                        broker_options.extend(_df_buy['broker'].tolist())
-                    if _df_sell is not None and not _df_sell.empty:
-                        broker_options.extend(_df_sell['broker'].tolist())
-                    
-                    broker_options = list(dict.fromkeys(broker_options))
-
-                    with c_brokers:
-                        selected_brokers_kline = st.multiselect(
-                            f"券商分點 (統計區間前 15 大買賣超，可多選)",
-                            options=broker_options,
-                            key="kline_selected_brokers"
+                        
+                        st.divider()
+                        st.markdown("##### 副圖指標")
+                        indicator_options = [
+                            "成交量", "KDJ", "MACD", "RSI", 
+                            "外資", "投信", "自營商", "三大法人合計",
+                            "融資", "融券",
+                            "主力買賣超", "家數差",
+                            "分點買賣超" 
+                        ]
+                        selected_indicators = st.multiselect(
+                            "選擇副圖指標 (依選擇順序排列)",
+                            options=indicator_options,
+                            key="kline_indicators_selector"
                         )
+                        
+                        # 如果選了「分點買賣超」，在 popover 內顯示分點設定
+                        if "分點買賣超" in selected_indicators:
+                            st.divider()
+                            st.markdown("##### 分點買賣超設定")
+                            target_days_label = st.selectbox(
+                                "統計天數",
+                                list(days_map.keys()),
+                                key="kline_broker_days"
+                            )
+                            target_days = days_map.get(target_days_label, 20)
+
+                            s_d, e_d = calculate_date_range(stock_input, target_days)
+                            # 為了不卡頓，這裡可以考慮是否要即時抓取，或者依賴快取
+                            # 由於 popover 打開時已經 rerun，理論上可以直接抓
+                            _df_buy, _df_sell, _, _, _broker_info, _ = get_real_data_matrix(stock_input, s_d, e_d, st.session_state.refresh_nonce)
+                            
+                            broker_options = []
+                            if _df_buy is not None and not _df_buy.empty:
+                                broker_options.extend(_df_buy['broker'].tolist())
+                            if _df_sell is not None and not _df_sell.empty:
+                                broker_options.extend(_df_sell['broker'].tolist())
+                            
+                            broker_options = list(dict.fromkeys(broker_options))
+
+                            selected_brokers_kline = st.multiselect(
+                                f"選擇券商分點 (統計區間前 15 大)",
+                                options=broker_options,
+                                key="kline_selected_brokers"
+                            )
 
             st.markdown("<br>", unsafe_allow_html=True)
             
