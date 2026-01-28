@@ -1,4 +1,4 @@
-/* ================= 全域字體與背景 ================= */
+/* ================= 全域設定 ================= */
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
 
 html, body, [class*="css"] {
@@ -8,7 +8,7 @@ html, body, [class*="css"] {
 /* 全域背景色 */
 .stApp { background-color: #131722 !important; }
 
-/* 隱藏 Streamlit 預設 Header & Footer */
+/* 隱藏 Header & Footer */
 header[data-testid="stHeader"] { visibility: hidden; }
 footer { visibility: hidden; }
 .stDeployButton { display: none; }
@@ -27,15 +27,15 @@ div[data-testid="stHorizontalBlock"] { gap: 5px !important; }
 div[data-testid="stVerticalBlock"] { gap: 5px !important; }
 div[data-testid="column"] { min-width: 0px !important; padding: 0 !important; }
 
-/* ================= 導覽列 (Radio Button) 強制滿版 RWD 設定 ================= */
+/* ================= 導覽列 (Radio Button) 強制滿版修正 ================= */
 
-/* 1. 外層容器：確保寬度為 100% */
+/* 1. 外層容器：寬度 100% */
 div[data-testid="stRadio"] {
     width: 100% !important;
-    margin-bottom: 10px;
+    margin-bottom: 15px;
 }
 
-/* 2. 隱藏預設標籤 (功能分頁這幾個字) */
+/* 2. 隱藏標題 */
 div[data-testid="stRadio"] > label {
     display: none !important;
 }
@@ -47,23 +47,22 @@ div[data-testid="stRadio"] > div[role="radiogroup"] {
     border-radius: 8px;
     display: flex !important;
     flex-direction: row !important;
-    flex-wrap: nowrap !important; /* 不換行 */
-    width: 100% !important;       /* 關鍵：強制佔滿 */
+    flex-wrap: nowrap !important;
+    width: 100% !important;       /* 強制佔滿 */
     gap: 2px;
     border: 1px solid #363a45;
-    overflow-x: auto;             /* 螢幕太小時可橫向滑動 */
+    overflow-x: auto;             /* 螢幕太小時可滑動 */
     scrollbar-width: none;
-    justify-content: space-between;
 }
 
-/* 4. 單顆按鈕：使用 flex-grow 平分寬度 */
+/* 4. 單顆按鈕：使用 flex: 1 1 0px 讓它們平分寬度 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label {
-    flex: 1 1 0px !important;     /* 關鍵：所有按鈕平分空間 */
+    flex: 1 1 0px !important;     /* 關鍵：所有按鈕平分空間，不擠在一起 */
     width: 100% !important;
-    min-width: 65px !important;   /* 設定最小寬度，避免文字擠在一起 */
+    min-width: 60px !important;   /* 最小寬度 */
     text-align: center !important;
     color: #8b92a2 !important;
-    padding: 8px 2px !important;
+    padding: 8px 0px !important;
     margin: 0 !important;
     border-radius: 6px;
     border: none !important;
@@ -81,7 +80,7 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label > div:first-child {
     display: none !important;
 }
 
-/* 6. 文字樣式修正 */
+/* 6. 文字樣式 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label p {
     font-size: 15px !important;
     font-weight: 500 !important;
@@ -98,48 +97,46 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
     box-shadow: 0 2px 5px rgba(0,0,0,0.3);
 }
 
-/* Hover 效果 */
+/* Hover */
 div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
     color: #ffffff !important; 
     background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
-/* ================= RWD 顯示控制 (Desktop vs Mobile) ================= */
+/* ================= RWD 顯示控制 (關鍵修正) ================= */
 
-/* 電腦版樣式 (寬度 > 768px) */
-@media (min-width: 769px) {
-    .mobile-only {
-        display: none !important;
-    }
-    .desktop-only {
-        display: block !important;
-    }
-    
-    /* 電腦版 Checkbox 與 Multiselect 排版 */
-    .desktop-controls-container {
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        gap: 20px;
-        width: 100%;
-    }
-    
-    /* 調整 Checkbox 標籤大小 */
-    div[data-testid="stCheckbox"] label {
-        font-size: 14px !important;
-    }
+/* 1. 電腦版控制區：
+   選擇包含 id="desktop-controls" 的垂直區塊。
+   預設顯示。
+*/
+div[data-testid="stVerticalBlock"]:has(#desktop-controls) {
+    display: flex !important;
+    width: 100%;
 }
 
-/* 手機版樣式 (寬度 <= 768px) */
-@media (max-width: 768px) {
-    .mobile-only {
-        display: block !important;
-    }
-    .desktop-only {
+/* 2. 手機版控制區：
+   選擇包含 id="mobile-controls" 的垂直區塊。
+   預設隱藏 (因為 CSS 是 Desktop First 寫法，或者我們先預設都顯示再用 Media Query 蓋掉)。
+*/
+div[data-testid="stVerticalBlock"]:has(#mobile-controls) {
+    display: none !important;
+    width: 100%;
+}
+
+/* ================= Media Query: 手機版 (寬度 < 768px) ================= */
+@media only screen and (max-width: 768px) {
+    
+    /* 手機版時：隱藏電腦版控制區 */
+    div[data-testid="stVerticalBlock"]:has(#desktop-controls) {
         display: none !important;
     }
 
-    /* 全局字體稍微縮小 */
+    /* 手機版時：顯示手機版控制區 */
+    div[data-testid="stVerticalBlock"]:has(#mobile-controls) {
+        display: flex !important;
+    }
+
+    /* 調整字體大小 */
     html, body, [class*="css"] { font-size: 14px !important; }
     
     /* 版面邊距縮小 */
@@ -148,13 +145,13 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
         padding-right: 0.5rem !important; 
     }
     
-    /* 導覽列文字縮小 */
+    /* 導覽列文字再縮小一點以免太擠 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label p {
         font-size: 13px !important;
     }
 }
 
-/* 數據卡片樣式 (買賣超表格下方數據) */
+/* ================= 數據卡片樣式 ================= */
 .metric-container {
     display: flex;
     justify-content: space-around;
