@@ -74,25 +74,25 @@ div[data-testid="stRadio"] > div[role="radiogroup"] {
     scrollbar-width: none; 
 }
 
-/* ✅ 使用 Flexbox 強制文字垂直水平置中 (解決歪掉問題) */
+/* 使用 Flexbox 強制文字垂直水平置中 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label {
     color: #8b92a2 !important; 
-    padding: 10px 20px !important; /* 增加 Padding 讓點擊範圍更大且對稱 */
+    padding: 10px 20px !important;
     border-bottom: 3px solid transparent; 
     cursor: pointer;
-    display: flex !important;           /* 關鍵 */
-    align-items: center !important;     /* 垂直置中 */
-    justify-content: center !important; /* 水平置中 */
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     height: 100% !important;
-    min-height: 50px !important;        /* 固定高度確保一致 */
+    min-height: 50px !important;
     transition: all 0.2s ease;
 }
 
-/* ✅ 針對 Streamlit 內部的 Markdown p 標籤消除 Margin，確保絕對置中 */
+/* 針對 Streamlit 內部的 Markdown p 標籤消除 Margin，確保絕對置中 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label p {
     margin: 0 !important;
     padding: 0 !important;
-    line-height: 1.2 !important; /* 收緊行高 */
+    line-height: 1.2 !important;
     vertical-align: middle !important;
 }
 
@@ -100,12 +100,17 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
     color: #ffffff !important; background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
-/* ✅ 選中時背景色對齊 */
+/* 選中時背景色對齊 */
 div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
     color: #ef5350 !important; 
     border-bottom: 3px solid #ef5350 !important;
     background-color: rgba(239, 83, 80, 0.15) !important; 
     font-weight: bold !important;
+}
+
+/* ================= 平板/窄螢幕 CSS ================= */
+@media only screen and (min-width: 769px) and (max-width: 1024px) {
+    /* 可以在這裡針對平板做微調 */
 }
 
 /* ================= 📱 手機版專用 CSS (Mobile Responsive) ================= */
@@ -114,39 +119,57 @@ div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) {
     /* 1. 全局字體縮小，避免手機版面太擠 */
     html, body, [class*="css"] { font-size: 16px !important; }
     
-    /* 2. 導覽列 (NavBar) 改為可橫向滑動 */
+    /* 2. ✅ [修正] 導覽列 (NavBar) 強制不換行，改為橫向滑動 */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
-        flex-wrap: nowrap !important;     /* 禁止換行 */
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;     /* 絕對禁止換行 */
         overflow-x: auto !important;      /* 允許左右滑動 */
+        white-space: nowrap !important;   /* 防止文字換行 */
         -webkit-overflow-scrolling: touch; /* iOS 滑動優化 */
         justify-content: flex-start !important; /* 從左邊開始 */
         padding-bottom: 5px; /* 預留捲軸空間 */
+        scrollbar-width: none; /* 隱藏 Firefox 捲軸 */
+    }
+
+    /* 隱藏 Chrome/Safari 捲軸，讓畫面更乾淨 */
+    div[data-testid="stRadio"] > div[role="radiogroup"]::-webkit-scrollbar {
+        display: none; 
     }
     
+    /* 讓按鈕不要被壓縮，保持固定大小 */
     div[data-testid="stRadio"] > div[role="radiogroup"] label {
-        flex: 0 0 auto !important; /* 保持按鈕寬度，不壓縮 */
+        flex: 0 0 auto !important; /* 禁止壓縮 */
         min-width: 80px; /* 最小寬度，確保好點擊 */
         padding: 8px 15px !important;
     }
 
-    /* 3. 調整上方容器邊距 */
+    /* 3. ✅ [修正] 股票標題 (Subheader) 單行顯示，過長自動省略 (...) */
+    div[data-testid="stMarkdownContainer"] h3 {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important; /* 超出顯示 ... */
+        font-size: 1.2rem !important; /* 字體再縮小一點以符合手機 */
+    }
+
+    /* 4. 調整上方容器邊距 */
     .block-container {
         padding-top: 1rem !important;
         padding-left: 0.5rem !important;
         padding-right: 0.5rem !important;
     }
 
-    /* 4. 圖表間距調整 (手機上不需太激進的負邊距) */
+    /* 5. 圖表間距調整 (手機上不需太激進的負邊距) */
     div.element-container:has(iframe) {
         margin-bottom: -20px !important; 
     }
 
-    /* 5. 數據指標卡片改為直式或滿版 */
+    /* 6. 數據指標卡片改為直式或滿版 */
     .metric-item {
         width: 100% !important;
         margin-bottom: 5px;
     }
     
-    /* 6. 表格字體再縮小一點 */
+    /* 7. 表格字體再縮小一點 */
     .stDataFrame { font-size: 14px !important; }
 }
