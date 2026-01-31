@@ -13,3 +13,5 @@ numpy
 nest_asyncio
 seleniumbase
 pyvirtualdisplay
+mplfinance
+matplotlib
