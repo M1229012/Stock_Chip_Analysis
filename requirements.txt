@@ -12,6 +12,6 @@ pytz
 numpy
 nest_asyncio
 seleniumbase
-pyvirtualdisplay
 mplfinance
 matplotlib
+PyVirtualDisplay>=3.0
