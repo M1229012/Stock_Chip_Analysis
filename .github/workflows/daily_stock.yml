@@ -1,0 +1,32 @@
+name: Daily Stock Report
+
+on:
+  schedule:
+    # 設定定時執行：UTC 時間 08:30 (等於台灣時間 16:30，股市收盤後)
+    # 你可以修改這裡來調整時間
+    - cron: '30 8 * * 1-5' 
+  workflow_dispatch: # 允許手動按下按鈕觸發
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Analysis Script
+        env:
+          # 這裡會讀取你在 GitHub 設定的 Secret
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_TEST }}
+        run: |
+          python main.py
