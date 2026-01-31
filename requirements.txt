@@ -14,5 +14,4 @@ nest_asyncio
 seleniumbase
 mplfinance
 matplotlib
-PyVirtualDisplay>=3.0
-ipdb
+
