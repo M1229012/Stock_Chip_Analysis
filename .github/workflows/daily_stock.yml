@@ -2,10 +2,9 @@ name: Daily Stock Report
 
 on:
   schedule:
-    # 設定定時執行：UTC 時間 08:30 (等於台灣時間 16:30，股市收盤後)
-    # 你可以修改這裡來調整時間
-    - cron: '30 8 * * 1-5' 
-  workflow_dispatch: # 允許手動按下按鈕觸發
+    # 每天台灣時間 16:30 (UTC 08:30) 執行
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,13 +19,14 @@ jobs:
         with:
           python-version: '3.9'
 
+      # 這裡會安裝我們修正後的 requirements.txt
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
 
+      # 這裡修正了檔名空白鍵的問題 (加上了雙引號)
       - name: Run Analysis Script
         env:
-          # 這裡會讀取你在 GitHub 設定的 Secret
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_TEST }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           python "DC_One-page candlestick chart.py"
