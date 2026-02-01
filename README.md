@@ -60,7 +60,8 @@
 
 ```bash
 pip install -r requirements.txt
-3. 執行程式
+
+### 3. 執行程式
 在終端機 (Terminal) 執行以下指令啟動 Streamlit：
 
 Bash
