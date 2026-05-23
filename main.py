@@ -12,10 +12,14 @@ from io import StringIO
 import time
 import re
 import math
+import json
+import hashlib
+import base64
+import html as html_lib
 import requests
 from datetime import datetime, timedelta
 import pytz
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urljoin, quote
 import shutil
 import twstock
 import copy
@@ -484,8 +488,243 @@ def calculate_date_range(stock_id, days):
         start_date = end_date - timedelta(days=days)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
+
+# ================= 2-1. Google Sheet 籌碼K快取工具 =================
+
+CHIPK_GSHEET_NAME = os.getenv("CHIPK_GSHEET_NAME", os.getenv("GOOGLE_SHEET_NAME", "籌碼K線快取檔案")).strip() or "籌碼K線快取檔案"
+CHIPK_GSHEET_ENABLE = os.getenv("CHIPK_GSHEET_ENABLE", "1").strip().lower() not in ("0", "false", "no")
+CHIPK_GSHEET_CHUNK_ROWS = int(os.getenv("CHIPK_GSHEET_CHUNK_ROWS", "3000"))
+CHIPK_CACHE_TTL_SECONDS = int(os.getenv("CHIPK_CACHE_TTL_SECONDS", "21600"))
+
+_CHIPK_GSHEET_CLIENT = None
+_CHIPK_GSHEET_SPREADSHEET = None
+
+
+def _chipk_now_str():
+    try:
+        return datetime.now(pytz.timezone('Asia/Taipei')).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _chipk_parse_updated_at(s):
+    try:
+        return datetime.strptime(str(s).strip(), '%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return None
+
+
+def _chipk_safe_sheet_title(title):
+    title = str(title).strip()
+    for ch in [":", "\\", "/", "?", "*", "[", "]"]:
+        title = title.replace(ch, "_")
+    return title[:100] if title else "快取"
+
+
+def _chipk_cache_key(*parts):
+    raw = "|".join(str(x) for x in parts)
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+
+def _chipk_decode_service_key(service_key):
+    s = str(service_key or "").strip()
+    if not s:
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    try:
+        return json.loads(base64.b64decode(s).decode('utf-8'))
+    except Exception:
+        return None
+
+
+def chipk_gsheet_enabled():
+    return CHIPK_GSHEET_ENABLE and bool(os.getenv("GCP_SERVICE_KEY", "").strip())
+
+
+def get_chipk_gsheet_client():
+    global _CHIPK_GSHEET_CLIENT
+    if _CHIPK_GSHEET_CLIENT is not None:
+        return _CHIPK_GSHEET_CLIENT
+    if not chipk_gsheet_enabled():
+        return None
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        info = _chipk_decode_service_key(os.getenv("GCP_SERVICE_KEY", ""))
+        if not info:
+            return None
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+        _CHIPK_GSHEET_CLIENT = gspread.authorize(creds)
+        return _CHIPK_GSHEET_CLIENT
+    except Exception:
+        return None
+
+
+def get_chipk_gsheet_spreadsheet():
+    global _CHIPK_GSHEET_SPREADSHEET
+    if _CHIPK_GSHEET_SPREADSHEET is not None:
+        return _CHIPK_GSHEET_SPREADSHEET
+    gc = get_chipk_gsheet_client()
+    if gc is None:
+        return None
+    try:
+        sheet_id = os.getenv("CHIPK_GSHEET_ID", "").strip()
+        if sheet_id:
+            _CHIPK_GSHEET_SPREADSHEET = gc.open_by_key(sheet_id)
+        else:
+            _CHIPK_GSHEET_SPREADSHEET = gc.open(CHIPK_GSHEET_NAME)
+        return _CHIPK_GSHEET_SPREADSHEET
+    except Exception:
+        try:
+            _CHIPK_GSHEET_SPREADSHEET = gc.create(CHIPK_GSHEET_NAME)
+            return _CHIPK_GSHEET_SPREADSHEET
+        except Exception:
+            return None
+
+
+def get_or_create_chipk_worksheet(title, rows=100, cols=20):
+    sh = get_chipk_gsheet_spreadsheet()
+    if sh is None:
+        return None
+    title = _chipk_safe_sheet_title(title)
+    try:
+        return sh.worksheet(title)
+    except Exception:
+        try:
+            return sh.add_worksheet(title=title, rows=max(int(rows), 1), cols=max(int(cols), 1))
+        except Exception:
+            return None
+
+
+def _chipk_ws_get_df(sheet_name):
+    ws = get_or_create_chipk_worksheet(sheet_name)
+    if ws is None:
+        return pd.DataFrame()
+    try:
+        values = ws.get_all_values()
+        if not values or len(values) < 2:
+            return pd.DataFrame()
+        headers = [str(x).strip() for x in values[0]]
+        rows = values[1:]
+        fixed = []
+        for row in rows:
+            row = list(row)
+            if len(row) < len(headers):
+                row += [""] * (len(headers) - len(row))
+            elif len(row) > len(headers):
+                row = row[:len(headers)]
+            fixed.append(row)
+        return pd.DataFrame(fixed, columns=headers).fillna("")
+    except Exception:
+        return pd.DataFrame()
+
+
+def _chipk_ws_write_df(sheet_name, df):
+    if df is None:
+        df = pd.DataFrame()
+    ws = get_or_create_chipk_worksheet(sheet_name, rows=max(len(df) + 1, 100), cols=max(len(df.columns), 20))
+    if ws is None:
+        return False
+    try:
+        df2 = df.copy().fillna("")
+        values = [list(df2.columns)] + df2.astype(str).values.tolist()
+        ws.resize(rows=max(len(values), 1), cols=max(len(df2.columns), 1))
+        ws.clear()
+        for start in range(0, len(values), CHIPK_GSHEET_CHUNK_ROWS):
+            chunk = values[start:start + CHIPK_GSHEET_CHUNK_ROWS]
+            start_row = start + 1
+            try:
+                ws.update(values=chunk, range_name=f"A{start_row}", value_input_option="USER_ENTERED")
+            except TypeError:
+                ws.update(f"A{start_row}", chunk, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
+
+
+def chipk_cache_get_df(sheet_name, cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS):
+    if not chipk_gsheet_enabled():
+        return pd.DataFrame()
+    df = _chipk_ws_get_df(sheet_name)
+    if df.empty or "_cache_key" not in df.columns:
+        return pd.DataFrame()
+    sub = df[df["_cache_key"].astype(str) == str(cache_key)].copy()
+    if sub.empty:
+        return pd.DataFrame()
+    if ttl_seconds and "_updated_at" in sub.columns:
+        dt = _chipk_parse_updated_at(sub["_updated_at"].iloc[0])
+        if dt and (datetime.now() - dt).total_seconds() > ttl_seconds:
+            return pd.DataFrame()
+    drop_cols = [c for c in ["_cache_key", "_updated_at"] if c in sub.columns]
+    return sub.drop(columns=drop_cols).reset_index(drop=True)
+
+
+def chipk_cache_set_df(sheet_name, cache_key, data_df):
+    if not chipk_gsheet_enabled() or data_df is None:
+        return False
+    data_df = data_df.copy().fillna("")
+    data_df.insert(0, "_updated_at", _chipk_now_str())
+    data_df.insert(0, "_cache_key", str(cache_key))
+    old_df = _chipk_ws_get_df(sheet_name)
+    if not old_df.empty and "_cache_key" in old_df.columns:
+        old_df = old_df[old_df["_cache_key"].astype(str) != str(cache_key)].copy()
+        combined = pd.concat([old_df, data_df], ignore_index=True, sort=False)
+    else:
+        combined = data_df
+    return _chipk_ws_write_df(sheet_name, combined)
+
+
+def chipk_cache_get_json(sheet_name, cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS):
+    if not chipk_gsheet_enabled():
+        return None
+    df = _chipk_ws_get_df(sheet_name)
+    if df.empty or "_cache_key" not in df.columns or "payload_json" not in df.columns:
+        return None
+    sub = df[df["_cache_key"].astype(str) == str(cache_key)].copy()
+    if sub.empty:
+        return None
+    if ttl_seconds and "_updated_at" in sub.columns:
+        dt = _chipk_parse_updated_at(sub["_updated_at"].iloc[0])
+        if dt and (datetime.now() - dt).total_seconds() > ttl_seconds:
+            return None
+    try:
+        return json.loads(sub["payload_json"].iloc[0])
+    except Exception:
+        return None
+
+
+def chipk_cache_set_json(sheet_name, cache_key, payload):
+    if not chipk_gsheet_enabled():
+        return False
+    row = pd.DataFrame([{
+        "_cache_key": str(cache_key),
+        "_updated_at": _chipk_now_str(),
+        "payload_json": json.dumps(payload, ensure_ascii=False),
+    }])
+    old_df = _chipk_ws_get_df(sheet_name)
+    if not old_df.empty and "_cache_key" in old_df.columns:
+        old_df = old_df[old_df["_cache_key"].astype(str) != str(cache_key)].copy()
+        combined = pd.concat([old_df, row], ignore_index=True, sort=False)
+    else:
+        combined = row
+    return _chipk_ws_write_df(sheet_name, combined)
+
 @st.cache_data(persist="disk", ttl=21600)
 def get_institutional_data(stock_id, start_date, end_date):
+    cache_key = _chipk_cache_key("institutional", stock_id, start_date, end_date)
+    cached_df = chipk_cache_get_df("快取_法人", cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS)
+    if cached_df is not None and not cached_df.empty:
+        for col in ['外資買賣超', '投信買賣超', '自營商買賣超']:
+            if col in cached_df.columns:
+                cached_df[col] = pd.to_numeric(cached_df[col], errors='coerce').fillna(0)
+        return cached_df
     driver = get_driver()
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcl/zcl.djhtm?a={stock_id}&c={start_date}&d={end_date}"
     try:
@@ -512,7 +751,9 @@ def get_institutional_data(stock_id, start_date, end_date):
                     clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
 
                 clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
-                return clean_df.dropna(subset=['DateStr'])
+                clean_df = clean_df.dropna(subset=['DateStr'])
+                chipk_cache_set_df("快取_法人", cache_key, clean_df)
+                return clean_df
     except:
         pass
     finally:
@@ -521,6 +762,13 @@ def get_institutional_data(stock_id, start_date, end_date):
 
 @st.cache_data(persist="disk", ttl=21600)
 def get_margin_data(stock_id, start_date, end_date):
+    cache_key = _chipk_cache_key("margin", stock_id, start_date, end_date)
+    cached_df = chipk_cache_get_df("快取_融資券", cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS)
+    if cached_df is not None and not cached_df.empty:
+        for col in ['融資餘額', '融資增減', '融券餘額', '融券增減']:
+            if col in cached_df.columns:
+                cached_df[col] = pd.to_numeric(cached_df[col], errors='coerce').fillna(0)
+        return cached_df
     driver = get_driver()
     url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zcn/zcn.djhtm?a={stock_id}&c={start_date}&d={end_date}"
     try:
@@ -547,188 +795,373 @@ def get_margin_data(stock_id, start_date, end_date):
                     clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0)
                 
                 clean_df['DateStr'] = clean_df['日期'].apply(roc_to_datestr)
-                return clean_df.dropna(subset=['DateStr'])
+                clean_df = clean_df.dropna(subset=['DateStr'])
+                chipk_cache_set_df("快取_融資券", cache_key, clean_df)
+                return clean_df
     except:
         pass
     finally:
         driver.quit()
     return None
 
-@st.cache_data(persist="disk", ttl=604800)
-def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
-    driver = get_driver()
+
+def _chipk_parse_num(x):
+    try:
+        s = str(x).strip()
+        if s in ("", "-", "--", "nan", "None"):
+            return 0
+        s = s.replace(",", "").replace("+", "").replace("％", "%").replace("%", "")
+        s = re.sub(r"[^0-9.\-]", "", s)
+        if s in ("", "-", "."):
+            return 0
+        return float(s)
+    except Exception:
+        return 0
+
+
+def _chipk_int(x):
+    try:
+        return int(round(float(x)))
+    except Exception:
+        return 0
+
+
+def _chipk_moneydj_headers(referer="https://pscnetsecrwd.moneydj.com/"):
+    return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": referer,
+    }
+
+
+def _chipk_extract_json_rows(obj):
+    rows = []
+    if isinstance(obj, list):
+        for item in obj:
+            rows.extend(_chipk_extract_json_rows(item))
+    elif isinstance(obj, dict):
+        if isinstance(obj.get("ResultSet"), dict):
+            result = obj.get("ResultSet", {}).get("Result", [])
+            if isinstance(result, list):
+                rows.extend(result)
+        for key in ("Result", "data", "Data", "rows", "Rows"):
+            val = obj.get(key)
+            if isinstance(val, list):
+                rows.extend(val)
+        for val in obj.values():
+            if isinstance(val, (dict, list)):
+                rows.extend(_chipk_extract_json_rows(val))
+    return rows
+
+
+def _chipk_fetch_json_rows(url):
+    try:
+        r = requests.get(url, headers=_chipk_moneydj_headers(), timeout=15)
+        if r.status_code != 200:
+            return []
+        txt = r.content.decode("utf-8", errors="ignore")
+        data = json.loads(txt)
+        return _chipk_extract_json_rows(data)
+    except Exception:
+        return []
+
+
+def _chipk_discover_moneydj_json_urls(stock_id, start_date, end_date):
+    urls = []
+    start_slash = str(start_date).replace("-", "/")
+    end_slash = str(end_date).replace("-", "/")
+    symbols = [f"{stock_id}.TW", f"{stock_id}.TWO", str(stock_id)]
+    api_nums = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]
+    seed_pages = [
+        f"https://pscnetsecrwd.moneydj.com/z/zc/zco/zco.djhtm?a={stock_id}&e={start_slash}&f={end_slash}",
+        f"https://www.moneydj.com/z/zc/zco/zco.djhtm?a={stock_id}&e={start_slash}&f={end_slash}",
+        f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm?a={stock_id}&e={start_slash}&f={end_slash}",
+    ]
+    for sym in symbols:
+        for api_no in api_nums:
+            seed_pages.append(f"https://pscnetsecrwd.moneydj.com/pscnetStock/agent/gopage.aspx?api=%24chip%24{api_no}&sym={quote(sym)}")
+    for page_url in seed_pages:
+        try:
+            r = requests.get(page_url, headers=_chipk_moneydj_headers(page_url), timeout=12)
+            if r.status_code != 200:
+                continue
+            page_html = r.text
+            found = re.findall(r"[\"']([^\"']+\.xdjjson[^\"']*)[\"']", page_html, flags=re.I)
+            found += re.findall(r"(https?://[^\s\"']+\.xdjjson[^\s\"']*)", page_html, flags=re.I)
+            for u in found:
+                u = html_lib.unescape(u).replace("\\/", "/")
+                full = urljoin(page_url, u)
+                if "a=" not in full and "sym=" not in full:
+                    continue
+                full = full.replace("{0}", str(stock_id)).replace("{1}", start_slash).replace("{2}", end_slash)
+                if full not in urls:
+                    urls.append(full)
+        except Exception:
+            continue
+    return urls
+
+
+def _chipk_broker_rank_from_json_rows(rows):
+    parsed = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        vals = []
+        for k in sorted(row.keys(), key=lambda x: int(re.sub(r"\D", "", x) or 9999)):
+            vals.append(row.get(k))
+        text_vals = [str(v).strip() for v in vals if str(v).strip()]
+        broker_name = ""
+        broker_code = ""
+        for v in text_vals:
+            if re.search(r"[\u4e00-\u9fff]", v) and not re.search(r"日期|合計|平均|買超券商|賣超券商", v):
+                broker_name = v
+                break
+        for v in text_vals:
+            if re.fullmatch(r"[0-9A-Za-z]{3,5}", v):
+                broker_code = v
+                break
+        nums = [_chipk_parse_num(v) for v in vals]
+        nums = [n for n in nums if n != 0]
+        if not broker_name or len(nums) < 3:
+            continue
+        buy, sell, net = nums[0], nums[1], nums[2]
+        if abs((buy - sell) - net) > max(abs(net), 1) * 0.3 and len(nums) >= 4:
+            buy, sell, net = nums[1], nums[2], nums[3]
+        parsed.append({"broker": normalize_name(broker_name), "buy": _chipk_int(buy), "sell": _chipk_int(sell), "net": _chipk_int(net), "pct": "", "broker_code": broker_code})
+    if not parsed:
+        return None
+    df = pd.DataFrame(parsed).drop_duplicates(subset=["broker"], keep="first")
+    if df.empty:
+        return None
+    df_buy = df[df["net"] > 0].sort_values("net", ascending=False).head(15).copy()
+    df_sell = df[df["net"] < 0].copy()
+    df_sell["abs_net"] = df_sell["net"].abs()
+    df_sell = df_sell.sort_values("abs_net", ascending=False).head(15).drop(columns=["abs_net"])
+    broker_info = {}
+    for _, row in df.iterrows():
+        if row.get("broker_code"):
+            broker_info[normalize_name(row["broker"])] = {"b": str(row["broker_code"]), "BHID": str(row["broker_code"]), "C": "1"}
+    return (
+        df_buy[["broker", "buy", "sell", "net", "pct"]].reset_index(drop=True),
+        df_sell[["broker", "buy", "sell", "net", "pct"]].reset_index(drop=True),
+        {"total": f"{int(df_buy['net'].sum()):,}" if not df_buy.empty else "0", "avg": "-"},
+        {"total": f"{int(df_sell['net'].sum()):,}" if not df_sell.empty else "0", "avg": "-"},
+        broker_info,
+    )
+
+
+def _chipk_get_broker_rank_from_moneydj_json(stock_id, start_date, end_date):
+    for url in _chipk_discover_moneydj_json_urls(stock_id, start_date, end_date):
+        rows = _chipk_fetch_json_rows(url)
+        parsed = _chipk_broker_rank_from_json_rows(rows)
+        if parsed is not None:
+            df_buy, df_sell, sum_buy, sum_sell, broker_info = parsed
+            return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
+    return None
+
+
+def _chipk_get_broker_rank_from_html(stock_id, start_date, end_date):
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
     url = f"{base_url}?a={stock_id}&e={start_date}&f={end_date}"
-
     try:
-        driver.get(url)
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '買超券商')]"))
-            )
-        except:
+        r = requests.get(url, headers=_chipk_moneydj_headers(url), timeout=20)
+        if r.status_code != 200:
             return None, None, None, None, None, url
-
-        html = driver.page_source
-        tables = pd.read_html(StringIO(html), match="買超券商")
-        if not tables: return None, None, None, None, None, url
+        r.encoding = "big5"
+        page_html = r.text
+        tables = pd.read_html(StringIO(page_html), match="買超券商")
+        if not tables:
+            return None, None, None, None, None, url
         df = tables[0]
-        
         header_row = -1
         for i, row in df.iterrows():
             row_str = row.astype(str).values
             if "買超券商" in row_str and "賣超券商" in row_str:
                 header_row = i
                 break
-        if header_row == -1: return None, None, None, None, None, url
-
+        if header_row == -1:
+            return None, None, None, None, None, url
         broker_info = {}
-        try:
-            links = driver.find_elements(By.XPATH, "//table//a[contains(@href, 'zco0/zco0.djhtm')]")
-            for link in links:
-                name = normalize_name(link.text)
-                href = link.get_attribute('href')
-                if name and href:
-                    parsed = urlparse(href)
-                    params = parse_qs(parsed.query)
-                    if 'b' in params and 'BHID' in params:
-                        broker_info[name] = {'b': params['b'][0], 'BHID': params['BHID'][0]}
-        except: pass
-
-        sum_buy = {"total": "0", "avg": "0"}
-        sum_sell = {"total": "0", "avg": "0"}
-        
-        try:
-            total_buy_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[22]/td[2]")
-            sum_buy['total'] = total_buy_elem.text.strip()
-            avg_buy_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[23]/td[2]")
-            sum_buy['avg'] = avg_buy_elem.text.strip()
-            total_sell_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[22]/td[4]")
-            sum_sell['total'] = total_sell_elem.text.strip()
-            avg_sell_elem = driver.find_element(By.XPATH, "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[23]/td[4]")
-            sum_sell['avg'] = avg_sell_elem.text.strip()
-        except: pass
-
+        for href, label_html in re.findall(r"<a[^>]+href=[\"']([^\"']*zco0/zco0\.djhtm[^\"']*)[\"'][^>]*>(.*?)</a>", page_html, flags=re.I | re.S):
+            name = normalize_name(re.sub(r"<.*?>", "", html_lib.unescape(label_html)))
+            href = html_lib.unescape(href)
+            if not name:
+                continue
+            parsed = urlparse(urljoin(url, href))
+            params = parse_qs(parsed.query)
+            if 'b' in params and 'BHID' in params:
+                broker_info[name] = {'b': params['b'][0], 'BHID': params['BHID'][0], 'C': params.get('C', ['1'])[0]}
         df_clean = df.iloc[header_row+1:].copy()
         df_buy = df_clean.iloc[:, [0, 1, 2, 3, 4]].copy()
         df_buy.columns = ['broker', 'buy', 'sell', 'net', 'pct']
         df_sell = df_clean.iloc[:, [5, 6, 7, 8, 9]].copy()
         df_sell.columns = ['broker', 'buy', 'sell', 'net', 'pct']
-
         def clean_sub_df(d):
             d = d.dropna(subset=['broker'])
             mask = d['broker'].astype(str).str.contains("合計|平均|買超券商|賣超券商", na=False)
-            d = d[~mask]
+            d = d[~mask].copy()
+            d['broker'] = d['broker'].map(normalize_name)
             for col in ['buy', 'sell', 'net']:
                 d[col] = d[col].astype(str).str.replace(',', '', regex=False).str.replace('+', '', regex=False).str.replace('nan', '', regex=False)
                 d[col] = pd.to_numeric(d[col], errors='coerce').fillna(0).astype(int)
             return d
-
         df_buy = clean_sub_df(df_buy)
         df_sell = clean_sub_df(df_sell)
         df_buy = df_buy[df_buy['net'] > 0].sort_values('net', ascending=False).head(15).reset_index(drop=True)
         df_sell['abs_net'] = df_sell['net'].abs()
         df_sell = df_sell.sort_values('abs_net', ascending=False).head(15).drop(columns=['abs_net']).reset_index(drop=True)
-
+        sum_buy = {"total": f"{int(df_buy['net'].sum()):,}" if not df_buy.empty else "0", "avg": "-"}
+        sum_sell = {"total": f"{int(df_sell['net'].sum()):,}" if not df_sell.empty else "0", "avg": "-"}
         return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
-    except:
+    except Exception:
         return None, None, None, None, None, url
-    finally:
-        driver.quit()
+
 
 @st.cache_data(persist="disk", ttl=604800)
-def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
+def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
+    cache_key = _chipk_cache_key("broker_rank", stock_id, start_date, end_date)
+    if not refresh_nonce:
+        cached = chipk_cache_get_json("快取_分點排行", cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS)
+        if cached:
+            try:
+                df_buy = pd.DataFrame(cached.get("df_buy", []))
+                df_sell = pd.DataFrame(cached.get("df_sell", []))
+                sum_buy = cached.get("sum_buy", {"total": "0", "avg": "-"})
+                sum_sell = cached.get("sum_sell", {"total": "0", "avg": "-"})
+                broker_info = cached.get("broker_info", {})
+                url = cached.get("url", "")
+                for d in (df_buy, df_sell):
+                    for col in ['buy', 'sell', 'net']:
+                        if col in d.columns:
+                            d[col] = pd.to_numeric(d[col], errors='coerce').fillna(0).astype(int)
+                return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
+            except Exception:
+                pass
+    result = _chipk_get_broker_rank_from_moneydj_json(stock_id, start_date, end_date)
+    if result is None:
+        result = _chipk_get_broker_rank_from_html(stock_id, start_date, end_date)
+    df_buy, df_sell, sum_buy, sum_sell, broker_info, url = result
+    if df_buy is not None and df_sell is not None:
+        chipk_cache_set_json("快取_分點排行", cache_key, {"stock_id": stock_id, "start_date": start_date, "end_date": end_date, "url": url, "df_buy": df_buy.to_dict(orient="records"), "df_sell": df_sell.to_dict(orient="records"), "sum_buy": sum_buy, "sum_sell": sum_sell, "broker_info": broker_info or {}})
+    return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
+
+
+def _chipk_get_broker_daily_from_html(stock_id, broker_key, start_date, end_date):
     BHID, b, c_val = broker_key
-    driver = get_driver()
     base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
     target_url = f"{base_url}?A={stock_id}&BHID={BHID}&b={b}&C={c_val}&D={start_date}&E={end_date}&ver=V3"
-    table_xpath = "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[6]/td/table"
-
+    all_dfs = []
+    current_url = target_url
+    seen_urls = set()
     try:
-        driver.get(target_url)
-        all_dfs = []
-        page_count = 0
-        while page_count < 60:
+        for _ in range(60):
+            if current_url in seen_urls:
+                break
+            seen_urls.add(current_url)
+            r = requests.get(current_url, headers=_chipk_moneydj_headers(current_url), timeout=20)
+            if r.status_code != 200:
+                break
+            r.encoding = "big5"
+            page_html = r.text
+            current_df = None
             try:
-                WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, table_xpath)))
-            except: break
-
-            try:
-                target_table = driver.find_element(By.XPATH, table_xpath)
-                table_html = target_table.get_attribute('outerHTML')
-                tables = pd.read_html(StringIO(table_html))
-                current_df = tables[0] if tables else None
-            except:
-                html = driver.page_source
-                tables = pd.read_html(StringIO(html), match="日期")
-                current_df = tables[0] if tables else None
-
-            if current_df is not None: all_dfs.append(current_df)
-            
-            try:
-                next_links = driver.find_elements(By.XPATH, "//a[contains(text(), '下一頁')]")
-                if next_links and next_links[0].is_enabled():
-                    next_links[0].click()
-                    time.sleep(0.1) 
-                    page_count += 1
-                else: break 
-            except: break
-
-        if not all_dfs: return None, target_url
-
+                tables = pd.read_html(StringIO(page_html), match="日期")
+                for t in tables:
+                    t_cols = "".join(map(str, t.columns)) + " ".join(t.astype(str).head(3).values.flatten())
+                    if "買進" in t_cols and "賣出" in t_cols:
+                        current_df = t
+                        break
+                if current_df is None and tables:
+                    current_df = tables[0]
+            except Exception:
+                current_df = None
+            if current_df is not None:
+                all_dfs.append(current_df)
+            m = re.search(r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>\s*下一頁\s*</a>", page_html, flags=re.I)
+            if not m:
+                break
+            next_url = urljoin(current_url, html_lib.unescape(m.group(1)))
+            if not next_url or next_url == current_url:
+                break
+            current_url = next_url
+        if not all_dfs:
+            return None, target_url
         df = pd.concat(all_dfs, ignore_index=True)
         df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
-        
         if '買賣超' not in df.columns and len(df.columns) >= 4:
             df = df.iloc[:, :4]
             df.columns = ['日期', '買進', '賣出', '買賣超']
-            
-        df = df[df['日期'] != '日期']
+        if '日期' not in df.columns:
+            return None, target_url
+        df = df[df['日期'].astype(str) != '日期'].copy()
         for col in ['買進', '賣出', '買賣超']:
-             df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace('+', '').str.replace('nan', ''), errors='coerce').fillna(0)
-
+            if col not in df.columns:
+                df[col] = 0
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '', regex=False).str.replace('+', '', regex=False).str.replace('nan', '', regex=False), errors='coerce').fillna(0)
         df['買賣超_Calc'] = df['買進'] - df['賣出']
         df['DateStr'] = df['日期'].apply(roc_to_datestr)
-        df = df.dropna(subset=['DateStr']).sort_values('DateStr', ascending=True)
+        df = df.dropna(subset=['DateStr']).drop_duplicates(subset=['DateStr'], keep='last').sort_values('DateStr', ascending=True)
         return df, target_url
-    except:
+    except Exception:
         return None, target_url
-    finally:
-        driver.quit()
+
+
+@st.cache_data(persist="disk", ttl=604800)
+def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
+    cache_key = _chipk_cache_key("broker_daily", stock_id, broker_key, start_date, end_date)
+    target_url = ""
+    if not refresh_nonce:
+        cached_df = chipk_cache_get_df("快取_分點明細", cache_key, ttl_seconds=604800)
+        if cached_df is not None and not cached_df.empty:
+            for col in ['買進', '賣出', '買賣超', '買賣超_Calc']:
+                if col in cached_df.columns:
+                    cached_df[col] = pd.to_numeric(cached_df[col], errors='coerce').fillna(0)
+            return cached_df, target_url
+    df, target_url = _chipk_get_broker_daily_from_html(stock_id, broker_key, start_date, end_date)
+    if df is not None and not df.empty:
+        chipk_cache_set_df("快取_分點明細", cache_key, df)
+    return df, target_url
 
 @st.cache_data(persist="disk", ttl=604800)
 def get_shareholding_data(stock_id: str, refresh_nonce: int = 0):
+    cache_key = _chipk_cache_key("shareholding", stock_id)
+    if not refresh_nonce:
+        cached = chipk_cache_get_json("快取_大戶", cache_key, ttl_seconds=604800)
+        if cached:
+            try:
+                summary_df = pd.DataFrame(cached.get("summary", [])) if cached.get("summary") else None
+                ratio_df = pd.DataFrame(cached.get("ratio", [])) if cached.get("ratio") else None
+                return {"summary": summary_df, "ratio": ratio_df}
+            except Exception:
+                pass
+
     driver = get_driver()
     url = f"https://norway.twsthr.info/StockHolders.aspx?STOCK={stock_id}"
-    
     try:
         driver.get(url)
         summary_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[1]/table"
-
-        WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, summary_xpath))
-        )
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, summary_xpath)))
         summary_df = None
         try:
             tbl_summary = driver.find_element(By.XPATH, summary_xpath)
             summary_df = pd.read_html(StringIO(tbl_summary.get_attribute("outerHTML")))[0]
         except Exception:
             pass
-            
         ratio_df = None
         try:
             tab_ratio = driver.find_element(By.XPATH, "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[1]/td/div/ul/li[3]/a/span")
             driver.execute_script("arguments[0].click();", tab_ratio)
-            time.sleep(1) 
-            
+            time.sleep(1)
             ratio_xpath = "/html/body/form/div[4]/div/div[2]/div/div[2]/div/table/tbody/tr[4]/td/table/tbody/tr[2]/td/div[3]/table"
             tbl_ratio = driver.find_element(By.XPATH, ratio_xpath)
             ratio_df = pd.read_html(StringIO(tbl_ratio.get_attribute("outerHTML")))[0]
         except Exception:
             pass
-
+        chipk_cache_set_json("快取_大戶", cache_key, {
+            "summary": summary_df.to_dict(orient="records") if summary_df is not None else [],
+            "ratio": ratio_df.to_dict(orient="records") if ratio_df is not None else [],
+        })
         return {"summary": summary_df, "ratio": ratio_df}
-
     except Exception:
         return {"summary": None, "ratio": None}
     finally:
@@ -803,6 +1236,19 @@ def process_shareholding_df(ratio_df: pd.DataFrame, large_threshold: int, retail
 
 @st.cache_data(ttl=21600)
 def get_stock_price(stock_id, refresh_nonce=0):
+    cache_key = _chipk_cache_key("stock_price_daily", stock_id)
+    if not refresh_nonce:
+        cached_df = chipk_cache_get_df("快取_股價日K", cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS)
+        if cached_df is not None and not cached_df.empty:
+            try:
+                for col in cached_df.columns:
+                    if col != 'DateStr':
+                        cached_df[col] = pd.to_numeric(cached_df[col], errors='ignore')
+                cached_df.index = pd.to_datetime(cached_df['DateStr'], errors='coerce')
+                cached_df.index = cached_df.index.tz_localize(None)
+                return cached_df
+            except Exception:
+                pass
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     df = None
     for ticker in tickers_to_try:
@@ -821,11 +1267,24 @@ def get_stock_price(stock_id, refresh_nonce=0):
         df.index = df.index.tz_localize(None)
         df['DateStr'] = df.index.strftime('%Y-%m-%d')
         df = calculate_technical_indicators(df)
+        chipk_cache_set_df("快取_股價日K", cache_key, df.reset_index(drop=True))
         return df
     except: return None
 
 @st.cache_data(ttl=300) 
 def get_intraday_data(stock_id, interval):
+    cache_key = _chipk_cache_key("stock_price_intraday", stock_id, interval)
+    cached_df = chipk_cache_get_df("快取_股價分K", cache_key, ttl_seconds=300)
+    if cached_df is not None and not cached_df.empty:
+        try:
+            for col in cached_df.columns:
+                if col != 'DateStr':
+                    cached_df[col] = pd.to_numeric(cached_df[col], errors='ignore')
+            cached_df.index = pd.to_datetime(cached_df['DateStr'], errors='coerce')
+            cached_df.index = cached_df.index.tz_localize(None)
+            return cached_df
+        except Exception:
+            pass
     tickers_to_try = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     df = None
     
@@ -857,11 +1316,20 @@ def get_intraday_data(stock_id, interval):
         
         df['DateStr'] = df.index.strftime('%Y-%m-%d %H:%M')
         df = calculate_technical_indicators(df)
+        chipk_cache_set_df("快取_股價分K", cache_key, df.reset_index(drop=True))
         return df
     except: return None
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_wantgoo_data(stock_id, refresh_nonce):
+    cache_key = _chipk_cache_key("wantgoo", stock_id)
+    if not refresh_nonce:
+        cached_df = chipk_cache_get_df("快取_主力", cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS)
+        if cached_df is not None and not cached_df.empty:
+            for col in ['買賣超', '家數差', '5日集中', '20日集中']:
+                if col in cached_df.columns:
+                    cached_df[col] = pd.to_numeric(cached_df[col], errors='coerce').fillna(0)
+            return cached_df
     SB_LIB_PATH = "/tmp/sb_lib"
     os.makedirs(SB_LIB_PATH, exist_ok=True)
     
@@ -1025,7 +1493,9 @@ if __name__ == "__main__":
                 
                 clean_df = clean_df.drop(columns=['dt_temp'])
                 
-                return clean_df.sort_values('DateStr')
+                clean_df = clean_df.sort_values('DateStr')
+                chipk_cache_set_df("快取_主力", cache_key, clean_df)
+                return clean_df
             else:
                 raise ValueError("Parsed CSV missing required columns")
                 
@@ -1041,65 +1511,55 @@ if __name__ == "__main__":
 
 @st.cache_data(ttl=21600)
 def get_norway_rank_data(url="https://norway.twsthr.info/StockHoldersTopWeek.aspx"):
+    cache_key = _chipk_cache_key("norway_rank", url)
+    cached_df = chipk_cache_get_df("快取_類股排行", cache_key, ttl_seconds=CHIPK_CACHE_TTL_SECONDS)
+    if cached_df is not None and not cached_df.empty:
+        return cached_df.astype(str)
+
     driver = get_driver()
-    
     try:
         driver.get(url)
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//table[contains(., '大股東持有張數增減')]"))
         )
-        
         html = driver.page_source
         dfs = pd.read_html(StringIO(html), header=None)
-        
         target_df = None
         for df in dfs:
             if len(df.columns) > 10 and len(df) > 20:
                 if df.apply(lambda x: x.astype(str).str.contains('大股東持有').any()).any():
                     target_df = df
                     break
-        
         if target_df is None and len(dfs) > 0:
              target_df = max(dfs, key=len)
-
         if target_df is not None:
             header_idx = -1
             data_start_idx = -1
-            
             for idx, row in target_df.iterrows():
                 row_str = row.astype(str).values
                 if re.search(r'\d{4}', str(row[3])):
                     data_start_idx = idx
                     break
-            
             if data_start_idx == -1: return None
-            
             for idx in range(max(0, data_start_idx - 5), data_start_idx):
                 row = target_df.iloc[idx]
                 if re.match(r'^\d{4,}$', str(row[5])):
                     header_idx = idx
                     break
-            
             raw_data = target_df.iloc[data_start_idx:data_start_idx+100].copy()
-            
             col_indices = [3, 5, 6, 7, 8, 9, 10, 13, 15]
-            
             final_cols = ["股票代號/名稱"]
             if header_idx != -1:
                 date_headers = target_df.iloc[header_idx, 5:11].tolist()
                 final_cols.extend([str(d) for d in date_headers])
             else:
                 final_cols.extend([f"Date_{i}" for i in range(1, 7)])
-                
             final_cols.extend(["總增減", "上週持有%"])
-            
             result_df = raw_data.iloc[:, col_indices]
             result_df.columns = final_cols
-            
             result_df = result_df.astype(str)
-            
+            chipk_cache_set_df("快取_類股排行", cache_key, result_df)
             return result_df
-
     except Exception:
         return None
     finally:
@@ -1767,14 +2227,11 @@ elif stock_input:
     
     df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = None, None, None, None, None, None
     
-    with st.spinner(f"正在分析 {stock_display} ..."):
-        df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
-        
     df_price_daily = get_stock_price(stock_input, st.session_state.refresh_nonce)
     
     df_price = df_price_daily.copy() if df_price_daily is not None else None
     
-    if df_buy is not None and df_sell is not None:
+    if df_price is not None and not df_price.empty:
         st.subheader(f"🏆 {stock_display} 區間累積 ({rank_start_date} ~ {rank_end_date})")
 
         def make_opts(height, title=None, time_visible=True, scale_mode="normal"):
@@ -2249,6 +2706,11 @@ elif stock_input:
 
         # ==================== Tab 2: 分點 ====================
         if selected_page == "分點":
+            with st.spinner(f"正在載入 {stock_display} 分點資料..."):
+                df_buy, df_sell, sum_buy, sum_sell, broker_info, target_url = get_real_data_matrix(stock_input, rank_start_date, rank_end_date, st.session_state.refresh_nonce)
+            if df_buy is None or df_sell is None:
+                st.warning("⚠️ 無法取得分點排行資料，請稍後重試或按上方『強制更新籌碼資料』。")
+                st.stop()
             col_chart, col_table = st.columns([3, 1])
             
             if "active_broker" not in st.session_state:
