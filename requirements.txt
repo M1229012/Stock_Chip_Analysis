@@ -14,4 +14,8 @@ nest_asyncio
 seleniumbase
 mplfinance
 matplotlib
-
+gspread
+google-auth
+requests
+openpyxl
+streamlit-lightweight-charts
