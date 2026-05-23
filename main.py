@@ -491,10 +491,26 @@ def calculate_date_range(stock_id, days):
 
 # ================= 2-1. Google Sheet 籌碼K快取工具 =================
 
-CHIPK_GSHEET_NAME = os.getenv("CHIPK_GSHEET_NAME", os.getenv("GOOGLE_SHEET_NAME", "籌碼K線快取檔案")).strip() or "籌碼K線快取檔案"
-CHIPK_GSHEET_ENABLE = os.getenv("CHIPK_GSHEET_ENABLE", "1").strip().lower() not in ("0", "false", "no")
-CHIPK_GSHEET_CHUNK_ROWS = int(os.getenv("CHIPK_GSHEET_CHUNK_ROWS", "3000"))
-CHIPK_CACHE_TTL_SECONDS = int(os.getenv("CHIPK_CACHE_TTL_SECONDS", "21600"))
+# ✅ [FIX] Streamlit Cloud 的 Secrets 不一定會被 os.getenv() 讀到，
+# 所以統一從環境變數與 st.secrets 兩邊讀取。
+def _chipk_secret_value(name, default=""):
+    try:
+        v = os.getenv(name, None)
+        if v is not None and str(v).strip() != "":
+            return v
+    except Exception:
+        pass
+    try:
+        if hasattr(st, "secrets") and name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    return default
+
+CHIPK_GSHEET_NAME = str(_chipk_secret_value("CHIPK_GSHEET_NAME", _chipk_secret_value("GOOGLE_SHEET_NAME", "籌碼K線快取檔案"))).strip() or "籌碼K線快取檔案"
+CHIPK_GSHEET_ENABLE = str(_chipk_secret_value("CHIPK_GSHEET_ENABLE", "1")).strip().lower() not in ("0", "false", "no")
+CHIPK_GSHEET_CHUNK_ROWS = int(str(_chipk_secret_value("CHIPK_GSHEET_CHUNK_ROWS", "3000")).strip() or "3000")
+CHIPK_CACHE_TTL_SECONDS = int(str(_chipk_secret_value("CHIPK_CACHE_TTL_SECONDS", "21600")).strip() or "21600")
 
 _CHIPK_GSHEET_CLIENT = None
 _CHIPK_GSHEET_SPREADSHEET = None
@@ -541,7 +557,7 @@ def _chipk_decode_service_key(service_key):
 
 
 def chipk_gsheet_enabled():
-    return CHIPK_GSHEET_ENABLE and bool(os.getenv("GCP_SERVICE_KEY", "").strip())
+    return CHIPK_GSHEET_ENABLE and bool(str(_chipk_secret_value("GCP_SERVICE_KEY", "")).strip())
 
 
 def get_chipk_gsheet_client():
@@ -553,7 +569,7 @@ def get_chipk_gsheet_client():
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-        info = _chipk_decode_service_key(os.getenv("GCP_SERVICE_KEY", ""))
+        info = _chipk_decode_service_key(_chipk_secret_value("GCP_SERVICE_KEY", ""))
         if not info:
             return None
         scopes = [
@@ -575,7 +591,7 @@ def get_chipk_gsheet_spreadsheet():
     if gc is None:
         return None
     try:
-        sheet_id = os.getenv("CHIPK_GSHEET_ID", "").strip()
+        sheet_id = str(_chipk_secret_value("CHIPK_GSHEET_ID", "")).strip()
         if sheet_id:
             _CHIPK_GSHEET_SPREADSHEET = gc.open_by_key(sheet_id)
         else:
@@ -960,18 +976,43 @@ def _chipk_get_broker_rank_from_moneydj_json(stock_id, start_date, end_date):
     return None
 
 
-def _chipk_get_broker_rank_from_html(stock_id, start_date, end_date):
-    base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
-    url = f"{base_url}?a={stock_id}&e={start_date}&f={end_date}"
+def _chipk_date_variants_for_dj(date_value):
+    s = str(date_value).strip()
+    variants = []
+    for v in [s, s.replace("-", "/"), s.replace("/", "-")]:
+        if v and v not in variants:
+            variants.append(v)
+    return variants
+
+
+def _chipk_build_broker_rank_urls(stock_id, start_date, end_date):
+    urls = []
+    base_urls = [
+        "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm",
+        "https://www.moneydj.com/z/zc/zco/zco.djhtm",
+        "https://pscnetsecrwd.moneydj.com/z/zc/zco/zco.djhtm",
+    ]
+    for s_d in _chipk_date_variants_for_dj(start_date):
+        for e_d in _chipk_date_variants_for_dj(end_date):
+            for base_url in base_urls:
+                u = f"{base_url}?a={stock_id}&e={s_d}&f={e_d}"
+                if u not in urls:
+                    urls.append(u)
+    # ✅ 富邦搜尋結果常會回到 zco_代號.djhtm，保留為最後備援。
+    for u in [
+        f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco_{stock_id}.djhtm",
+        f"https://www.moneydj.com/z/zc/zco/zco_{stock_id}.djhtm",
+    ]:
+        if u not in urls:
+            urls.append(u)
+    return urls
+
+
+def _chipk_parse_broker_rank_html(page_html, source_url):
     try:
-        r = requests.get(url, headers=_chipk_moneydj_headers(url), timeout=20)
-        if r.status_code != 200:
-            return None, None, None, None, None, url
-        r.encoding = "big5"
-        page_html = r.text
         tables = pd.read_html(StringIO(page_html), match="買超券商")
         if not tables:
-            return None, None, None, None, None, url
+            return None, None, None, None, None, source_url
         df = tables[0]
         header_row = -1
         for i, row in df.iterrows():
@@ -980,41 +1021,120 @@ def _chipk_get_broker_rank_from_html(stock_id, start_date, end_date):
                 header_row = i
                 break
         if header_row == -1:
-            return None, None, None, None, None, url
+            return None, None, None, None, None, source_url
+
         broker_info = {}
         for href, label_html in re.findall(r"<a[^>]+href=[\"']([^\"']*zco0/zco0\.djhtm[^\"']*)[\"'][^>]*>(.*?)</a>", page_html, flags=re.I | re.S):
             name = normalize_name(re.sub(r"<.*?>", "", html_lib.unescape(label_html)))
             href = html_lib.unescape(href)
             if not name:
                 continue
-            parsed = urlparse(urljoin(url, href))
+            parsed = urlparse(urljoin(source_url, href))
             params = parse_qs(parsed.query)
             if 'b' in params and 'BHID' in params:
                 broker_info[name] = {'b': params['b'][0], 'BHID': params['BHID'][0], 'C': params.get('C', ['1'])[0]}
+
         df_clean = df.iloc[header_row+1:].copy()
+        if df_clean.shape[1] < 10:
+            return None, None, None, None, None, source_url
+
         df_buy = df_clean.iloc[:, [0, 1, 2, 3, 4]].copy()
         df_buy.columns = ['broker', 'buy', 'sell', 'net', 'pct']
         df_sell = df_clean.iloc[:, [5, 6, 7, 8, 9]].copy()
         df_sell.columns = ['broker', 'buy', 'sell', 'net', 'pct']
+
         def clean_sub_df(d):
-            d = d.dropna(subset=['broker'])
+            d = d.dropna(subset=['broker']).copy()
             mask = d['broker'].astype(str).str.contains("合計|平均|買超券商|賣超券商", na=False)
             d = d[~mask].copy()
             d['broker'] = d['broker'].map(normalize_name)
+            d = d[d['broker'].astype(str).str.strip() != ""].copy()
             for col in ['buy', 'sell', 'net']:
                 d[col] = d[col].astype(str).str.replace(',', '', regex=False).str.replace('+', '', regex=False).str.replace('nan', '', regex=False)
                 d[col] = pd.to_numeric(d[col], errors='coerce').fillna(0).astype(int)
             return d
+
         df_buy = clean_sub_df(df_buy)
         df_sell = clean_sub_df(df_sell)
         df_buy = df_buy[df_buy['net'] > 0].sort_values('net', ascending=False).head(15).reset_index(drop=True)
         df_sell['abs_net'] = df_sell['net'].abs()
         df_sell = df_sell.sort_values('abs_net', ascending=False).head(15).drop(columns=['abs_net']).reset_index(drop=True)
+
         sum_buy = {"total": f"{int(df_buy['net'].sum()):,}" if not df_buy.empty else "0", "avg": "-"}
         sum_sell = {"total": f"{int(df_sell['net'].sum()):,}" if not df_sell.empty else "0", "avg": "-"}
-        return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
+        return df_buy, df_sell, sum_buy, sum_sell, broker_info, source_url
     except Exception:
-        return None, None, None, None, None, url
+        return None, None, None, None, None, source_url
+
+
+def _chipk_get_broker_rank_from_html(stock_id, start_date, end_date):
+    last_url = ""
+    for url in _chipk_build_broker_rank_urls(stock_id, start_date, end_date):
+        last_url = url
+        try:
+            r = requests.get(url, headers=_chipk_moneydj_headers(url), timeout=20)
+            if r.status_code != 200:
+                continue
+            # ✅ 富邦 / MoneyDJ 常見 Big5/CP950；apparent_encoding 可避免亂碼導致 match 失敗。
+            try:
+                r.encoding = r.apparent_encoding or "cp950"
+            except Exception:
+                r.encoding = "cp950"
+            page_html = r.text
+            parsed = _chipk_parse_broker_rank_html(page_html, url)
+            if _chipk_broker_rank_result_ok(parsed):
+                return parsed
+        except Exception:
+            continue
+    return None, None, None, None, None, last_url
+
+
+def _chipk_get_broker_rank_from_selenium(stock_id, start_date, end_date):
+    driver = get_driver()
+    last_url = ""
+    try:
+        for url in _chipk_build_broker_rank_urls(stock_id, start_date, end_date):
+            last_url = url
+            try:
+                driver.get(url)
+                WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '買超券商')]"))
+                )
+                page_html = driver.page_source
+                parsed = _chipk_parse_broker_rank_html(page_html, url)
+                if _chipk_broker_rank_result_ok(parsed):
+                    df_buy, df_sell, sum_buy, sum_sell, broker_info, parsed_url = parsed
+                    # Selenium 可以更穩定拿到分點明細連結參數，補強 broker_info。
+                    try:
+                        links = driver.find_elements(By.XPATH, "//table//a[contains(@href, 'zco0/zco0.djhtm')]")
+                        for link in links:
+                            name = normalize_name(link.text)
+                            href = link.get_attribute('href')
+                            if name and href:
+                                params = parse_qs(urlparse(href).query)
+                                if 'b' in params and 'BHID' in params:
+                                    broker_info[name] = {'b': params['b'][0], 'BHID': params['BHID'][0], 'C': params.get('C', ['1'])[0]}
+                    except Exception:
+                        pass
+                    return df_buy, df_sell, sum_buy, sum_sell, broker_info, parsed_url
+            except Exception:
+                continue
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+    return None, None, None, None, None, last_url
+
+
+def _chipk_broker_rank_result_ok(result):
+    try:
+        if not isinstance(result, tuple) or len(result) < 6:
+            return False
+        df_buy, df_sell = result[0], result[1]
+        return df_buy is not None and df_sell is not None and (not df_buy.empty or not df_sell.empty)
+    except Exception:
+        return False
 
 
 @st.cache_data(persist="disk", ttl=604800)
@@ -1037,9 +1157,14 @@ def get_real_data_matrix(stock_id, start_date, end_date, refresh_nonce=0):
                 return df_buy, df_sell, sum_buy, sum_sell, broker_info, url
             except Exception:
                 pass
+    # ✅ [FIX] 分點資料改成三層備援：
+    # 1. MoneyDJ JSON 優先；2. requests 解析 HTML；3. Selenium 保底。
+    # 這樣 JSON 端點失效或 HTML 被擋時，不會整個分點頁空白。
     result = _chipk_get_broker_rank_from_moneydj_json(stock_id, start_date, end_date)
-    if result is None:
+    if not _chipk_broker_rank_result_ok(result):
         result = _chipk_get_broker_rank_from_html(stock_id, start_date, end_date)
+    if not _chipk_broker_rank_result_ok(result):
+        result = _chipk_get_broker_rank_from_selenium(stock_id, start_date, end_date)
     df_buy, df_sell, sum_buy, sum_sell, broker_info, url = result
     if df_buy is not None and df_sell is not None:
         chipk_cache_set_json("快取_分點排行", cache_key, {"stock_id": stock_id, "start_date": start_date, "end_date": end_date, "url": url, "df_buy": df_buy.to_dict(orient="records"), "df_sell": df_sell.to_dict(orient="records"), "sum_buy": sum_buy, "sum_sell": sum_sell, "broker_info": broker_info or {}})
@@ -1106,6 +1231,83 @@ def _chipk_get_broker_daily_from_html(stock_id, broker_key, start_date, end_date
         return None, target_url
 
 
+def _chipk_get_broker_daily_from_selenium(stock_id, broker_key, start_date, end_date):
+    BHID, b, c_val = broker_key
+    base_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
+    urls = []
+    for s_d in _chipk_date_variants_for_dj(start_date):
+        for e_d in _chipk_date_variants_for_dj(end_date):
+            urls.append(f"{base_url}?A={stock_id}&BHID={BHID}&b={b}&C={c_val}&D={s_d}&E={e_d}&ver=V3")
+    table_xpath = "/html/body/div[1]/table/tbody/tr[2]/td[2]/table/tbody/tr/td/form/table/tbody/tr/td/table/tbody/tr[6]/td/table"
+    driver = get_driver()
+    last_url = urls[0] if urls else base_url
+    try:
+        for target_url in urls:
+            last_url = target_url
+            try:
+                driver.get(target_url)
+                all_dfs = []
+                page_count = 0
+                while page_count < 60:
+                    try:
+                        WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, table_xpath)))
+                    except Exception:
+                        break
+
+                    try:
+                        target_table = driver.find_element(By.XPATH, table_xpath)
+                        table_html = target_table.get_attribute('outerHTML')
+                        tables = pd.read_html(StringIO(table_html))
+                        current_df = tables[0] if tables else None
+                    except Exception:
+                        html = driver.page_source
+                        tables = pd.read_html(StringIO(html), match="日期")
+                        current_df = tables[0] if tables else None
+
+                    if current_df is not None:
+                        all_dfs.append(current_df)
+
+                    try:
+                        next_links = driver.find_elements(By.XPATH, "//a[contains(text(), '下一頁')]")
+                        if next_links and next_links[0].is_enabled():
+                            next_links[0].click()
+                            time.sleep(0.1)
+                            page_count += 1
+                        else:
+                            break
+                    except Exception:
+                        break
+
+                if not all_dfs:
+                    continue
+
+                df = pd.concat(all_dfs, ignore_index=True)
+                df.columns = [str(c).strip().replace(" ", "") for c in df.columns]
+                if '買賣超' not in df.columns and len(df.columns) >= 4:
+                    df = df.iloc[:, :4]
+                    df.columns = ['日期', '買進', '賣出', '買賣超']
+                if '日期' not in df.columns:
+                    continue
+                df = df[df['日期'].astype(str) != '日期'].copy()
+                for col in ['買進', '賣出', '買賣超']:
+                    if col not in df.columns:
+                        df[col] = 0
+                    df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '', regex=False).str.replace('+', '', regex=False).str.replace('nan', '', regex=False), errors='coerce').fillna(0)
+                df['買賣超_Calc'] = df['買進'] - df['賣出']
+                df['DateStr'] = df['日期'].apply(roc_to_datestr)
+                df = df.dropna(subset=['DateStr']).drop_duplicates(subset=['DateStr'], keep='last').sort_values('DateStr', ascending=True)
+                if not df.empty:
+                    return df, target_url
+            except Exception:
+                continue
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+    return None, last_url
+
+
 @st.cache_data(persist="disk", ttl=604800)
 def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refresh_nonce=0):
     cache_key = _chipk_cache_key("broker_daily", stock_id, broker_key, start_date, end_date)
@@ -1118,6 +1320,8 @@ def get_specific_broker_daily(stock_id, broker_key, start_date, end_date, refres
                     cached_df[col] = pd.to_numeric(cached_df[col], errors='coerce').fillna(0)
             return cached_df, target_url
     df, target_url = _chipk_get_broker_daily_from_html(stock_id, broker_key, start_date, end_date)
+    if df is None or df.empty:
+        df, target_url = _chipk_get_broker_daily_from_selenium(stock_id, broker_key, start_date, end_date)
     if df is not None and not df.empty:
         chipk_cache_set_df("快取_分點明細", cache_key, df)
     return df, target_url
